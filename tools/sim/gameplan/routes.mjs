@@ -50,6 +50,7 @@
 import { earlyOf, gFactorOf, hackSfOf, EFFECTS, sfKeyStr, LIVE_SFS, sleevesOf } from './effects.mjs'
 import { goScale, goGFactor, w0rldDiv, exitShift, favorLifeOf, goWindow } from './go.mjs'
 import { giftAvailable, stanekFactors } from './stanek.mjs'
+import { isCovenantBuyClear } from './sleeves.mjs'
 
 /** phase 1's SF14.1 effect (nextnode d14 mid): GP3's regression mode only. */
 export const PHASE1_D14 = 0.02
@@ -265,6 +266,17 @@ export function clearTime(node, lv, world, S, routes = ROUTES) {
     const h = r.hours({ node, lv, world, S, ctx: base.ctx })
     by = { ...by, [r.id]: h }
     if (h !== null && isFinite(h) && (best === null || h < best.h)) best = { h, via: r.id }
+  }
+  // THE 5TH COVENANT SLEEVE'S CLEAR (the user's invariant: plan.mjs --covenant5 10.2|10.3, world.fleet
+  // 'cov2'|'cov3'): the BN10 clear that buys it is a hacking-route clear (hack or stanek; the Bladeburner
+  // route never builds the economy — sleeves.mjs covenantLegHours) held for the purchase leg
+  // (world.covLegOf(lv): $1e17 at the final window's income) before the node is destroyed
+  if (isCovenantBuyClear(node, lv(10), world.fleet)) {
+    if (typeof world.covLegOf !== 'function') throw new Error(`clearTime: fleet ${world.fleet} buys the 5th Covenant sleeve in BN10.${lv(10) + 1} but the world has no covLegOf (worldOf covLegOf)`)
+    const leg = world.covLegOf(lv)
+    let buy = null
+    for (const [id, h] of Object.entries(by)) if (id !== 'blade' && h !== null && isFinite(h) && (buy === null || h + leg < buy.h)) buy = { h: h + leg, via: `${id}+cov5` }
+    return { ...(buy ?? { h: Infinity, via: null }), by: { ...by, cov5: leg } }
   }
   return best ? { ...best, by } : { h: Infinity, via: null, by }
 }

@@ -14,6 +14,8 @@
 //          --no-disc (no model-discrepancy term) | --no-adapt (skip KG / bound / CVaR / multi-fidelity)
 //          --no-stanek (Stanek's Gift never accepted: the pre-Stanek plan, draw for draw)
 //          --no-blade-go (the Bladeburner leg without the Go farm's Tetrads combat channel: the leg before 2026-10-05)
+//          --covenant5 auto|10.2|10.3|none (the user's invariant: the 5th Covenant sleeve bought in BN10.2
+//          or BN10.3 — auto plans on the shorter whole game; none = the plan without it, the reference)
 //          --five-sleeves (5 sleeves everywhere: SF10.2/10.3 and BN10's own extra sleeve worth nothing — the pre-fleet plan)
 //          --kg-bins 5 | --mf-k 20 (draws re-priced on direct sims for the multi-fidelity check)
 //          --w0-window H (the w0r1d_d43m0n window fixed at H hours: 1 = the old model)
@@ -208,11 +210,83 @@ const lvOf = (s) => (n) => lvl(s, n)
 // --w0-window H: the old fixed w0r1d_d43m0n window of H hours (1 = the model before the climb window; regression)
 const W0_WINDOW = arg('--w0-window') !== undefined ? Number(arg('--w0-window')) : null
 // --five-sleeves: 5 sleeves everywhere (SF10.2/10.3 and BN10's own extra sleeve priced at nothing: the pre-fleet plan)
-const FLEET = has('--five-sleeves') ? 'five' : 'live'
-const wOpts = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, w0Window: W0_WINDOW, w0Live: has('--w0-live'), fleet: FLEET }
-const mid = worldOf(econ, {}, wOpts)
+// --covenant5 auto|10.2|10.3|none: THE USER'S INVARIANT (2026-10-14) — the 5th Covenant sleeve WILL be
+// bought, in BN10.2 or BN10.3, whichever makes the whole remaining game shortest. auto (the default)
+// solves both on the mid world and plans on the shorter; 10.2/10.3 force one; none = the plan
+// without it (the reference). The fleet is then 'cov2'/'cov3' (sleeves.mjs covenantOf: 5 Covenant
+// sleeves from that SF10 level on, 8 sleeves at most) and the buying clear carries the purchase leg
+// (routes.mjs clearTime + covLegOf below).
+const { covenantLegHours, COVENANT5 } = await import('./sleeves.mjs')
+const { hackSfOf } = await import('./effects.mjs')
+const { freshInputs } = await import('../nodechoice/hackexit.mjs')
+/** The rates model's BN10 final-window income at a state's Source-Files (rates.mjs finalRatesOf via hackexit.freshInputs, the builder the hacking clear reads). */
+const bn10ModelIncomeOf = (sfPairs) => freshInputs({ node: 10, sf: sfPairs, g: 1, profile: econ.profile }).flatIncomePerSec ?? null
+// THE LEG'S INCOME, CALIBRATED: the rates model's level for BN10 is its pooled-slope line through
+// every window of the run, 3.6x above the run's own MEASURED final window (rates.mjs CHECK income
+// BN10: $2.48e12/s at level 6368, the median 10-min window of its last 3h). The exit hours are
+// logarithmic in the rate so that does not move a clear, but the purchase leg is linear in it — so
+// the leg is anchored on the measured window and only the Source-File transfer is the model's:
+//     I(state) = I_measured(BN10.1) x model(state's SFs) / model(BN10.1's entry SFs)
+// (the ratio is hacking_money's, rates.mjs incomeOffset). No measured BN10 window (or --rates const):
+// the model alone, printed NOT CALIBRATED.
+const r10 = econ.runs.find((r) => r.bn === 10)
+// the one finished BN10 run (a second one would need its own anchor: throw rather than pick one silently)
+const loos10 = (econ.rates?.channels?.income?.loo ?? []).filter((l) => l.bn === 10)
+if (loos10.length > 1) throw new Error(`plan: ${loos10.length} measured BN10 final windows — anchor the Covenant leg on the run matching econ.runs' BN10`)
+const loo10 = loos10[0]
+const BN10_ANCHOR = loo10 && r10 && bn10ModelIncomeOf(r10.sfOnEntry) > 0 ? { measured: loo10.measured, level: loo10.lpk, key: loo10.key, model: bn10ModelIncomeOf(r10.sfOnEntry) } : null
+const bn10IncomeOf = (sfPairs) => {
+  const m = bn10ModelIncomeOf(sfPairs)
+  if (BN10_ANCHOR) return BN10_ANCHOR.measured * (m ?? BN10_ANCHOR.model) / BN10_ANCHOR.model
+  // NOT CALIBRATED: the model alone; --rates const has no fitted window, so BN10.1's measured late lives (sleeves.mjs COVENANT5)
+  return m ?? COVENANT5.income
+}
+const covLegMemo = new Map()
+const covLegOf = (lv) => {
+  const sfp = hackSfOf(lv)
+  const k = JSON.stringify(sfp)
+  if (!covLegMemo.has(k)) covLegMemo.set(k, covenantLegHours(bn10IncomeOf(sfp)))
+  return covLegMemo.get(k)
+}
+const COV5 = arg('--covenant5', 'auto')
+if (!['auto', '10.2', '10.3', 'none'].includes(COV5)) throw new Error(`--covenant5 ${COV5}: expected auto, 10.2, 10.3 or none`)
+const wOptsBase = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, w0Window: W0_WINDOW, w0Live: has('--w0-live'), covLegOf }
 const L0 = lattice(entry)
 const L1 = lattice(start)
+const COV_FLEETS = { none: 'live', '10.2': 'cov2', '10.3': 'cov3' }
+const covVariants = {} // variant -> { fleet, world, T, V, total, path } on the mid world
+let FLEET = has('--five-sleeves') ? 'five' : 'live'
+if (FLEET !== 'five' && !has('--phase1')) {
+  // a level already cleared cannot buy: BN10.2 is gone once SF10 >= 2 (the start state counts the node in progress)
+  const l10s = lvl(start, 10)
+  for (const [v, fleet] of Object.entries(COV_FLEETS)) {
+    if (v !== 'none' && Number(v.split('.')[1]) <= l10s) continue
+    const world = worldOf(econ, {}, { ...wOptsBase, fleet })
+    const T = tableFor(L1, world)
+    const V = solveDP(L1, T)
+    covVariants[v] = { fleet, world, T, V, total: V[0], path: bestPath(L1, T, V) }
+  }
+  // E[T] over the plan's own draws (the same seed and streams as section 4: common random numbers,
+  // so the variants are compared draw for draw) — the criterion the recommendation itself uses
+  {
+    const r = rng(SEED)
+    const rDisc = rng(SEED + 13)
+    const rStanek = rng(SEED + 29)
+    const ns = [...new Set(owed(start))]
+    for (const x of Object.values(covVariants)) x.Ts = []
+    for (let i = 0; i < DRAWS; i++) {
+      const z = drawZ(r, ns, econ, { rho: RHO_DRAW, rDisc, rStanek })
+      for (const x of Object.values(covVariants)) x.Ts.push(solveDP(L1, tableFor(L1, worldOf(econ, z, { ...wOptsBase, fleet: x.fleet })))[0])
+    }
+    for (const x of Object.values(covVariants)) x.ET = mean(x.Ts)
+  }
+  const buys = Object.keys(covVariants).filter((v) => v !== 'none')
+  const pick = COV5 === 'auto' ? (buys.length ? buys.sort((a, b) => covVariants[a].ET - covVariants[b].ET)[0] : 'none') : COV5
+  if (!covVariants[pick]) throw new Error(`--covenant5 ${COV5}: BN10.${pick.split('.')[1]} is already cleared at ${sig(start)}`)
+  FLEET = covVariants[pick].fleet
+}
+const wOpts = { ...wOptsBase, fleet: FLEET }
+const mid = worldOf(econ, {}, wOpts)
 t0 = performance.now()
 const T1 = tableFor(L1, mid)
 const tTable = (performance.now() - t0) / 1000
@@ -438,7 +512,7 @@ if (!NO_STANEK && !has('--phase1')) {
 // ---------------------------------------------------------------------------
 // The sleeve fleet (sleeves.mjs): SF10.2/10.3's extra sleeves and BN10's own, on both routes
 // ---------------------------------------------------------------------------
-if (!has('--phase1') && FLEET === 'live') {
+if (!has('--phase1') && FLEET !== 'five') {
   t0 = performance.now()
   const { sleeveCount, D10, COVENANT5 } = await import('./sleeves.mjs')
   const { BB_FLEET_N } = await import('./surrogate.mjs')
@@ -465,12 +539,71 @@ if (!has('--phase1') && FLEET === 'live') {
   console.log(`  (* BN10 runs one sleeve more than the state outside it: its own clear at SF10.${l10} has ${sleeveCount(l10, 10)} sleeves)`)
   // the values: the mid-world optimum with the fleet as it is, without BN10's own sleeve, and with 5 sleeves everywhere
   const totalOf = (opts) => solveDP(L1, tableFor(L1, worldOf(econ, {}, { ...wOpts, ...opts })))[0]
-  const tLive = V1[0]
+  // the fleet's own value is measured without the Covenant purchase (its cost is the variants' table below)
+  const tLive = FLEET === 'live' ? V1[0] : totalOf({ fleet: 'live' })
   const tNoBn10 = totalOf({ fleet: 'noBn10' })
   const tFive = totalOf({ fleet: 'five' })
   console.log(`  SF10's VALUE (mid world, optimal order from ${sig(start)}): the fleet as the game counts it ${tLive.toFixed(1)}h; without BN10's own extra sleeve ${tNoBn10.toFixed(1)}h; 5 sleeves everywhere (the old pricing of the Bladeburner route) ${tFive.toFixed(1)}h`)
   console.log(`    -> SF10.2/10.3's extra sleeves ${(tFive - tNoBn10).toFixed(1)}h; BN10's own temporary sleeve ${(tNoBn10 - tLive).toFixed(1)}h; together ${(tFive - tLive).toFixed(1)}h`)
-  console.log(`  THE 5TH COVENANT SLEEVE: $${COVENANT5.cost.toExponential(0)} (10^4 x $10t), BN10 only, Covenant membership (hacking and every combat stat 850, 20 augs) in the same install window: ${COVENANT5.hours.toFixed(1)}h of BN10's measured late-life income ($${COVENANT5.income.toExponential(2)}/s) — NOT a move the plan searches (no Covenant axis); a 6th sleeve is worth ~${((tFive - tNoBn10) / 2).toFixed(1)}h over the rest of the game here (half SF10.2/10.3's), so it does not repay the hold`)
+  {
+    // THE 5TH COVENANT SLEEVE AS A COMMITTED MOVE (the user's invariant): each variant solved on the mid world
+    console.log(`  THE 5TH COVENANT SLEEVE — BOUGHT (user's invariant, --covenant5 ${COV5}): the buying BN10 clear = its hacking route (or Stanek's) + the purchase leg $1e17 / BN10's final-window income (sleeves.mjs covenantLegHours); 5 Covenant sleeves from that SF10 on (8 at SF10.3; the 8th's Bladeburner leg EXTRAPOLATED at the 7-sleeve ratio)`)
+    if (BN10_ANCHOR) {
+      const lv0 = lvOf(start)
+      const iS = bn10IncomeOf(hackSfOf(lv0))
+      console.log(`  CHECK the leg's income (CALIBRATED on one run, BN10.1): the MEASURED final window $${BN10_ANCHOR.measured.toExponential(2)}/s (rates.mjs, ${BN10_ANCHOR.key.slice(0, 10)}, level ${BN10_ANCHOR.level}) vs the rates model's line at BN10.1's entry SFs $${BN10_ANCHOR.model.toExponential(2)}/s: model error ${(100 * (BN10_ANCHOR.model / BN10_ANCHOR.measured - 1)).toFixed(0)}% — the leg is anchored on the measurement (x model SF ratio); cross-check, BN10.1's late lives (peak/length, a lower bound) $${COVENANT5.income.toExponential(2)}/s`)
+      console.log(`    the leg from the plan start's SFs: $${iS.toExponential(2)}/s (SF ratio x${(iS / BN10_ANCHOR.measured).toFixed(2)}) -> ${covenantLegHours(iS).toFixed(1)}h; MEASURED in BN10.1: the 850 combat 457 -> 1441 inside one 2.4h life (fits inside the leg)`)
+    } else console.log(`  the leg's income: NOT CALIBRATED (no measured BN10 final window in the rates fit) — the model's line alone`)
+    {
+      // the live game carries out ONE committed choice (sleeves.mjs COVENANT5_PLANNED -> sleeveplan.js
+      // COVENANT_MANDATE.targetBySf10: BN10.b is played at SF10 b-1, so the target there is 5)
+      const { covenantTarget } = await import('sleeveplan.js')
+      const { COVENANT5_PLANNED, COVENANT_BUY } = await import('./sleeves.mjs')
+      const liveLv = [1, 2].find((l) => covenantTarget(l) >= 5)
+      const liveBuy = liveLv ? `10.${liveLv + 1}` : 'none'
+      const planned = `10.${COVENANT_BUY[COVENANT5_PLANNED]}`
+      const pickV = Object.keys(COV_FLEETS).find((k) => COV_FLEETS[k] === FLEET)
+      const ok = liveBuy === planned && (COV5 !== 'auto' || pickV === planned || !covVariants[planned])
+      console.log(`  CHECK the live mandate (sleeveplan.js covenantTarget) buys in BN${liveBuy}, the committed choice (sleeves.mjs COVENANT5_PLANNED) BN${planned}, this run plans BN${pickV}: ${ok ? 'PASS' : `FAIL — ${liveBuy !== planned ? 'the live game would buy elsewhere than committed' : 'this run picks another level: re-decide, then move COVENANT5_PLANNED and COVENANT_MANDATE.targetBySf10 together'}`}`)
+    }
+    {
+      // THE 8TH SLEEVE, PRICED IN EVERY NODE (after the purchase in BN10.3 every later clear runs 8 at
+      // SF10.3): each owed node's clear at SF10.3 with 7 sleeves (no purchase) vs 8 (cov3), per route
+      const { D10_ORDINAL, BASE_SLEEVES } = await import('./sleeves.mjs')
+      const { BB_FLEET_N } = await import('./surrogate.mjs')
+      const w7 = covVariants.none?.world
+      const w8 = covVariants['10.3']?.world ?? covVariants['10.2']?.world
+      if (w7 && w8) {
+        const lv3 = lvWith(start, 10, 3)
+        const l6 = Math.max(1, Math.min(3, lvl(start, 6)))
+        const l7 = Math.min(3, lvl(start, 7))
+        console.log(`  THE 8TH SLEEVE in every owed node (SF10.3, other SFs as at the start; mid world): hacking-family routes (hack, stanek, go) price it through sleeves.mjs — its own money-crime trajectory with 7 others, the marginal lift on the measured lives: d10 x shape ${D10_ORDINAL[8]} (6th 1, 7th ${D10_ORDINAL[7]}; DERIVED) x CrimeMoney on g; Bladeburner: the fleet axis has 5-7 SIMULATED, the 8th EXTRAPOLATED at the 7-sleeve ratio (priced at zero, labelled)`)
+        console.log('    node   CM     7 sleeves  8 sleeves   8th saves   route(8)       hack g x(8th)   blade ratio 7 -> 8')
+        for (const n of [...new Set(owed(start))].filter((m) => m !== 10).sort((a, b) => a - b)) {
+          const c7 = clearTime(n, lv3, w7, S)
+          const c8 = clearTime(n, lv3, w8, S)
+          const cm = S.mults(n).CrimeMoney
+          const bb = S.bbRank(n) > 0 ? S.bbFleetRatio(n, l6, l7, BB_FLEET_N[BB_FLEET_N.length - 1])?.ratio : null
+          console.log(`    BN${String(n).padEnd(4)} ${cm.toFixed(2).padStart(4)}  ${f1(c7.h)}h    ${f1(c8.h)}h    ${(c7.h - c8.h).toFixed(2).padStart(6)}h    ${String(c8.via).padEnd(13)}  x${(1 + w8.sf.d10 * D10_ORDINAL[8] * cm).toFixed(5)}        ${bb ? `${bb.toFixed(3)} -> ${bb.toFixed(3)} EXTRAPOLATED` : '- (no Bladeburner route)'}`)
+        }
+        console.log(`    NOT PRICED for any sleeve past ${BASE_SLEEVES} (stated, never folded in): the exp transfer (<= 16 exp/s x sync; a new sleeve starts at sync 1), a 2nd faction's rep (the live policy gives one sleeve a faction), karma (no gameplan route has a karma leg: BN2's gang is inside its measured g), the stocks (BN8) and corp (BN3) routes (placeholders that price nothing)`)
+      }
+    }
+    for (const [v, x] of Object.entries(covVariants)) {
+      let st = start
+      const cells = []
+      for (const p of x.path) {
+        const c = clearTime(p.n, lvOf(st), x.world, S)
+        cells.push(`${clearLabel(p.n, st)}${c.via === 'blade' ? '*' : c.via === 'hack' ? '' : `[${c.via}]`}${c.by.cov5 !== undefined ? `(leg ${c.by.cov5.toFixed(1)}h)` : ''}`)
+        st = plus(st, p.n)
+      }
+      const sg = (d) => `${d >= 0 ? '+' : ''}${d.toFixed(1)}`
+      const dE = x.Ts.map((t, i) => t - covVariants.none.Ts[i])
+      console.log(`    ${(v === 'none' ? 'no purchase (reference)' : `buy in BN${v}`).padEnd(24)} E[T] ${x.ET.toFixed(1)}h over ${DRAWS} draws (each draw's optimum)${v === 'none' ? '' : ` ${sg(x.ET - covVariants.none.ET)}h vs none, paired s.e. ${seMean(dE).toFixed(2)}`} | mid world ${x.total.toFixed(1)}h${x.fleet === FLEET ? '  <- PLANNED' : ''}`)
+      console.log(`      ${cells.join(' ')}`)
+    }
+  }
+  if (FLEET === 'live') console.log(`  THE 5TH COVENANT SLEEVE: $${COVENANT5.cost.toExponential(0)} (10^4 x $10t), BN10 only, Covenant membership (hacking and every combat stat 850, 20 augs) in the same install window: ${COVENANT5.hours.toFixed(1)}h of BN10's measured late-life income ($${COVENANT5.income.toExponential(2)}/s) — NOT a move the plan searches (no Covenant axis); a 6th sleeve is worth ~${((tFive - tNoBn10) / 2).toFixed(1)}h over the rest of the game here (half SF10.2/10.3's), so it does not repay the hold`)
   tick('the sleeve fleet (section)', t0)
 }
 

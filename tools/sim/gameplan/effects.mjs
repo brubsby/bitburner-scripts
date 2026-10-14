@@ -33,7 +33,7 @@
 // lo = 10th percentile, mid = median, hi = 90th (split normal, z = ±1.2816).
 
 // Source: SourceFile/applySourceFile.ts (multiplier SFs) — quoted per entry.
-import { D10, extraSleeves, sleeveCount } from './sleeves.mjs'
+import { D10, extraSleeves, sleeveCount, covenantOf, sleeveGFactor } from './sleeves.mjs'
 
 /** phase 1's SF10.2/10.3 effect (nextnode d10 mid, node-free, per level): GP3's regression mode only. */
 export const PHASE1_D10 = 0.01
@@ -140,20 +140,22 @@ export const EFFECTS = {
   10: {
     status: 'SIMULATED (Bladeburner: bbsim fleet axis) + DERIVED (hacking: sleeves.mjs)',
     source: 'PersonObjects/Sleeve/SleeveCovenantPurchases.tsx:63 sleeves = min(3, SF10 lvl + (BN10 ? 1 : 0)) + covenant (4 held)',
-    // the hacking route: g x (1 + d10 x CrimeMoney)^(sleeves past 5) (sleeves.mjs); BN10's own extra
+    // the hacking route: g x prod_n (1 + d10 x shape_n x CrimeMoney) over the sleeves past 5 (sleeves.mjs D10_ORDINAL); BN10's own extra
     // sleeve counts inside BN10. ctx.phase1: phase 1's g x 1.01^(l-1) (GP3's regression mode)
     gFactor: (l, p, ctx = {}) => {
       if (ctx.phase1) return Math.pow(1 + PHASE1_D10, Math.max(0, l - 1))
       if (ctx.fleet === 'five') return 1
-      const x = extraSleeves(l, ctx.fleet === 'noBn10' ? null : ctx.node)
+      const x = extraSleeves(l, ctx.fleet === 'noBn10' ? null : ctx.node, covenantOf(l, ctx.fleet))
       if (x === 0) return 1
       // no silent CrimeMoney 1: a caller pricing extra sleeves must say which node's multipliers
       if (typeof ctx.mults?.CrimeMoney !== 'number') throw new Error(`SF10 gFactor: ${x} extra sleeve(s) at SF10.${l} in BN${ctx.node} need the node's CrimeMoney (gFactorOf ctx.mults)`)
-      return Math.pow(1 + p.d10 * ctx.mults.CrimeMoney, x)
+      // each sleeve past 5 priced on its own (sleeves.mjs D10_ORDINAL: the n-th sleeve's own trajectory and marginal lift)
+      return sleeveGFactor(x, p.d10, ctx.mults.CrimeMoney)
     },
     // the Bladeburner route: the leg at sleeveCount(l, node) sleeves (surrogate bbLeg's fleet axis)
-    sleeves: (l, node, fleet = 'live') => (fleet === 'five' ? 5 : sleeveCount(l, fleet === 'noBn10' ? null : node)),
-    note: 'Bladeburner: the leg x leg(live pick, n)/leg(live pick, 5) (surrogate BB_FLEET_N); hacking: the extra sleeve on its best money crime (the live fall-through: one sleeve per faction); a 2nd faction\'s rep and the exp transfer NOT PRICED; the 5th Covenant sleeve ($1e17, BN10 only) NOT a move (no Covenant axis)',
+    // fleet 'cov2' / 'cov3': the 5th Covenant sleeve bought in BN10.2 / BN10.3 (sleeves.mjs covenantOf: 5 Covenant from that SF10 level on; 8 at most)
+    sleeves: (l, node, fleet = 'live') => (fleet === 'five' ? 5 : sleeveCount(l, fleet === 'noBn10' ? null : node, covenantOf(l, fleet))),
+    note: 'Bladeburner: the leg x leg(live pick, n)/leg(live pick, 5) (surrogate BB_FLEET_N); hacking: the extra sleeve on its best money crime (the live fall-through: one sleeve per faction); a 2nd faction\'s rep and the exp transfer NOT PRICED; the 5th Covenant sleeve ($1e17, BN10 only): a committed move under --covenant5 10.2|10.3 (the Covenant count a function of SF10; routes.mjs prices the purchase leg)',
   },
   11: {
     status: 'ASSUMED',

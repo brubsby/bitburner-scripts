@@ -12,7 +12,8 @@ node tools/sim/gameplan/plan.mjs --build-only          # build / extend the surr
 node tools/sim/gameplan/plan.mjs --observe             # ingest telemetry into posterior.json, then plan on it
 node tools/sim/gameplan/observe.mjs [--dry-run]        # the ingest alone: how the posterior moved
 node tools/sim/gameplan/plan.mjs --prior               # the hand prior only (ignore posterior.json)
-node tools/test/run.mjs gameplan                       # GP1-GP8, SL1-SL4
+node tools/sim/gameplan/plan.mjs --covenant5 none      # without the 5th Covenant sleeve (default auto: bought in BN10.2 or .3, the shorter)
+node tools/test/run.mjs gameplan                       # GP1-GP8, SL1-SL6
 TELEMETRY=<.telemetry> node tools/sim/gameplan/sleeves.mjs   # re-derive the hacking route's d10 and the 5th Covenant sleeve's price
 ```
 
@@ -124,9 +125,20 @@ with `--no-stanek`): the table is 4x larger with SF13 live.
 | SIMULATED (Bladeburner) | bbsim (the game's classes) at 5, 6, 7 sleeves under the live fleet rule — sleeve.js's committed mix is bbplan.chooseSleeveConfigGen's "the fastest of sleeveConfigs(n)"; here the fastest on the game's classes per (node, n) at SF6.1/SF7.0 on selection seeds 101-105 (the picks: i1/f4 at 5 on BN6/11, i2/f4 and i3/f4 at 6/7 — infiltrate/field analysis). The plan's leg = the 5-infiltrator leg (k's definition) x leg(pick n)/leg(pick 5) on seeds 1..15, floored at the n-1 ratio (an extra sleeve may idle). 9555 sims, ~30 min once, bb.json 2.4MB. |
 | DERIVED (hacking) | the live policy gives one sleeve a faction (setToFactionWork throws on a second), so a 6th/7th sleeve falls through to its best money crime. exitplan prices that money as a per-life lift k^eBudget; on hackexit's fresh inputs (income NOT CALIBRATED, $1e7-5e8/s at level 1) it is ~0, so the lift is applied to the six measured runs' lives (peak money / life length) with the new sleeve's own trajectory (skills 1, shock 100 falling passively, training by its crime and the fleet's hand-off): d10 per unit CrimeMoney 0.03% / 0.72% / 3.8% (lo/mid/hi; was the hand 0 / 1% / 3% node-free), the node's g x (1 + d10 x CrimeMoney) per sleeve past 5. |
 | ASSUMED | eBudget 0.05/0.15/0.3 (ln 1.1 / ln 1.9 mid), a life's income / its peak-money bound 3/1.5/1 |
-| NOT PRICED | a sleeve on a second faction's rep (the live policy never assigns one), the exp transfer (<= 16 exp/s at sync 1), the 5th Covenant sleeve as a move (no Covenant axis in the state: printed against its price), the fleet before the Bladeburner join |
+| COMMITTED (the 5th Covenant sleeve) | the user's invariant (2026-10-14): it WILL be bought, in BN10.2 or BN10.3. `--covenant5 auto` (default) solves both and plans on the lower E[T]; `10.2`/`10.3` force one, `none` is the reference. Under the invariant the Covenant count is a function of SF10 (sleeves.mjs `covenantOf`: 4 through the buying clear, 5 after; fleet tags `cov2`/`cov3`), so the DP stays exact. The buying clear = its best NON-Bladeburner route (hack/stanek: the Bladeburner runs never build the economy — BN6 peaked at $2e12, hacking 130-300 vs the Covenant's 850 at x0.35) + the leg `$1e17 / BN10's final-window income`, CALIBRATED on one run: BN10.1's measured final window $2.48e12/s (the rates model's own line is 3.5x high there, so it is only the SF transfer), 10-11h. Combat 850 fits inside it (MEASURED 457 -> 1441 in one 2.4h BN10.1 life). The 8th sleeve is priced in every node: on the hacking-family routes (hack, stanek, go) by its own DERIVED marginal lift (sleeves.mjs `D10_ORDINAL`: the n-th sleeve's money-crime trajectory with n-1 others, on top of the sleeves before it — 6th 1, 7th 0.9997, 8th 1.0012 x d10), on the Bladeburner route EXTRAPOLATED at the 7-sleeve ratio (surrogate `BB_FLEET_MAX`); plan.mjs prints each owed node's clear at 7 vs 8 sleeves. NOT PRICED: the money the final window banks before the exit, Stanek's (1-f) on the leg's income, a Bladeburner exit run beside an economy. The live game carries `sleeves.mjs COVENANT5_PLANNED` through `sleeveplan.js COVENANT_MANDATE.targetBySf10` (endgame.js holds, progress.js campaigns, sleeveaug.js buys); plan.mjs prints a CHECK and SL5 goes red if they disagree. |
+| NOT PRICED | a sleeve on a second faction's rep (the live policy never assigns one), the exp transfer (<= 16 exp/s at sync 1), the fleet before the Bladeburner join |
 
 `--five-sleeves` prices 5 sleeves everywhere (SF10.2/10.3 and BN10's own sleeve worth nothing).
+
+Results 2026-10-14 (BN6.3 in progress, 100 draws, seed 1), the 5th Covenant sleeve: no purchase
+E[T] 289.7h (mid 290.5h: BN10.2* BN10.3* BN7.2* BN7.3* BN3.1-3* BN5.2* BN5.3* BN11.1* BN11.2*
+BN13.2/13.3 BN8.2/8.3 BN11.3* BN2.2/2.3); buy in BN10.2 327.0h (mid 330.1h); **buy in BN10.3
+326.6h (mid 330.2h) — planned**: BN5.2* BN10.2* BN11.1* BN11.2* BN5.3 BN13.2 BN13.3 BN8.2 BN8.3
+BN11.3* BN10.3[stanek + leg 10.3h] BN2.2 BN2.3 BN7.2* BN7.3* BN3.1-3* (mid world; next node
+BN10.2 by E[T], BN5.2 in the mid world). The invariant costs ~37h: BN10's buying clear becomes a
+~48h Stanek hacking clear + the leg instead of a ~20h Bladeburner clear, and the extra sleeve is
+worth ~0 after it (the later clears are Bladeburner ones whose leg is saturated at 7). The two
+levels tie within ~0.5h; BN10.3 wins on E[T] and keeps BN10.2 the ~20h Bladeburner clear.
 
 Results 2026-10-03 (BN14.1 in progress, 100 draws, seed 1). Bladeburner leg ratio at 6 / 7
 sleeves (SF6.1/SF7.0): BN3, BN6, BN11, BN2 1.000 / 1.000 (the 5-fleet already saturates the

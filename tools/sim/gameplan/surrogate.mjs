@@ -80,6 +80,13 @@ export const L7 = [0, 1, 2, 3]
 // leg(pick n) / leg(pick 5), paired seed for seed, and never longer than at n-1: an extra
 // sleeve may idle (Sleeve idle work does nothing to the division).
 export const BB_FLEET_N = [5, 6, 7]
+// THE 8TH SLEEVE (the 5th Covenant sleeve held at SF10.3, or inside BN10.3 at SF10.2: 3 + 5 =
+// 8, the game's maximum — SleeveCovenantPurchases.tsx:13,63) is EXTRAPOLATED, not simulated: its
+// leg is held at the 7-sleeve ratio (the "held <= the ratio at n-1" floor: an extra sleeve may
+// idle), i.e. priced at zero on the Bladeburner route. The 6 -> 7 step is already 1.000 on the
+// plan's Bladeburner clears (README, the sleeve fleet), so a real n = 8 sim (~3200 more bbsim
+// runs) is not worth its cost; the hacking route prices the 8th through sleeves.mjs d10.
+export const BB_FLEET_MAX = 8
 export const BB_SEL_SEEDS = [101, 102, 103, 104, 105]
 export const BB_SEL_CELL = [1, 0]
 /** sleeveConfigs(n) without the all-idle fleet: the mixes the live chooser compares. */
@@ -444,6 +451,8 @@ export async function loadSurrogate({ start, profile, bbSeeds = 5, direct = fals
   const legAt = (n, l6, l7, k) => {
     const base = legs.get(`${n}|${l6}|${l7}`) ?? null
     if (!base || k === BB_SLEEVES) return base
+    if (k > BB_FLEET_MAX) throw new Error(`surrogate: ${k} sleeves is past the game's maximum ${BB_FLEET_MAX}`)
+    // 8 sleeves: EXTRAPOLATED at the 7-sleeve ratio (BB_FLEET_MAX above)
     const kk = Math.min(BB_FLEET_N[BB_FLEET_N.length - 1], Math.max(BB_FLEET_N[0], k))
     const r = ratios.get(`${n}|${l6}|${l7}|${kk}`)
     if (!r) throw new Error(`surrogate: no fleet ratio for BN${n} SF6.${l6} SF7.${l7} at ${k} sleeves`)

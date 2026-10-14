@@ -114,7 +114,7 @@ export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO, rDisc = null, rSt
  * `phase1: true` prices exactly as phase 1 did (no IPvGO model, SF14.1 = g x 1.02, the
  * Bladeburner opening unscaled, HackingSpeedMultiplier unread): GP3's regression mode.
  */
-export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false, stanekOff = false, stanekBn13Only = false, w0Window = null, w0Live = false, fleet = 'live' } = {}) {
+export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false, stanekOff = false, stanekBn13Only = false, w0Window = null, w0Live = false, fleet = 'live', covLegOf = null } = {}) {
   // econ from posterior.mjs posteriorOf().applied carries the update: zMap (a
   // scalar's prior z -> posterior z), gShift/gScale (the unplayed latent's
   // location and spread), gSd (a node observed since the base: its own log sd).
@@ -158,6 +158,9 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     // the sleeve fleet (sleeves.mjs): 'live' = min(3, SF10 + (BN10 ? 1 : 0)) + 4; 'five' = 5 everywhere
     // (SF10.2/10.3 and BN10's own sleeve worth nothing: the pre-fleet plan); 'noBn10' = no BN10 extra
     fleet,
+    // fleet 'cov2'|'cov3' (the 5th Covenant sleeve bought in BN10.2|BN10.3): the purchase leg's hours at a
+    // state, lv -> h (plan.mjs builds it from the fitted final-window income; routes.mjs clearTime adds it)
+    covLegOf,
     cycleHours: cyc,
     profile: econ.profile,
     z,
