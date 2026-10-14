@@ -42,6 +42,12 @@ before starting each subagent.
 16. **Stanek layout for Bladeburner routes** (fragments are all hacking; no combat layout).
 17. **Sleeve throw-fallback** is only source-checked (cec58da) — add an executed test.
 
+17b. **BN10.3 live route must know about the Covenant purchase** (1247ba4/5858261): gameplan plays the
+    buying BN10.3 as a ~48h hacking+Stanek clear; the live route pricer doesn't know about the $1e17 mandate,
+    so if it picks Bladeburner there, endgame.js holds the exit until the money arrives, possibly for a long time.
+    Also: the leg ignores the final window's banked money (~1h long); the per-sleeve base value re-derives
+    6.6e-3 vs the committed 7.2e-3; gameplan RT4 (income calibration vs BN8/14/9) fails, unverified whether that predates this work.
+
 ## Go
 18. **Opening books for hard layouts** — subagent was running at the cut; deploy/verify
     its result.
