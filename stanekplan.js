@@ -654,6 +654,14 @@ export const GENESIS = "Stanek's Gift - Genesis" // Augmentation/Enums.ts (sfgat
  * stanek.js publishes `want: false` with that reason and never accepts there.
  */
 export const GIFT_NODES = new Set([13])
+/**
+ * THE PRICING HOLD (reversible, stated): nodes where the gift is being priced
+ * (2026-10-15: combat/Bladeburner Stanek in BN11, the Bladeburner route). The
+ * stack does NOT accept here, but act.js refuses every non-NeuroFlux buyaug /
+ * graft / install while the gift is unaccepted and still acceptable, so the
+ * option stays open until the pricing lands. Remove the node to release it.
+ */
+export const GIFT_HOLD_NODES = new Set([11])
 
 const namesOf = (owned) => (owned == null ? [] : typeof owned.keys === 'function' ? [...owned.keys()] : Array.isArray(owned) ? owned.map((x) => x?.name ?? x) : Object.keys(owned))
 
@@ -679,17 +687,21 @@ export function giftStateOf(resetInfo, available) {
   const accepted = names.includes(GENESIS)
   const blocking = accepted ? [] : names.filter((n) => n !== NFG)
   const want = available && GIFT_NODES.has(node)
+  const hold = available && !want && GIFT_HOLD_NODES.has(node)
   return {
     node,
     available,
     want,
+    hold,
     accepted,
     forfeited: !accepted && blocking.length > 0,
     blocking,
     why: !available
       ? 'no access to the Church (not BitNode 13, no Source-File 13)'
       : !want
-        ? `BitNode ${node} is not one the stack accepts the gift in (stanekplan.GIFT_NODES: ${[...GIFT_NODES].join(', ')}) — the gameplan prices it per node and nothing in-game reads that yet`
+        ? hold
+          ? `BitNode ${node}: the gift is being priced (stanekplan.GIFT_HOLD_NODES) — not accepted yet; non-NeuroFlux augmentation orders are held so the option stays open`
+          : `BitNode ${node} is not one the stack accepts the gift in (stanekplan.GIFT_NODES: ${[...GIFT_NODES].join(', ')}) — the gameplan prices it per node and nothing in-game reads that yet`
         : accepted
           ? `accepted (${GENESIS} installed)`
           : blocking.length
@@ -713,14 +725,14 @@ export function giftStateOf(resetInfo, available) {
 export function giftOrderGate(state, order) {
   const kind = order?.kind
   if (!['buyaug', 'graft', 'install'].includes(kind)) return { allow: true, why: null, forfeited: false }
-  if (!state?.want || state.accepted) return { allow: true, why: null, forfeited: false }
+  if (!(state?.want || state?.hold) || state.accepted) return { allow: true, why: null, forfeited: false }
   if (state.forfeited) return { allow: true, forfeited: true, why: `GIFT FORFEITED (${state.why}) — the ${kind} order is not blocked: the gift can no longer be accepted in this node` }
   const aug = kind === 'buyaug' ? String(order?.args?.[1] ?? '') : kind === 'graft' ? String(order?.args?.[0] ?? '') : null
   if (kind === 'buyaug' && aug === NFG) return { allow: true, why: 'NeuroFlux Governor never blocks the gift', forfeited: false }
   return {
     allow: false,
     forfeited: false,
-    why: `STANEK GATE: Stanek's Gift is not accepted yet in BitNode ${state.node} — ${kind}${aug ? ` '${aug}'` : ''} refused: ${kind === 'install' ? 'an install before the accept forfeits the gift for the node (or buys nothing)' : 'a non-NeuroFlux augmentation queued or grafted blocks acceptGift (canAcceptStaneksGift) and, installed, forfeits it for the node'}; stanek.js accepts it (${STANEK_FILE})`,
+    why: `STANEK GATE${state.want ? '' : ' (PRICING HOLD, stanekplan.GIFT_HOLD_NODES)'}: Stanek's Gift is not accepted yet in BitNode ${state.node} — ${kind}${aug ? ` '${aug}'` : ''} refused: ${kind === 'install' ? 'an install before the accept forfeits the gift for the node (or buys nothing)' : 'a non-NeuroFlux augmentation queued or grafted blocks acceptGift (canAcceptStaneksGift) and, installed, forfeits it for the node'}; ${state.want ? `stanek.js accepts it (${STANEK_FILE})` : 'the option is held open while the gift is priced here'}`,
   }
 }
 

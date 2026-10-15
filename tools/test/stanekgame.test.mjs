@@ -69,6 +69,13 @@ function sg1() {
     ['BN13 forfeited: buyaug', info(13, ['BitWire']), { kind: 'buyaug', args: ['x', 'NeuroTrainer I'] }, true, true],
     ['BN7: non-NFG buyaug', info(7), { kind: 'buyaug', args: ['x', 'BitWire'] }, true, false],
     ['BN7 with SF13: install', info(7, [], 1), { kind: 'install', args: [] }, true, false],
+    // THE PRICING HOLD (GIFT_HOLD_NODES): the option is kept open, the gift NOT accepted
+    ...[...sp.GIFT_HOLD_NODES].flatMap((n) => [
+      [`BN${n} hold, SF13: non-NFG buyaug`, info(n, [], 1), { kind: 'buyaug', args: ['x', 'BitWire'] }, false, false],
+      [`BN${n} hold, SF13: graft`, info(n, [], 1), { kind: 'graft', args: ['BitWire'] }, false, false],
+      [`BN${n} hold, SF13: NFG buyaug`, info(n, [], 1), { kind: 'buyaug', args: ['x', NFG] }, true, false],
+      [`BN${n} hold, SF13 accepted: non-NFG buyaug`, info(n, [GEN], 1), { kind: 'buyaug', args: ['x', 'BitWire'] }, true, false],
+    ]),
   ]
   c.examined(cases.length)
   for (const [label, ri, o, allow, forfeited] of cases) {
@@ -78,6 +85,10 @@ function sg1() {
     if (!!g.forfeited !== forfeited) c.fail(`${label}: forfeited ${g.forfeited}, expected ${forfeited}`)
     if (!allow && !/STANEK GATE/.test(g.why ?? '')) c.fail(`${label}: a refusal must say why (STANEK GATE ...)`, g.why)
     if (forfeited && !/FORFEITED/.test(g.why ?? '')) c.fail(`${label}: a forfeit must be named`, g.why)
+  }
+  for (const n of sp.GIFT_HOLD_NODES) {
+    const sh = stateOf(info(n, [], 1))
+    if (sh.want || !sh.hold) c.fail(`BN${n} is a pricing hold: hold true, want false (stanek.js must not accept on a hold)`, JSON.stringify(sh))
   }
   const s7 = stateOf(info(7, [], 1))
   if (s7.want !== false || !s7.available) c.fail('SF13 outside BN13: available but not wanted (GIFT_NODES)', JSON.stringify(s7))
