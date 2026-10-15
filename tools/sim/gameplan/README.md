@@ -29,6 +29,7 @@ process, 2GB heap is plenty (peak RSS ~0.6GB).
 | --- | --- |
 | `state.mjs` | the state (SF level vector + intelligence), what is owed, the lattice and its mixed-radix index |
 | `effects.mjs` | **one entry per Source-File**: its effect on a clear, the game source it rests on, and its status (SIMULATED / ASSUMED / NOT PRICED), with the ASSUMED lo/mid/hi |
+| `calib.mjs` | ROUTE-LEVEL g: each finished hacking-route clear's g backed out through the route it PLAYED (hack, or stanek when it accepted the gift) at its own entry state, on direct sims; plan.mjs prices with it (`--g-def sim`: the old bare-simulation g) and prints every clear's leave-one-out predicted vs measured hours (CALIBRATION) |
 | `economy.mjs` | telemetry -> the measured g of every played node (the calibration), the latent g for unplayed nodes; the profile the hacking exit runs on (`--rates fit`: rates.mjs's fitted exp/s and $/s; `--rates const`: the old constants) |
 | `rates.mjs` | the hacking route's exp/s and $/s FITTED: a progress-level model per channel (`ln rate = offset_n + a_n + b ln(Lpk/1000)`, the offset the node's multipliers from source, b pooled within-node, a_n hierarchical on the money factor), evaluated at the node's exit level for the final window; the node in progress's own reading (`xr<n>`/`ir<n>`, observe.mjs); its leave-one-out CHECK |
 | `ratestest.mjs` | RT3-RT5's game half (`tools/test/gameplan-rates.test.mjs`): the old constants reproduce the old numbers, the played nodes' leave-one-out hours and rates, the in-run reading's reach |
@@ -380,6 +381,43 @@ That 214h stands on three things, and **none of them is calibrated live at SF14.
 Tetrads from each node's start; BN14.2 is pinned to TheBlackHand until its goWeights exist. Tetrads' node
 power must enter the combat level multipliers as modelled. And k must carry over: only BN14.1's reading
 has a farm in its leg.
+
+### 2026-10-14: route-level g (calib.mjs) — BN13.1 re-read, the order re-solved (BN10.2 in progress)
+
+**The error.** Every g reading was backed out of the bare hacking simulation (`Hsim(g) = hours`), but a
+clear is priced by the whole route on top of it: `early` (SF4.3/SF9 first-life savings the measured clear
+already had), the w0r1d_d43m0n exit shift `ln W/g` (credited, never realised live: the exit does not
+anticipate it), the favor-life difference, and on the stanek route the gift's factors. So the plan priced a
+replay of every measured clear 9-15% short, and two clears ~45% short: BN12.1 (21.1h -> 11.3h) and BN13.1
+(49.3h -> 27.2h), the latter because it ACCEPTED Stanek's Gift, so its Hsim g (0.078) already held the gift
+and the stanek route multiplied it in again (BN13.2 priced 22.0h). The "0.078 vs 0.007" of the backlog was
+this, not the money multipliers: BN13.1's route-level g is 0.0447, at the population mean (0.046).
+
+**The fix.** `g` is now defined like `k`: the value that makes routes.mjs's played route reproduce the
+clear at its entry state (CHECK: every clear to <= 0.26h). The hand latent, the g model and its LOO (now
+over all 8 hacking-route clears, BN12.1/BN13.1 included) and the discrepancy fit all run on it. The g model
+gained the node's money multipliers as candidate covariates (`money`: ln AMC, ln hack money, ln
+ServerStartingMoney, ln HacknetNodeMoney, ln CrimeMoney, ln FactionWorkRepGain, ln AugmentationRepCost;
+`moneyW` adds HackingLevel and WDD). LOO REJECTS them on route-level g (elpd money -8.16, moneyW -6.05,
+full -4.65, chosen exchG -3.67: a common level plus BN2's gang): with the double count gone the measured
+nodes do not ask for them.
+
+CALIBRATION (each clear predicted by the exchG model fitted without it, through its own route): BN2.1
++163% (the gang node: no other clear informs the gang term), BN4.2 +50%, BN10.1 -32%, BN8.1 -18%, BN1.3
++39%, BN9.1 -2%, BN12.1 -6%, BN13.1 -2%; every |r/sqrt v| <= 1.33. Transfer to an unplayed node is good
+to about x1.6 (rmse ln g 0.46).
+
+Results (BN10.2 8.7h in, 100 draws, seed 1): robust E[T] 307.5h -> 345.6h; BN13.2/13.3 move from stanek
+(~20h each) to the Bladeburner route (~32h each; stanek 43h, hack 63h); BN8.2/8.3 stanek 35.9h -> 40.7h;
+BN10.3 (stanek + the 5th Covenant sleeve) 56.0h -> 60.9h; the Bladeburner clears unchanged. Next after
+BN10.2: BN11.1 344.9h vs BN7.2 344.9h (+0.01 +- 0.04h, P(best) 36% / 58%) — a tie; the robust order now
+opens BN7.2, BN7.3, BN11.1-3, BN5.2-3, BN8.2-3, BN13.2-3, BN10.3, BN2.2-3, BN3.1-3.
+
+NOT CALIBRATED still: the stanek factors (gift W 2.25 assumed; BN13 measured ~x1.5 — backlog 2: with
+route-level g, BN13.1 absorbs it, the transfer to BN8/BN2/BN10.3's stanek clears does not); BN8's stocks
+route (placeholder); the 5 Bladeburner clears since BN9.2 (k WITHHELD: observe.mjs CLEAR_LEGS note — under
+the grid's own 21.6k/h farm four of them ran faster than the model's whole leg; live Tetrads reads 38.9k/h);
+historic states are priced on direct sims with an un-phase-averaged post-Red-Pill climb.
 
 ### A Bayes-adaptive outer loop: not built, sketched
 

@@ -110,6 +110,15 @@ export const BN6_START = '2026-10-01T02:48'
  *            bought between 15:20:16Z and 15:25:36Z (history.jsonl purchasedServers), <= 0.19h after
  *            combat 100, with combat exp moving through it (the hand-run Homicide): not voidable as a
  *            stall, < 1% of k. The SlumSnakes@9 detour (23:34-23:39Z) was Go only, not the work slot.
+ *   BN9.2, BN7.1, BN9.3, BN6.2, BN6.3 (2026-10-07 -> 2026-10-14, 35.99 / 24.50 / 19.13 / 10.68 / 10.39h, no
+ *          install, entered at SF14.3) stay WITHHELD (backlog item 3, tried 2026-10-14): no Tetrads total
+ *          survives for them (go-dash-history.json keeps only the node in progress). Stated at the GRID'S OWN
+ *          farm (bladeGoOf at GoPower 1 x the SF14 doubling, 21592/h), four of the five legs come out LONGER
+ *          than the whole node (BN7.1 25.06h / 24.50h, BN9.3 20.70 / 19.13, BN6.2 11.85 / 10.68, BN6.3 11.91 /
+ *          10.39) and only BN9.2 passes (k 1.43): logging it alone would bias k upward (0.924 -> 1.00), so none
+ *          is logged. The live farm is faster than the grid's: BN10.2's Tetrads went 92k -> 325k over 5.98h =
+ *          38.9k/h (go-dash-history.json 2026-10-14) against 21.6k/h. Pricing them needs the grid's farm
+ *          re-measured (go.mjs BLADE_GO_P x goplan POWER_PER_HOUR) and the Bladeburner grid rebuilt.
  */
 export const CLEAR_LEGS = {
   'BN14.1': { go: { perHour: 8000, power: 0.7, goPower: 4, sf14: 0 }, voidInstalls: [6.78, 15.62], why: 'Tetrads 4.9-6.2k/h early, ~20k/h from release 3: 8000/h effective, ASSUMED; both installs voided (1c484da)' },

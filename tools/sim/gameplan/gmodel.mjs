@@ -64,6 +64,16 @@ export const FEATURES = {
   lnHack: (m) => Math.log(m.HackingLevelMultiplier),
   lnWDD: (m) => Math.log(m.WorldDaemonDifficulty),
   gang: (m, n) => (GANG_NODES.has(n) ? 1 : 0),
+  // THE NODE'S OTHER MONEY AND REP CHANNELS (2026-10-14, postponed item 1): what an aug life's
+  // budget and rep come from besides the batcher (whose ScriptHackMoney x ServerMaxMoney the
+  // simulation itself prices: lnMoney above is only g's share of it), and what an aug costs in rep.
+  // BitNode/BitNode.tsx getBitNodeMultipliers: BN8 has CrimeMoney 0 and HacknetNodeMoney 0 (floored
+  // like lnMoney); BN13 0.4 / 0.4, FWRG 0.6.
+  lnHacknet: (m) => Math.log(Math.max(MONEY_FLOOR, m.HacknetNodeMoney)),
+  lnCrime: (m) => Math.log(Math.max(MONEY_FLOOR, m.CrimeMoney)),
+  lnFWRG: (m) => Math.log(m.FactionWorkRepGain),
+  lnRepCost: (m) => Math.log(m.AugmentationRepCost),
+  lnStartMoney: (m) => Math.log(m.ServerStartingMoney),
 }
 /** The candidate models: their feature lists ('hand' is economy.mjs's latent, not a regression). */
 export const MODELS = {
@@ -73,6 +83,9 @@ export const MODELS = {
   exchG: ['gang'],
   amcG: ['lnAMC', 'gang'],
   fullG: ['lnAMC', 'lnMoney', 'lnHack', 'lnWDD', 'gang'],
+  // the node's money multipliers as explicit covariates (every channel an aug life's budget and rep read)
+  money: ['lnAMC', 'lnMoney', 'lnStartMoney', 'lnHacknet', 'lnCrime', 'lnFWRG', 'lnRepCost'],
+  moneyW: ['lnAMC', 'lnMoney', 'lnStartMoney', 'lnHacknet', 'lnCrime', 'lnFWRG', 'lnRepCost', 'lnHack', 'lnWDD'],
 }
 export const MODEL_WHAT = {
   hand: "economy.mjs's latent: lo/mid/hi = min/gm/max of the runs' g x AMC^gamma as p10/p90, gamma from the AMC != 1 runs",
@@ -82,6 +95,8 @@ export const MODEL_WHAT = {
   exchG: 'hierarchical, ln g_n = b0 + b gang_n + v_n (gang_n = 1 for BN2, the native gang node)',
   amcG: 'hierarchical, ln g_n = b0 + b(ln AMC, gang) + v_n',
   fullG: 'hierarchical, ln g_n = b0 + b(ln AMC, ln money, ln HackingLevel, ln WorldDaemon, gang) + v_n',
+  money: 'hierarchical, ln g_n = b0 + b(ln AMC, ln hack money, ln ServerStartingMoney, ln HacknetNodeMoney, ln CrimeMoney, ln FactionWorkRepGain, ln AugmentationRepCost) + v_n',
+  moneyW: 'hierarchical, ln g_n = b0 + b(the money model + ln HackingLevel, ln WorldDaemon) + v_n',
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +345,16 @@ export function handMoments(h, a) {
  * LOO log predictive density of every held-out run and their sum (elpd), with
  * the predictive mean/sd for the residual table. The best model is the max elpd.
  */
-export function looCompare(runs, multsOf, { models = ['hand', ...Object.keys(MODELS)], sdObs = 0.15, opts = {} } = {}) {
+/**
+ * The regression models whose every feature is defined on BitNodes 1..14 under multsOf: a multiplier
+ * table without a field (a synthetic test table that predates the money covariates) cannot offer the
+ * models that read it — they are left out of the comparison, never fitted on NaN.
+ */
+export function modelsFor(multsOf) {
+  const ok = (k) => [...Array(14)].every((_, i) => isFinite(FEATURES[k](multsOf(i + 1), i + 1)))
+  return Object.keys(MODELS).filter((name) => MODELS[name].every(ok))
+}
+export function looCompare(runs, multsOf, { models = ['hand', ...modelsFor(multsOf)], sdObs = 0.15, opts = {} } = {}) {
   const st = featureStats(multsOf)
   const amc = (n) => multsOf(n).AugmentationMoneyCost
   const out = {}

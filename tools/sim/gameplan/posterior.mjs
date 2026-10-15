@@ -360,7 +360,10 @@ export function mergeObs(st, readings, specs = scalarSpecs()) {
 export function regressionG(econ, live, { gModel = 'auto', multsOf, gOpts = {} } = {}) {
   if (typeof multsOf !== 'function') throw new Error(`posterior: gModel '${gModel}' needs multsOf(n) (the BitNode multipliers)`)
   const runs = econ.runs.map((r) => ({ bn: r.bn, g: r.g, sd: OBS_SD.g }))
-  const loo = runs.length >= 3 ? looCompare(runs, multsOf, { opts: gOpts }) : null
+  // the model is CHOSEN by leave-one-out over every finished hacking-route clear: the base runs and,
+  // when plan.mjs supplies them (econ.looRuns, calib.mjs), the clears read since (BN12.1, BN13.1 ...)
+  const looRuns = econ.looRuns ?? runs
+  const loo = looRuns.length >= 3 ? looCompare(looRuns, multsOf, { opts: gOpts }) : null
   const chosen = gModel === 'auto' ? loo?.best ?? 'hand' : gModel
   const out = { chosen, loo, what: MODEL_WHAT[chosen], joint: null, ownG: new Map(econ.ownG), gSd: new Map() }
   if (chosen === 'hand') return out

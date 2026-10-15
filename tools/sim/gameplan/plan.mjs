@@ -173,7 +173,45 @@ if (has('--observe')) {
     tick('observe: rates re-fit', t0)
   }
 }
-const store = has('--prior') ? emptyStore() : loadStore(POST_FILE)
+let store = has('--prior') ? emptyStore() : loadStore(POST_FILE)
+
+// ---------------------------------------------------------------------------
+// 2a. ROUTE-LEVEL g (calib.mjs): every finished hacking-route clear's g is the one that makes the
+// route it PLAYED (hack, or stanek when it accepted the gift) reproduce its hours at its own entry
+// state — not the bare simulation's (the logged value, kept as gSim). --g-def sim: the old definition.
+// ---------------------------------------------------------------------------
+const OBS_SD_G = 0.15 // posterior.OBS_SD.g: one run's replay noise in ln g
+const G_DEF = arg('--g-def', has('--phase1') ? 'sim' : 'route')
+if (!['route', 'sim'].includes(G_DEF)) throw new Error(`--g-def ${G_DEF}: expected route or sim`)
+let CAL = null
+if (G_DEF === 'route') {
+  t0 = performance.now()
+  const { routeCalibrate, giftRows } = await import('./calib.mjs')
+  const { latentOf } = await import('./economy.mjs')
+  const { nodeSegments, TELEMETRY } = await import('../nodechoice/measure.mjs')
+  const gReads = appliedObs(store.observations).filter((o) => /^g\d+$/.test(o.param))
+  // every calibrated node prices its favor life against its own (world.go.played): the g's value is overridden per call
+  const calEcon = { ...econRaw, ownG: new Map([...econRaw.ownG, ...gReads.map((o) => [Number(o.param.slice(1)), 1])]) }
+  const calWorld = worldOf(calEcon, {}, { sigmaPlayed: SIGMA_P })
+  CAL = { ...routeCalibrate({ econ: econRaw, readings: gReads, segs: await nodeSegments(), world: calWorld, S, gifts: giftRows(TELEMETRY) }), world: calWorld }
+  const bad = CAL.items.filter((it) => !(it.gRoute > 0))
+  if (bad.length) throw new Error(`plan: route-level g not backed out for ${bad.map((it) => `${it.name} (${it.why})`).join('; ')} — fix it or run --g-def sim`)
+  for (const x of [econ, econRaw]) {
+    x.runs = x.runs.map((r) => ({ ...r, gSim: r.g, g: CAL.items.find((it) => it.from === 'run' && it.name === r.name).gRoute }))
+    const lat = latentOf(x.runs)
+    Object.assign(x, { gamma: lat.gamma, gScen: lat.gScen, ownG: new Map(lat.ownG) })
+    x.looRuns = CAL.items.map((it) => ({ bn: it.bn, g: it.gRoute, sd: OBS_SD_G }))
+  }
+  // the logged readings keep their logged (bare-simulation) value; the posterior applies the route-level one
+  store = {
+    ...store,
+    observations: store.observations.map((o) => {
+      const it = CAL.items.find((i) => i.from === 'reading' && i.key === o.key)
+      return it ? { ...o, value: it.gRoute, note: `${o.note ?? ''} (route-level g; logged ${o.value.toFixed(4)})` } : o
+    }),
+  }
+  tick('route-level g (calib.mjs)', t0)
+}
 const post = posteriorOf(store, econRaw, { rho: RHO_, sigmaPlayed: SIGMA_P, gModel: G_MODEL, multsOf: S.mults })
 Object.assign(econ, post.applied)
 const postSum = summarise(post, econRaw)
@@ -182,13 +220,20 @@ const RHO_DRAW = arg('--rho') ? RHO_ : econ.rho
 // ---------------------------------------------------------------------------
 // 2c. The g model's leave-one-out, and the model discrepancy fitted to it
 // ---------------------------------------------------------------------------
-const OBS_SD_G = 0.15
-const loo = looCompare(econ.runs.map((r) => ({ bn: r.bn, g: r.g, sd: OBS_SD_G })), S.mults)
+// THE CALIBRATION CHECK (CLAUDE.md "Calibrate against the live game"): every finished hacking-route
+// clear's hours predicted by the chosen g model fitted WITHOUT it (leave-one-out), through the route it
+// played at its own entry state (route-level g), against the measured hours. The same residuals fit the
+// discrepancy term. --g-def sim: the old check (bare simulation, the six base runs).
+const looData = econ.looRuns ?? econ.runs.map((r) => ({ bn: r.bn, g: r.g, sd: OBS_SD_G }))
+const loo = looCompare(looData, S.mults)
 const gChosen = post.gReg?.chosen ?? 'hand'
-const discRes = econ.runs.map((r, i) => {
+const { routeHours } = await import('./calib.mjs')
+const discRes = (CAL ? CAL.items : econ.runs).map((r, i) => {
   const p = loo.models[gChosen].per[i]
-  const mom = lnHoursMoments((g) => hackExitHours({ node: r.bn, sf: r.sfOnEntry, profile: econ.profile, g }).hours ?? Infinity, p.mean, p.sd)
-  return { bn: r.bn, name: r.name, T: r.T, r: Math.log(r.T) - mom.mean, v: mom.var, predH: Math.exp(mom.mean) }
+  const hoursOf = CAL ? (g) => routeHours({ node: r.bn, lv: r.lv, route: r.route, g, world: CAL.world, S: CAL.Sd }) : (g) => hackExitHours({ node: r.bn, sf: r.sfOnEntry, profile: econ.profile, g }).hours ?? Infinity
+  const mom = lnHoursMoments(hoursOf, p.mean, p.sd)
+  const q = (z) => hoursOf(Math.exp(p.mean + z * p.sd))
+  return { bn: r.bn, name: r.clear ?? r.name, T: r.T, r: Math.log(r.T) - mom.mean, v: mom.var, predH: Math.exp(mom.mean), p10: q(1.2816), p90: q(-1.2816), gLoo: Math.exp(p.mean), g: r.gRoute ?? r.g, gSim: r.gSim, hSim: r.hSim, route: r.route ?? 'hack' }
 })
 const discFit = fitDiscrepancy(discRes)
 if (!has('--no-disc')) econ.disc = { sd: discFit.sd, applies: (n) => !econ.ownG.has(n) }
@@ -305,12 +350,18 @@ console.log(`owed from the plan's start (${sig(start)}): ${ow.length} clears  ${
 console.log(`profile: life ${econ.profile.cycleHours.toFixed(2)}h | ${econ.profile.rates ? `exp/s and $/s FITTED (rates.mjs ${econ.profile.rates.version}: slope in ln progress level exp ${econ.profile.rates.b.toFixed(2)}, income ${econ.profile.rates.bI.toFixed(2)}; --rates const for the old constants)` : `exp rich ${econ.profile.expRich.toExponential(2)}/s poor ${econ.profile.expPoor.toExponential(2)}/s, income $${econ.profile.incomeL1.toExponential(1)}/s at level 1 (CONSTANTS, --rates const)`} | gamma ${econ.gamma.toFixed(3)} | latent g lo ${econ.gScen.lo.toFixed(3)} mid ${econ.gScen.mid.toFixed(3)} hi ${econ.gScen.hi.toFixed(3)}`)
 if (econ.rates) printRates(econ, entry)
 
-console.log('\nCHECK — each played node\'s g reproduces its measured hours (the sim re-run at the backed-out g; the g IS this calibration):')
-let worstCal = 0
-for (const r of econ.runs) {
-  const h = hackExitHours({ node: r.bn, sf: r.sfOnEntry, profile: econ.profile, g: r.g }).hours
-  worstCal = Math.max(worstCal, Math.abs(h - r.T))
-  console.log(`  CHECK ${r.name.padEnd(10)} measured ${f1(r.T)}h  model ${f1(h)}h  error ${(h - r.T).toFixed(2)}h   g ${r.g.toFixed(4)}`)
+if (CAL) {
+  console.log('\nCHECK — each finished hacking-route clear\'s ROUTE-LEVEL g reproduces its measured hours through the route it played, at its own entry state (calib.mjs, direct sims; the g IS this calibration):')
+  for (const it of CAL.items) {
+    const h = routeHours({ node: it.bn, lv: it.lv, route: it.route, g: it.gRoute, world: CAL.world, S: CAL.Sd })
+    console.log(`  CHECK ${String(it.clear).padEnd(10)} ${it.route.padEnd(6)} measured ${f1(it.T)}h  model ${f1(h)}h  error ${(h - it.T).toFixed(2)}h   g ${it.gRoute.toFixed(4)} (bare-simulation g ${it.gSim.toFixed(4)}: the route at it ${f1(it.hSim)}h)${it.gift ? '  [accepted Stanek\'s Gift]' : ''}`)
+  }
+} else {
+  console.log('\nCHECK — each played node\'s g reproduces its measured hours (the sim re-run at the backed-out g; the g IS this calibration):')
+  for (const r of econ.runs) {
+    const h = hackExitHours({ node: r.bn, sf: r.sfOnEntry, profile: econ.profile, g: r.g }).hours
+    console.log(`  CHECK ${r.name.padEnd(10)} measured ${f1(r.T)}h  model ${f1(h)}h  error ${(h - r.T).toFixed(2)}h   g ${r.g.toFixed(4)}`)
+  }
 }
 console.log(`  CHECK Bladeburner k ${BB_PARAMS.k.mid}: the live BN6 leg / bbsim median on the same fleet timing (nodechoice/bbcal6.mjs, 2026-10-02) — one node; the grid runs at intelligence ${BB_INT} (live ${entry.int ?? '?'})`)
 
@@ -338,8 +389,8 @@ console.log(`    g(node) unplayed: ${econ.gJoint ? `the ${gChosen} covariate mod
 {
   // THE g MODEL (gmodel.mjs): leave-one-out over the played runs, the model kept, the unplayed nodes' new posterior
   const names = Object.keys(loo.models)
-  console.log(`\nTHE g MODEL (gmodel.mjs) — leave-one-out over the ${econ.runs.length} played runs (log predictive density of each held-out run's ln g, reading sd ${OBS_SD_G}); --g-model ${G_MODEL} -> ${gChosen.toUpperCase()}`)
-  console.log('  model   elpd     vs best (+- s.e.)   rmse ln g   standardised LOO residual per run (' + econ.runs.map((r) => 'BN' + r.bn).join(' ') + ')')
+  console.log(`\nTHE g MODEL (gmodel.mjs) — leave-one-out over the ${looData.length} finished hacking-route clears (${CAL ? 'route-level g' : 'bare-simulation g'}; log predictive density of each held-out clear's ln g, reading sd ${OBS_SD_G}); --g-model ${G_MODEL} -> ${gChosen.toUpperCase()}`)
+  console.log('  model   elpd     vs best (+- s.e.)   rmse ln g   standardised LOO residual per run (' + looData.map((r) => 'BN' + r.bn).join(' ') + ')')
   const bestPer = loo.models[loo.best].per
   for (const k of names.sort((a, b) => loo.models[b].elpd - loo.models[a].elpd)) {
     const m = loo.models[k]
@@ -359,8 +410,8 @@ console.log(`    g(node) unplayed: ${econ.gJoint ? `the ${gChosen} covariate mod
       console.log(`  BN${String(n).padEnd(13)} ${hand.map((x) => x.toFixed(4)).join(' / ')}         ${mo.map((x) => x.toFixed(4)).join(' / ')}       ${(cs.reduce((a, b) => a + b, 0) / cs.length).toFixed(2)}`)
     })
   } else console.log(`  kept: ${gChosen} — the draws use economy.mjs's hand latent (common share ${RHO_DRAW})`)
-  console.log(`\nMODEL DISCREPANCY (discrepancy.mjs) — each played run's measured hours vs the simulated hours under the ${gChosen} model's leave-one-out g (residual r in ln hours, v = the predictive's own variance):`)
-  for (const d of discRes) console.log(`  BN${String(d.bn).padEnd(3)} measured ${d.T.toFixed(1).padStart(6)}h  predicted (median) ${d.predH.toFixed(1).padStart(6)}h  r ${d.r.toFixed(3).padStart(7)}  sqrt v ${Math.sqrt(d.v).toFixed(3)}  r/sqrt v ${(d.r / Math.sqrt(d.v)).toFixed(2)}`)
+  console.log(`\nCALIBRATION — every finished hacking-route clear: measured hours vs the ${CAL ? 'route it played (route-level g, its own entry state)' : 'bare simulation'} under the ${gChosen} model's leave-one-out g (fitted without that clear); residual r in ln hours, v = the predictive's own variance${CAL ? '. "old" = the route at the logged bare-simulation g: what the plan priced a replay of that clear at before 2026-10-14' : ''}:`)
+  for (const d of discRes) console.log(`  CHECK ${d.name.padEnd(9)} ${d.route.padEnd(6)} measured ${d.T.toFixed(1).padStart(6)}h  predicted (LOO median) ${d.predH.toFixed(1).padStart(6)}h [p10-p90 ${d.p10.toFixed(1)}-${d.p90.toFixed(1)}]  error ${(100 * (d.predH / d.T - 1)).toFixed(0).padStart(4)}%  r/sqrt v ${(d.r / Math.sqrt(d.v)).toFixed(2).padStart(5)}${Math.abs(d.r / Math.sqrt(d.v)) > 2 ? ' OUTSIDE 2 sd' : ''}  | g own ${d.g.toFixed(4)} LOO ${d.gLoo.toFixed(4)}${CAL ? `  | old: g ${d.gSim.toFixed(4)} -> route ${d.hSim.toFixed(1)}h (${(100 * (d.hSim / d.T - 1)).toFixed(0)}%)` : ''}`)
   console.log(`  discrepancy sd (ln hours, prior half-normal ${PRIOR_SD}): posterior mean ${discFit.mean.toFixed(3)}, p10 ${discFit.p10.toFixed(3)} p90 ${discFit.p90.toFixed(3)}; the draws use sqrt E[sd^2] = ${discFit.sd.toFixed(3)} on every unplayed node's hacking-route hours${has('--no-disc') ? ' — DISABLED (--no-disc)' : ''}`)
 }
 console.log('ROUTES (routes.mjs):')

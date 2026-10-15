@@ -7,7 +7,7 @@ strike items as they land (commit hashes). Check `python3 tools/usage_governor.p
 before starting each subagent.
 
 ## Planning model (highest value: these steer every node)
-1. **Cross-node growth prior ignores money multipliers.** gameplan's g for unplayed
+1. ~~**Cross-node growth prior ignores money multipliers.**~~ DONE 2026-10-14 (route-level g, calib.mjs; README "2026-10-14"): the 11x was the gift double count + route terms on a bare-simulation g, not the money mults (LOO rejects them as covariates). Original note: gameplan's g for unplayed
    nodes came from a shared difficulty factor; BN13 was priced 0.078 ln(M)/h vs 0.007
    measured (~11x, 28h vs 150-500h). Add node money multipliers (ServerMaxMoney x
    ScriptHackMoney, hacknet, crime, FactionWorkRepGain, aug cost) as explicit covariates.

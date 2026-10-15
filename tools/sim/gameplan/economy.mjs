@@ -39,6 +39,23 @@ const median = (xs) => {
 }
 export const AMC = (n) => nodeMults(n).AugmentationMoneyCost
 
+/**
+ * The hand latent from the measured runs' g ([{ bn, g }]): gamma (the AMC normalisation), gScen
+ * (lo/mid/hi of g x AMC^gamma), ownG (each run's own g; BN12 at level 1 is BN1 to within 2% on
+ * every multiplier, so it borrows BN1's — nextnode.mjs). Re-run by plan.mjs on the route-level g
+ * (calib.mjs), so the latent is built from the same g definition the routes price with.
+ */
+export function latentOf(runs) {
+  const amc1 = runs.filter((c) => AMC(c.bn) === 1)
+  const other = runs.filter((c) => AMC(c.bn) !== 1)
+  const gamma = other.map((c) => Math.log(gm(amc1.map((x) => x.g)) / c.g) / Math.log(AMC(c.bn))).reduce((a, b) => a + b, 0) / other.length
+  const norms = runs.map((c) => c.g * Math.pow(AMC(c.bn), gamma))
+  const gScen = { lo: Math.min(...norms), mid: gm(norms), hi: Math.max(...norms) }
+  const ownG = new Map(runs.map((c) => [c.bn, c.g]))
+  if (ownG.has(1)) ownG.set(12, ownG.get(1) * Math.pow(1.02, -gamma))
+  return { gamma, gScen, ownG }
+}
+
 const sfMemo = new Map()
 /** sfMults memoised by the SF pairs (the game's applySourceFile is ~ms a call). */
 export const sfMultsOf = (sf) => {
@@ -85,15 +102,7 @@ export async function measureEconomy({ rates = 'fit', inRun = null, posteriorFil
     c.T = c.s.hours
     c.g = backOutG({ node: c.bn, sf: c.s.sfOnEntry, profile }, c.T).g
   }
-  const amc1 = runs.filter((c) => AMC(c.bn) === 1)
-  const other = runs.filter((c) => AMC(c.bn) !== 1)
-  const gamma = other.map((c) => Math.log(gm(amc1.map((x) => x.g)) / c.g) / Math.log(AMC(c.bn))).reduce((a, b) => a + b, 0) / other.length
-  const norms = runs.map((c) => c.g * Math.pow(AMC(c.bn), gamma))
-  const gScen = { lo: Math.min(...norms), mid: gm(norms), hi: Math.max(...norms) }
-  // A played node keeps its own measured g; BN12 at level 1 is BN1 to within 2%
-  // on every multiplier, so it borrows BN1's (nextnode.mjs).
-  const ownG = new Map(runs.map((c) => [c.bn, c.g]))
-  ownG.set(12, ownG.get(1) * Math.pow(1.02, -gamma))
+  const { gamma, gScen, ownG } = latentOf(runs)
   const last = segs[segs.length - 1]
   const live = { bitNode: last.bitNode, hours: last.hours, sfOnEntry: last.sfOnEntry, intelligence: last.intelligence, startedAt: last.startedAt, maxLevel: last.maxLevel, bbJoinH: last.bbJoinH, combat100H: last.combat100H }
   return { runs: runs.map(({ s, ...r }) => ({ ...r, sfOnEntry: s.sfOnEntry, meanLifeH: s.meanLifeH })), profile, gamma, gScen, ownG: [...ownG.entries()], amc: Object.fromEntries([...Array(14)].map((_, i) => [i + 1, AMC(i + 1)])), live, rates: ratesFit, ratesMode: rates }
