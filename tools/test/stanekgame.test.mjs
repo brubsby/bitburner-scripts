@@ -162,6 +162,13 @@ async function sg9() {
   if (stU.want || !stU.hold) c.fail('BN11, route unknown: not wanted (never accept on an unknown route) but held', JSON.stringify(stU))
   if (!acc.accepted || acc.basis !== 'blade' || pin.route !== 'blade') c.fail("the gift accepted outside BN13 pins 'blade'", JSON.stringify({ acc: acc.basis, pin }))
   if (sp.giftOrderGate(st, { kind: 'buyaug', args: ['x', 'BitWire'] }).allow) c.fail('BN11 on the Bladeburner route before the accept: a non-NFG buyaug must be refused')
+  // the stack must ACT on the pinned route: a blade pin keeps 'blade' (2026-10-15 BN11.1: pinnedRouteOf
+  // read every pin as 'hack', forced the hacking route at 136h forgone and installed over the charge)
+  const acted = rp.pinnedRouteOf({ key: 'blade', hackH: 150, bladeH: 14 }, pin)
+  const actedH = rp.pinnedRouteOf({ key: 'hack', hackH: 150, bladeH: 14 }, pin)
+  c.examined(2)
+  if (acted.key !== 'blade') c.fail("pinnedRouteOf with the gift's blade pin must act on 'blade'", JSON.stringify(acted))
+  if (actedH.key !== 'blade') c.fail("pinnedRouteOf with the gift's blade pin must act on 'blade' even where hack prices lower", JSON.stringify(actedH))
   // routeOfProgress: only this node and life, only fresh
   const prog = (route, node = 11, lar = 1000, at = new Date().toISOString()) => JSON.stringify({ at, route: { route, node, lastAugReset: lar } })
   c.examined(4)

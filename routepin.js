@@ -59,6 +59,15 @@ export function pinnedRouteOf(d, pin) {
   if (!pin?.pinned || !d || typeof d !== 'object') return d
   const pricedKey = d.key ?? null
   const fin = (x) => typeof x === 'number' && isFinite(x)
+  // A pin to 'blade' (Stanek's Gift accepted for the Bladeburner route, giftPinOf) pins THAT
+  // route — never the hacking one. 2026-10-15 BN11.1: every pin was read as 'hack', so the
+  // gift's blade pin forced the hacking route (136h forgone) and an install wiped the charge.
+  if (pin.route === 'blade') {
+    const forgone = pricedKey === 'hack' && fin(d.hackH) && fin(d.bladeH) ? +(d.bladeH - d.hackH).toFixed(3) : pricedKey === 'blade' ? 0 : null
+    const bnote = { file: pin.file ?? ROUTE_PIN, text: pin.text ?? null, pricedKey, forgoneH: forgone }
+    if (pricedKey === 'blade' || !fin(d.bladeH)) return { ...d, pin: bnote }
+    return { ...d, key: 'blade', pin: bnote, why: `PINNED to 'blade' by ${bnote.file}: the priced route is '${pricedKey}' — ${String(d.why ?? '').slice(0, 200)}` }
+  }
   const forgoneH = pricedKey === 'blade' && fin(d.hackH) && fin(d.bladeH) ? +(d.hackH - d.bladeH).toFixed(3) : pricedKey === 'hack' ? 0 : null
   const note = { file: pin.file ?? ROUTE_PIN, text: pin.text ?? null, pricedKey, forgoneH }
   if (pricedKey !== 'blade') return { ...d, pin: note }
