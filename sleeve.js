@@ -659,6 +659,19 @@ async function act(ns, note, prevBlade = null) {
 					if (!(t?.type === 'BLADEBURNER' && t?.actionName === pick.d.name)) doTask(`sleeve ${sleeve.index} contract ${pick.d.name}`, () => ns.sleeve.setToBladeburnerAction(sleeve.index, SLEEVE_ACTION.contracts, pick.d.name))
 					return
 				}
+				// A GYM SLEEVE FOR THE PLAYER (bbplan.sleeveConfigs gym fleets, bladeExitGen
+				// sl.gym): Powerhouse on its stat — the exp reaches the player at sync
+				// (applySleeveGains). Re-issued only on a change.
+				if (sleeveTask.kind === 'bladeGym') {
+					const stat = GYM_STAT[sleeveTask.stat]
+					const t = sleeve.task
+					bladeActs.push({ i: sleeve.index, phase: 'gym', stat: sleeveTask.stat })
+					if (!stat) return
+					if (t?.type === 'CLASS' && t?.classType === stat && t?.location === POWERHOUSE) return
+					if (sleeve.city !== SECTOR12 && !doTask(`sleeve ${sleeve.index} travel ${SECTOR12}`, () => ns.sleeve.travel(sleeve.index, SECTOR12))) return
+					doTask(`sleeve ${sleeve.index} gym fleet: ${POWERHOUSE}/${stat} for the player`, () => ns.sleeve.setToGymWorkout(sleeve.index, POWERHOUSE, stat))
+					return
+				}
 				if (sleeveTask.kind === 'bladeburner' && sleeveTask.action) {
 					const t = sleeve.task
 					const already =

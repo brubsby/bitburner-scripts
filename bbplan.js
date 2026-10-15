@@ -1265,6 +1265,12 @@ export function sleeveBodyOf(s = null) {
   }
 }
 const sbOf = (b) => Math.max(0, (100 - b.shock) / 100)
+/** The stats the player's gym sleeves train (a config's gymStats): combat names; default agility + dexterity. */
+export const SLEEVE_GYM_STATS = ['agility', 'dexterity']
+export const gymStatsOfCfg = (xs) => {
+  const v = Array.isArray(xs) ? xs.filter((c) => COMBAT.includes(c)) : []
+  return v.length ? v : SLEEVE_GYM_STATS
+}
 const relevelBody = (b) => {
   for (const c of [...COMBAT, 'charisma']) b.skills[c] = levelFromExp(b.exp[c] ?? 0, b.mults[c] ?? 1)
 }
@@ -1392,6 +1398,18 @@ export function* bladeExitGen(s0, pol = POLICY) {
   // above sl.recoverTo, train at the gym below sl.trainTo, else the best contract.
   let csN = Math.max(0, Math.floor(sl.contracts ?? 0))
   let csCfg = { recoverTo: sl.recoverTo, trainTo: sl.trainTo }
+  // SLEEVES AT THE GYM FOR THE PLAYER (sl.gym of them, after the contract sleeves in
+  // sleeveTasksOf's order; sl.gymStats, default agility+dexterity, round-robin by position):
+  // a class at Powerhouse (calculateClassEarnings, SLEEVE_BB.gymExpPerSec x the stat's exp
+  // mult x shockBonus), paid out by applySleeveGains — to the player x sync, no exp mults
+  // (Work.ts:19-23) — while the passive shock recovery runs (Sleeve.ts:270). Agility enters
+  // every action's time with dexterity (Action.ts:110-119) and alone the max stamina
+  // (Bladeburner.ts:1329). Priced against the infiltrate/support/FA mixes in bbsim
+  // (tools/sim/bblevers.mjs, the game's classes): 60 paired seeds, BN7.2 i2 g4 -0.74 +/- 0.20h
+  // vs i5 f1, BN13.2 i1 s1 g4 -0.92 +/- 0.29h vs i2 f4 (NOT CALIBRATED: no live life has run it).
+  let gymN = Math.max(0, Math.floor(sl.gym ?? 0))
+  let gymStats = gymStatsOfCfg(sl.gymStats)
+  let gymBodies = []
   const allBodies = (Array.isArray(s0.sleeveBodies) ? s0.sleeveBodies : []).map((b) => sleeveBodyOf(b)).sort((a, b) => (a.i ?? 0) - (b.i ?? 0))
   let bodies = []
   const pickBodies = () => {
@@ -1399,6 +1417,8 @@ export function* bladeExitGen(s0, pol = POLICY) {
     while (allBodies.length < off + csN) allBodies.push(sleeveBodyOf(null))
     bodies = allBodies.slice(off, off + csN)
     for (const b of bodies) relevelBody(b)
+    while (allBodies.length < off + csN + gymN) allBodies.push(sleeveBodyOf(null))
+    gymBodies = allBodies.slice(off + csN, off + csN + gymN)
   }
   const csRank = { rank: 0, contracts: 0, trainS: 0 }
   // SleeveInfiltrateWork: each of n sleeves adds n^-0.5/2 to every count per 60s (Bladeburner.ts:1252-1264).
@@ -1635,7 +1655,22 @@ export function* bladeExitGen(s0, pol = POLICY) {
       for (let j = 0; j < csN; j++) if (bodies[j] !== from) bodies[j].exp[c] += g * sync * sbOf(bodies[j])
     }
   }
+  const gymStep = (secs) => {
+    for (let j = 0; j < gymBodies.length; j++) {
+      const b = gymBodies[j]
+      const sb = sbOf(b)
+      b.shock = Math.max(0, b.shock - SLEEVE_BB.passiveShockPerS * intBonus(b.skills.intelligence ?? 0) * secs)
+      const c = gymStats[j % gymStats.length]
+      const g = SLEEVE_BB.gymExpPerSec * (b.mults[`${c}_exp`] ?? 1) * sb * secs
+      if (!(g > 0)) continue
+      b.exp[c] = (b.exp[c] ?? 0) + g
+      // the other sleeves' share (x their shockBonus) is not priced: pessimistic for a contract sleeve beside it
+      person.exp[c] = (person.exp[c] ?? 0) + g * (b.sync / 100)
+    }
+    if (gymBodies.length) relevel()
+  }
   const sleeveStep = (secs, city) => {
+    if (gymN > 0 && secs > 0) gymStep(secs)
     if (!(csN > 0) || !(secs > 0)) return
     const sm = smNow ?? skillMultsOf(st.levels)
     let anyExp = false
@@ -1747,6 +1782,8 @@ export function* bladeExitGen(s0, pol = POLICY) {
         fa = x.sleeves.fa ?? 0
         csN = Math.max(0, Math.floor(x.sleeves.contracts ?? 0))
         csCfg = { recoverTo: x.sleeves.recoverTo, trainTo: x.sleeves.trainTo }
+        gymN = Math.max(0, Math.floor(x.sleeves.gym ?? 0))
+        gymStats = gymStatsOfCfg(x.sleeves.gymStats)
         pickBodies()
         infPerSec = inf > 0 ? (inf * (Math.pow(inf, -0.5) / 2)) / 60 : 0
         env.teamCount = sup
@@ -2048,9 +2085,17 @@ export function sleeveConfigs(n) {
     if (k < n) out.push({ infiltrate: k, support: n - k, fa: 0 })
   }
   out.push({ infiltrate: 0, support: n, fa: 0 }, { infiltrate: 0, support: 0, fa: n })
+  // THE GYM FLEETS (bladeExitGen sl.gym: sleeves training the player's agility/dexterity
+  // through the exp share): k at the gym, the rest all infiltrating or one infiltrating and
+  // the rest supporting — the two shapes bbsim's full mix search put on top
+  // (tools/sim/bblevers.mjs: BN7.2 i2 g4, BN13.2 i1 s1 g4).
+  for (let k = 1; k <= n; k++) {
+    out.push({ infiltrate: n - k, support: 0, fa: 0, gym: k })
+    if (n - k >= 2) out.push({ infiltrate: 1, support: n - k - 1, fa: 0, gym: k })
+  }
   const seen = new Set()
   return out.filter((c) => {
-    const k = `${c.infiltrate}|${c.support}|${c.fa}`
+    const k = `${c.infiltrate}|${c.support}|${c.fa}|${c.gym ?? 0}`
     if (seen.has(k)) return false
     seen.add(k)
     return true
@@ -2085,7 +2130,7 @@ export function sleeveContractConfigs(n) {
   ]
 }
 /** A configuration's key (fleet events, the incumbent match): i/s/f, and c with its schedule where it has contracts. */
-export const sleeveConfigKey = (c) => (c ? `i${c.infiltrate ?? 0}s${c.support ?? 0}f${c.fa ?? 0}${c.contracts > 0 ? `c${c.contracts}${Number.isFinite(c.recoverTo) ? `r${c.recoverTo}` : ''}${Number.isFinite(c.trainTo) ? `t${c.trainTo}` : ''}` : ''}` : null)
+export const sleeveConfigKey = (c) => (c ? `i${c.infiltrate ?? 0}s${c.support ?? 0}f${c.fa ?? 0}${c.gym > 0 ? `g${c.gym}` : ''}${c.contracts > 0 ? `c${c.contracts}${Number.isFinite(c.recoverTo) ? `r${c.recoverTo}` : ''}${Number.isFinite(c.trainTo) ? `t${c.trainTo}` : ''}` : ''}` : null)
 
 /**
  * The sleeves' Bladeburner assignment, priced as exits: every configuration
@@ -2152,7 +2197,7 @@ export function bladeFleetOf(fleet, { lifeStart = null } = {}) {
   const c = fleet.blade?.config
   // The bodies (sleeve.txt persons): what a contract sleeve trains and rolls with (bladeStartOf sleeveBodies).
   const bodies = Array.isArray(fleet.persons) ? fleet.persons.map((x) => sleeveBodyOf(x)) : null
-  if (c && typeof c === 'object') return { sleeves: { infiltrate: c.infiltrate ?? 0, support: c.support ?? 0, fa: c.fa ?? 0, ...(c.contracts > 0 ? { contracts: c.contracts, ...(Number.isFinite(c.recoverTo) ? { recoverTo: c.recoverTo } : {}), ...(Number.isFinite(c.trainTo) ? { trainTo: c.trainTo } : {}) } : {}) }, bodies, source: 'committed', why: `sleeve.js's committed fleet (${fleet.blade?.why ?? 'blade.config'})` }
+  if (c && typeof c === 'object') return { sleeves: { infiltrate: c.infiltrate ?? 0, support: c.support ?? 0, fa: c.fa ?? 0, ...(c.contracts > 0 ? { contracts: c.contracts, ...(Number.isFinite(c.recoverTo) ? { recoverTo: c.recoverTo } : {}), ...(Number.isFinite(c.trainTo) ? { trainTo: c.trainTo } : {}) } : {}), ...(c.gym > 0 ? { gym: c.gym, ...(Array.isArray(c.gymStats) ? { gymStats: c.gymStats } : {}) } : {}) }, bodies, source: 'committed', why: `sleeve.js's committed fleet (${fleet.blade?.why ?? 'blade.config'})` }
   const out = { ...zero }
   const other = []
   for (const a of Array.isArray(fleet.assigned) ? fleet.assigned : []) {
@@ -2378,7 +2423,11 @@ export function sleeveTasksOf(config, n) {
     else if (i < config.infiltrate + config.support + config.fa) out.push({ kind: 'bladeburner', action: GENERAL.fieldAnalysis })
     // A contract sleeve: sleeve.js runs sleevePhaseOf on its body each pass (recover / gym / the best contract).
     else if (i < config.infiltrate + config.support + config.fa + (config.contracts ?? 0)) out.push({ kind: 'bladeContract', recoverTo: config.recoverTo ?? null, trainTo: config.trainTo ?? null })
-    else out.push(null)
+    // A gym sleeve for the player (bladeExitGen sl.gym): Powerhouse on its stat, round-robin over gymStats by position.
+    else if (i < config.infiltrate + config.support + config.fa + (config.contracts ?? 0) + (config.gym ?? 0)) {
+      const st = gymStatsOfCfg(config.gymStats)
+      out.push({ kind: 'bladeGym', stat: st[(i - config.infiltrate - config.support - config.fa - (config.contracts ?? 0)) % st.length] })
+    } else out.push(null)
   }
   return out
 }

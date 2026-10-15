@@ -7557,7 +7557,16 @@ async function act(ns, canJoin, info, note) {
   const bladeGymStep = (() => {
     if (!bladeOn) return null
     const target = Math.max(JOIN_COMBAT, BB_POLICY.gymTo)
-    const short = Object.fromEntries(['strength', 'defense', 'dexterity', 'agility'].filter((k) => (player.skills?.[k] ?? 0) < target).map((k) => [k, target]))
+    let short = Object.fromEntries(['strength', 'defense', 'dexterity', 'agility'].filter((k) => (player.skills?.[k] ?? 0) < target).map((k) => [k, target]))
+    // THE SIMULACRUM'S GYM (Bladeburner.ts:179, :1355: installed, the player's work no longer
+    // cancels the action): the class runs BESIDE the actions on the lowest combat stat, as both
+    // exit models price it (bbplan.bladeExitGen gymParallel; bbsim, whose SF7.3 cells the gameplan
+    // prices — SF7.3 grants it at the join). Without this the slot idled while the plan credited
+    // the exp. One leg per pass: the lowest stat, a step past where it is.
+    if (!Object.keys(short).length && installedCount?.has?.(SIMULACRUM)) {
+      const low = ['strength', 'defense', 'dexterity', 'agility'].reduce((a, k) => ((player.skills?.[k] ?? 0) < (player.skills?.[a] ?? 0) ? k : a))
+      short = { [low]: (player.skills?.[low] ?? 0) + 1 }
+    }
     if (!Object.keys(short).length) return null
     const person = levelledPerson(player, info)
     const legs = gymLegs(short, person, ns.hacknet.getTrainingMult())

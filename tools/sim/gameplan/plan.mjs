@@ -600,7 +600,7 @@ if (!has('--phase1') && FLEET !== 'five') {
   console.log('  clear     CM    hack  @10.1   10.2   10.3 | blade @10.1  10.2   10.3 | pick 5        6         7          ratio 6   7')
   const l6 = Math.max(1, Math.min(3, lvl(start, 6)))
   const l7 = Math.min(3, lvl(start, 7))
-  const ck = (c) => (c ? `i${c.infiltrate}s${c.support}f${c.fa}` : '-')
+  const ck = (c) => (c ? `i${c.infiltrate}s${c.support}f${c.fa}${c.gym > 0 ? `g${c.gym}` : ''}` : '-')
   for (const n of [...new Set(owed(start))].sort((a, b) => a - b)) {
     const row = [1, 2, 3].map((l) => clearTime(n, lvWith(start, 10, l), w, S).by)
     const hk = row.map((b) => f1(b.hack ?? b.go ?? null))

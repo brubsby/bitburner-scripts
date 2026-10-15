@@ -90,8 +90,10 @@ export const BB_FLEET_MAX = 8
 export const BB_SEL_SEEDS = [101, 102, 103, 104, 105]
 export const BB_SEL_CELL = [1, 0]
 /** sleeveConfigs(n) without the all-idle fleet: the mixes the live chooser compares. */
-export const fleetConfigs = (bp, n) => bp.sleeveConfigs(n).filter((c) => c.infiltrate + c.support + c.fa > 0)
-const cfgKey = (c) => `i${c.infiltrate}s${c.support}f${c.fa}`
+export const fleetConfigs = (bp, n) => bp.sleeveConfigs(n).filter((c) => c.infiltrate + c.support + c.fa + (c.gym ?? 0) > 0)
+const cfgKey = (c) => `i${c.infiltrate}s${c.support}f${c.fa}${c.gym > 0 ? `g${c.gym}` : ''}`
+/** A gym fleet's stats as the live model prices them (bbplan.gymStatsOfCfg: default agility + dexterity), spelled out so bbsim trains the same. */
+const bbGymStatsOf = (c) => (Array.isArray(c.gymStats) && c.gymStats.length ? c.gymStats : ['agility', 'dexterity'])
 
 const sha = (...parts) => {
   const h = crypto.createHash('sha1')
@@ -163,7 +165,7 @@ export const hackKeyOf = (curve, g, profile) => sha(HACK_CODE, JSON.stringify({ 
  */
 export const bbSpec = (n, l6, l7, seed, bbPolicy, fleet = null, go = null) => ({
   node: n, sf: [...BB_BASE, ...(l6 ? [[6, l6]] : []), ...(l7 ? [[7, l7]] : [])], g: 0, installEveryH: null, intelligence: BB_INT, hacking: 200, seed, maxH: 400,
-  policy: { shared: true, sharedPolicy: bbPolicy, sleeves: fleet ? { infiltrate: fleet.infiltrate, support: fleet.support, fa: fleet.fa } : { infiltrate: BB_SLEEVES }, gymTo: 100, useEst: false },
+  policy: { shared: true, sharedPolicy: bbPolicy, sleeves: fleet ? { infiltrate: fleet.infiltrate, support: fleet.support, fa: fleet.fa, ...(fleet.gym > 0 ? { gym: fleet.gym, gymStats: bbGymStatsOf(fleet) } : {}) } : { infiltrate: BB_SLEEVES }, gymTo: 100, useEst: false },
   ...(go ? { go } : {}),
 })
 /**

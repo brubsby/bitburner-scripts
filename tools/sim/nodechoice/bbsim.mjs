@@ -215,6 +215,17 @@ function pickCity(bb, pol) {
 }
 
 const GYM = g.LocationName.Sector12PowerhouseGym
+/** The stats a gym order trains (pol.train.stats, pol.sleeves.gymStats): combat stat names; default all four. */
+export const gymStatsOf = (xs) => {
+  const v = Array.isArray(xs) ? xs.filter((s) => COMBAT.includes(s)) : []
+  return v.length ? v : COMBAT
+}
+/** The lowest of `stats` (below `to`, when given) — the gym class the player takes next. */
+const lowestOf = (P, stats, to = Infinity) => {
+  let low = null
+  for (const s of stats) if (P.skills[s] < to && (!low || P.skills[s] < P.skills[low])) low = s
+  return low
+}
 
 /** One step of the player at the gym on the lowest combat stat (Work/Formulas.ts:108 calculateClassEarnings, per cycle). */
 function gymStep(P, seconds, stat = null) {
@@ -291,6 +302,7 @@ export function runBladeburner(o) {
     let stGift = null
     let stM = null
     let stNext = 0
+    let stT0 = 0
     const genesis = stC ? g.Augmentations[sp.GENESIS]?.mults : null
     if (stC) {
       if (!genesis) throw new Error(`bbsim o.stanek: no '${sp.GENESIS}' augmentation in the bundle`)
@@ -312,7 +324,8 @@ export function runBladeburner(o) {
     const stanekStep = (t) => {
       if (!stGift || t < stNext) return
       stNext = t + 60
-      const nm = sp.layoutMults(stGift.placed, stC.chargeAt(t), stGift.nodePower)
+      // an install clears every fragment's charge (CotMG/StaneksGift.ts:228-230 prestigeAugmentation): the charger restarts at stT0
+      const nm = sp.layoutMults(stGift.placed, stC.chargeAt(t - stT0), stGift.nodePower)
       for (const [k, v] of Object.entries(nm)) if (typeof P.mults[k] === 'number' && v !== (stM?.[k] ?? 1)) P.mults[k] *= v / (stM?.[k] ?? 1)
       stM = nm
       P.updateSkillLevels()
@@ -377,7 +390,7 @@ export function runBladeburner(o) {
             ? new g.SleeveSupportWork()
             : i < nInf + nSup + nFa
               ? new g.SleeveBladeburnerWork({ actionId: { type: T.General, name: g.BladeburnerGeneralActionName.FieldAnalysis } })
-              : new g.SleeveClassWork({ classType: g.GymType[COMBAT[i % 4]], location: GYM }),
+              : new g.SleeveClassWork({ classType: g.GymType[gymStatsOf(pol.sleeves?.gymStats)[(i - nInf - nSup - nFa) % gymStatsOf(pol.sleeves?.gymStats).length]], location: GYM }),
       ),
     )
     if (o.setup) fleetStarted = true
@@ -396,6 +409,20 @@ export function runBladeburner(o) {
     let gymming = !!o.gymFirst // o.gymFirst: a retrain to pol.gymTo before acting (a live-start arm)
     let leg = null // the retrain's current gym class {stat, until}
     let installs = 0
+    // THE PLAYER'S TRAINING (pol.train {stats, to, start, rest}): the work slot at the gym on the
+    // lowest of `stats` — start: after the join, before the first action, to level `to`;
+    // rest: instead of the rest action while stamina refills (the work slot is the action
+    // slot: a class cancels the Bladeburner action without the Simulacrum, Bladeburner.ts:179,
+    // :1355 — stamina still regenerates at its base rate, Bladeburner.ts:1376-1378, but not
+    // the chamber's 1%/min, :1198-1203). With The Blade's Simulacrum installed (SF7.3 grants
+    // it at the join, PlayerObjectBladeburnerMethods.ts:13-19; o.buySimulacrum buys it with
+    // an install) the class runs BESIDE every action instead, and an install's retrain does not
+    // block (bbplan.bladeExitGen gymParallel, the live model).
+    const train = pol.train ?? null
+    const trainStats = gymStatsOf(train?.stats)
+    let startTrain = !!train?.start && !o.setup
+    let restGym = false
+    let simOn = (new Map(sf).get(7) ?? 0) >= 3 || o.simulacrum === true
     let nextInstall = every ? every * 3600 : Infinity
     const maxS = maxH * 3600
     const trace = []
@@ -441,6 +468,11 @@ export function runBladeburner(o) {
       const pick = pol.choose ? pol.choose(viewOf(), sharedPol, { t, bb, P, g, resting }) : bp.chooseAction(viewOf(), sharedPol)
       if (pick.restAs) resting = pick.restAs === 'rest'
       if (pick.city) bb.city = pick.city
+      restGym = !!train?.rest && !simOn && resting && pick.type === T.General && pick.name === g.BladeburnerGeneralActionName.HyperbolicRegen
+      if (restGym) {
+        if (bb.action) bb.resetAction()
+        return
+      }
       const id = { type: pick.type, name: pick.name }
       if (pick.level) bb.getActionObject(id).level = pick.level
       const cur = bb.action
@@ -495,6 +527,11 @@ export function runBladeburner(o) {
           if (faction.playerReputation >= a.repCost * mults.AugmentationRepCost) owned.add(a.name)
         }
       }
+      // THE BLADE'S SIMULACRUM (o.buySimulacrum): bought with this install when the faction's
+      // reputation covers it (Augmentations.ts:284 repCost 1.25e3 x AugmentationRepCost; its
+      // $150b is not binding here, see the header). Installed, the player's work no longer
+      // cancels the action (Bladeburner.ts:179, :1355): the gym runs beside it (pol.train).
+      if (o.buySimulacrum && !simOn && faction.playerReputation >= 1.25e3 * mults.AugmentationRepCost) simOn = true
       faction.prestigeAugmentation() // rep -> favor (Faction.ts:77)
       // prestigeAugmentation resets EVERY exp (PlayerObjectGeneralMethods.ts:95-101) — charisma
       // too, which the contracts and Investigation/Undercover weigh 0.1-0.25. Hacking
@@ -506,13 +543,18 @@ export function runBladeburner(o) {
         goT0 = t
         goNext = t
       }
+      if (stGift) {
+        stM = null // the charge is cleared: the layout's multipliers restart from none (Genesis stays)
+        stT0 = t
+        stNext = t
+      }
       applyMults()
       applyGift()
       P.updateSkillLevels()
       P.hp.current = P.hp.max
       bb.prestigeAugmentation() // resetAction + joinFaction (Bladeburner.ts:260)
       installs++
-      gymming = true
+      gymming = !simOn // with the Simulacrum the retrain runs beside the actions (below)
       leg = null
       // The install restarts bladeburner.js, whose first pass spends at once
       // (on the reset stats) and starts its hourly clock there — as the exit
@@ -545,6 +587,21 @@ export function runBladeburner(o) {
           decide()
         }
       }
+      if (!gymming && startTrain) {
+        // the start's training leg: the slot at the gym, no action, until every listed stat is at `to`
+        if (bb.action) bb.resetAction()
+        const s = lowestOf(P, trainStats, train.to ?? 100)
+        if (s) gymStep(P, STEP, s)
+        else {
+          startTrain = false
+          decide()
+        }
+      } else if (!gymming && (restGym || simOn)) {
+        // resting at the gym, or the Simulacrum's class beside the action: the lowest listed stat below
+        // the bar first (an install's retrain), then the lowest listed stat
+        const s = lowestOf(P, COMBAT, gymTarget()) ?? lowestOf(P, trainStats)
+        if (s) gymStep(P, STEP, s)
+      }
       if (o.perTick) o.perTick({ t, P, bb, g })
       goStep(t)
       stanekStep(t)
@@ -556,7 +613,7 @@ export function runBladeburner(o) {
       if (fleetStarted) for (const s of P.sleeves) s.process(STEP * 5)
       t += STEP
       if (bb.rank >= C.RankNeededForFaction && !faction.isMember) bb.joinFaction()
-      if (!gymming && (!bb.action || bb.actionTimeCurrent === 0 || bb.actionTimeCurrent < STEP)) decide()
+      if (!gymming && !startTrain && (!bb.action || bb.actionTimeCurrent === 0 || bb.actionTimeCurrent < STEP)) decide()
       if (o.onStep) o.onStep({ t, P, bb })
       if (t % 36000 < STEP) trace.push({ h: +(t / 3600).toFixed(1), rank: Math.round(bb.rank), bo: bb.numBlackOpsComplete, str: P.skills.strength, agi: P.skills.agility, augMult: +augMult.toFixed(2), bbAugs: owned.size })
     }
@@ -573,6 +630,7 @@ export function runBladeburner(o) {
       rank: bb.rank,
       blackOps: bb.numBlackOpsComplete,
       installs,
+      simulacrum: simOn,
       bbAugs: owned.size,
       augMult,
       goEffect: goC ? +goEff.toFixed(4) : null,
