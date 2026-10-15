@@ -3033,9 +3033,30 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
  * linear in its RAM. Never throws (planDecide records a throw).
  */
 const STANEK_REPRICE_MS = 15 * 60e3
-async function stanekDecisionOf(ns, info, inputsFn) {
+async function stanekDecisionOf(ns, info, inputsFn, route = null) {
   const pc = planCtxOf(ns, info)
-  const gift = giftStateOf(info, canAccessCotMG(info))
+  const gift = giftStateOf(info, canAccessCotMG(info), route)
+  // THE BLADEBURNER ROUTE'S GIFT (stanekplan.giftWantOf, basis 'blade'): accepted at the node's
+  // start iff the Bladeburner exit WITH it beats the exit WITHOUT it — both simulated by bbsim on
+  // shared seeds (tools/sim/bbstanek.mjs -> stanekplan.BLADE_GIFT_PRICED: withH - withoutH,
+  // NOT CALIBRATED). No install on this route, so the charge is the node's; the charger holds the
+  // biggest rooted host (stanek.js, stanekplan.bladeChargeFOf) — no fleet fraction to price here.
+  if (gift.basis === 'blade') {
+    const p = gift.priced
+    pc.decisions.stanek = {
+      key: gift.accepted ? 'accepted' : gift.want ? 'accept' : gift.hold ? 'hold' : 'never',
+      f: null,
+      basis: 'blade',
+      withH: p?.withH ?? null,
+      withoutH: p?.withoutH ?? null,
+      deltaH: p?.d ?? null,
+      why: `${gift.accepted ? 'accepted' : gift.want ? 'ACCEPT (stanek.js accepts on its next pass)' : gift.hold ? 'HELD open' : 'never'}: ${gift.wantWhy ?? gift.why}`.slice(0, 400),
+      charger: 'stanek.js: the biggest rooted host (stanekplan.bladeChargeFOf, at most BLADE_F_MAX of the fleet)',
+      calibration: 'NOT CALIBRATED: no Bladeburner node has run with the gift (bbsim both arms; the charger BLADE_HOST mid; money on the charger host not priced)',
+      decidedAt: new Date().toISOString(),
+    }
+    return pc.decisions.stanek
+  }
   if (!gift.accepted) {
     pc.decisions.stanek = { key: null, f: null, why: `no charging to price: ${gift.why}`, held: false }
     return pc.decisions.stanek
@@ -7500,9 +7521,8 @@ async function act(ns, canJoin, info, note) {
   // (ns.read is 0GB), published every pass in /tel/progress.txt `route`.
   const routePin = (() => {
     try {
-      // STANEK'S GIFT ACCEPTED: the gameplan's 'stanek' route is the hacking
-      // route + gift (the Bladeburner route with the gift is NOT PRICED,
-      // tools/sim/gameplan/routes.mjs), so the gift pins 'hack' where no file does.
+      // STANEK'S GIFT ACCEPTED pins the route it was accepted for (routepin.giftPinOf):
+      // BN13's is the hacking route + gift, anywhere else the Bladeburner route's ('bladeStanek').
       return giftPinOf(routePinOf(ns.read(ROUTE_PIN), info?.currentNode ?? null), giftStateOf(info, canAccessCotMG(info)))
     } catch (e) {
       return { pinned: false, file: ROUTE_PIN, warn: `the route pin could not be read: ${String(e).slice(0, 120)}`, why: 'pin unread' }
@@ -7522,7 +7542,8 @@ async function act(ns, canJoin, info, note) {
     : null
   const bladeOn = bladeRoute?.key === 'blade'
   // Published with the route it produced: acted, priced, pinned, forgone hours.
-  const routeOut = routeReportOf(routePin, bladeRoute)
+  // node + life on the route record: stanekplan.routeOfProgress acts on it only for this node and life
+  const routeOut = { ...routeReportOf(routePin, bladeRoute), node: info?.currentNode ?? null, lastAugReset: info?.lastAugReset ?? null }
   if (routePin.pinned) did.push(`ROUTE PINNED to '${routeOut.route}' by ${ROUTE_PIN} (priced '${routeOut.priced ?? 'none'}', ${typeof routeOut.forgoneH === 'number' ? routeOut.forgoneH.toFixed(1) + 'h forgone' : 'forgone hours unpriced'}) — ${routePin.why}`.slice(0, 500))
   if (routePin.warn) todo.push(`ROUTE PIN: ${routePin.warn}`)
   // THE BLADE'S SIMULACRUM (bladeRouteOf's verdict, priced on the black-op
@@ -7634,8 +7655,10 @@ async function act(ns, canJoin, info, note) {
   // THE 4S TIX API, on the same basis and inputs (the grafts committed just above carried).
   const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info), offers, allCount, player)) : null
   const fourSHold = fourSHoldOf(fourSDecision, fourSOwnedNow, info?.lastAugReset ?? null)
-  // STANEK'S CHARGING ALLOCATION, on the same inputs (stanekDecisionOf): only where the gift is accepted.
-  if (giftStateOf(info, canAccessCotMG(info)).accepted) await stanekDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)))
+  // STANEK'S CHARGING ALLOCATION, on the same inputs (stanekDecisionOf): where the gift is accepted,
+  // and on the Bladeburner route its accept decision (priced, basis 'blade') before and after the accept.
+  const giftNow = giftStateOf(info, canAccessCotMG(info), routeOut?.route ?? null)
+  if (giftNow.accepted || giftNow.basis === 'blade') await stanekDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), routeOut?.route ?? null)
   if (fourSHold.why && !fourSHold.hold) todo.push(fourSHold.why)
   if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work, player.skills?.intelligence ?? 0)
   const graftStep = (() => {

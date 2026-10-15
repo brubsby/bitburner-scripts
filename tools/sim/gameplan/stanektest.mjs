@@ -130,7 +130,10 @@ try {
 
   // (6) the optimiser's layouts in a real gift: placeable, the boost, the effect, calculateMults
   const weights = sp.hackWeights({ Hg: 2.5, epsM: 0.09, epsR: 0.12 })
-  const keys = ['hacking', 'hacking_exp', 'hacking_speed', 'hacking_money', 'hacking_grow', 'faction_rep']
+  // every key layoutMults carries (stanekplan.LAYOUT_MULT_KEYS: the hacking route's six and the combat /
+  // charisma / crime / work / hacknet / bladeburner_* keys bbsim's gift reads), on the hacking layouts AND a
+  // layout of every other fragment type (below)
+  const keys = sp.LAYOUT_MULT_KEYS
   const placedNotes = []
   for (const [n, l] of [[2, 1], [10, 1], [1, 0], [13, 0], [5, 1]]) {
     const m = setNode(n)
@@ -154,10 +157,47 @@ try {
     for (const k of keys) check(near(gm[k], mm[k]), `BN${n} calculateMults ${k}: game ${gm[k]} model ${mm[k]}`)
     const cl = sp.compileLayout(lay.placed)
     const fast = sp.multsAt(cl, sp.chargeFactor(charge.highestCharge, charge.numCharge), m.StaneksGiftPowerMultiplier)
-    for (const k of keys) check(near(fast[k], gm[k], 1e-12), `BN${n} multsAt ${k}: game ${gm[k]} fast path ${fast[k]}`)
+    for (const k of Object.keys(fast)) check(near(fast[k], gm[k], 1e-12), `BN${n} multsAt ${k}: game ${gm[k]} fast path ${fast[k]}`)
     placedNotes.push(`BN${n} SF13.${l} ${real.width()}x${real.height()}: ${lay.placed.length} placed, boosts ${b.filter((x, i) => sp.fragmentById(lay.placed[i].id).type !== sp.TYPE.Booster).map((x) => x.toFixed(2)).join('/')}, hacking x${gm.hacking.toFixed(3)}`)
   }
-  out.notes.push(`(6) optimiser layouts placed with StaneksGift.place, every effect (boost included) and calculateMults (the six keys the model reads; multsAt's fast path too) identical: ${placedNotes.join('; ')}`)
+  out.notes.push(`(6) optimiser layouts placed with StaneksGift.place, every effect (boost included) and calculateMults (every LAYOUT_MULT_KEYS key; multsAt's fast path on its six) identical: ${placedNotes.join('; ')}`)
+
+  // (6b) THE BLADEBURNER LAYOUTS (stanekplan.BLADE_LAYOUTS, the gift bbsim prices) and a layout of every
+  // other type (charisma, crime, work money, hacknet money) in the game's gift: placeable at their grid,
+  // and calculateMults identical on every key — the combat stat + exp and the four bladeburner_* keys
+  // bbsim's o.stanek merges into the player (StaneksGift.ts:134-205)
+  const bladeNotes = []
+  const other = { [sp.TYPE.Charisma]: 1, [sp.TYPE.Crime]: 1, [sp.TYPE.WorkMoney]: 1, [sp.TYPE.HacknetMoney]: 1 }
+  const cases = [...Object.keys(sp.BLADE_LAYOUTS).map((key) => ({ key, placed: sp.BLADE_LAYOUTS[key] })), { key: '7x7|2', placed: null }]
+  for (const cs of cases) {
+    const [w, h] = cs.key.split('|')[0].split('x').map(Number)
+    const pw = Number(cs.key.split('|')[1])
+    // a node and SF13 level giving this grid and power
+    let hit = null
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) for (const l of [0, 1, 2, 3]) {
+      if (hit) break
+      const m = setNode(n)
+      setSf13(l)
+      const gft = new g.StaneksGift()
+      if (gft.width() === w && gft.height() === h && m.StaneksGiftPowerMultiplier === pw) hit = { n, l, m }
+    }
+    check(!!hit, `no node/SF13 level gives the grid ${cs.key}`)
+    if (!hit) continue
+    const m = setNode(hit.n)
+    setSf13(hit.l)
+    const real = new g.StaneksGift()
+    const placed = cs.placed ?? sp.optimiseLayout({ width: w, height: h, weights: other, c: 0.3, nodePower: pw, budget: 2e5 }).placed
+    let ok = true
+    for (const p of placed) ok = real.place(p.x, p.y, p.rot, g.FragmentById(p.id)) && ok
+    check(ok, `${cs.key}: layout not placeable in the game's gift (BN${hit.n} SF13.${hit.l})`)
+    const charge = { highestCharge: 777, numCharge: 4321 }
+    for (const a of real.fragments) Object.assign(a, charge)
+    const gm = real.calculateMults()
+    const mm = sp.layoutMults(placed, charge, m.StaneksGiftPowerMultiplier)
+    for (const k of keys) check(near(gm[k], mm[k]), `${cs.key} (BN${hit.n}) calculateMults ${k}: game ${gm[k]} model ${mm[k]}`)
+    bladeNotes.push(`${cs.key}${cs.placed ? '' : ' (charisma/crime/work/hacknet)'}: agility x${gm.agility.toFixed(3)} success x${gm.bladeburner_success_chance.toFixed(3)} charisma x${gm.charisma.toFixed(3)}`)
+  }
+  out.notes.push(`(6b) the Bladeburner layouts + an every-other-type layout in the game's gift, calculateMults identical on all ${keys.length} keys: ${bladeNotes.join('; ')}`)
 
   // (7) the penalty augmentations (Augmentations.ts:1593-1705)
   const aug = (name) => g.Augmentations[name]

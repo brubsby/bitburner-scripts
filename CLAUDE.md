@@ -301,7 +301,13 @@ life length decision prices each option L at the gift's life-average over L
 lifeInputsOf and lifeTableGen; tests GL1-GL5). batch.js keeps the charger's shortfall free per host
 (`stanekHoldsOf`). Health: GIFT NOT ACCEPTED / FRAGMENTS NOT CHARGING (the
 binding cause named, or the gift's own charge mass flat) / STANEK STALE.
-Tests: SG1-SG8.
+Tests: SG1-SG9.
+**Outside BN13 the gift is the Bladeburner route's** (2026-10-15): `stanekplan.giftWantOf` wants it
+where progress.txt's route (this node and life, `routeOfProgress`) is 'blade' and the priced exit wins
+(`BLADE_GIFT_PRICED`: bbsim with vs without, `tools/sim/bbstanek.mjs --table`, NOT CALIBRATED); an unknown
+route HOLDS the option (gate refuses, nothing accepted). stanek.js then places `BLADE_LAYOUTS` (combat:
+agility/dexterity/Bladeburner + boosters, weights = bbsim elasticities) and charges on the biggest host
+(`bladeChargeFOf`); the accepted gift pins 'blade'. The gameplan prices it as route 'bladeStanek'.
 
 **Early-game Singularity: act.js.** progress.js refuses to run until home spares
 its whole acting block (1,305GB at SF4.1). `act.js` (~6GB, anywhere) decides with

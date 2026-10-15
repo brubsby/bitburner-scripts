@@ -92,11 +92,10 @@ export function routeReportOf(pin, d) {
 }
 
 /**
- * STANEK'S GIFT PINS THE HACKING ROUTE. The gameplan's 'stanek' route is the
- * hacking route with the gift accepted at the node's start
- * (tools/sim/gameplan/routes.mjs); the Bladeburner route with the gift is NOT
- * PRICED there (bbsim has no Stanek multipliers), and the layout is chosen for
- * the hacking channels (stanekplan.hackWeights). So where the gift is accepted
+ * STANEK'S GIFT PINS THE ROUTE IT WAS ACCEPTED FOR. BN13's is the gameplan's
+ * 'stanek' route (the hacking route + gift, layout for the hacking channels);
+ * elsewhere the stack accepts only for the Bladeburner route ('bladeStanek',
+ * stanekplan.giftWantOf, the combat layout BLADE_LAYOUTS) and pins 'blade'. So where the gift is accepted
  * (stanekplan.giftStateOf(resetInfo, sfgate.canAccessCotMG(resetInfo)).accepted) and no file pins anything, the
  * route acted on is 'hack' — through pinnedRouteOf like the file pin, so the
  * priced route and the hours forgone are published beside it. A file pin, or a
@@ -104,14 +103,20 @@ export function routeReportOf(pin, d) {
  */
 export function giftPinOf(pin, gift) {
   if (pin?.pinned || !gift?.accepted) return pin
+  // the basis the gift was accepted for (stanekplan.giftStateOf): BN13's is the hacking route's,
+  // anywhere else only the Bladeburner route accepts (stanekplan.giftWantOf) — its layout is combat
+  const route = gift.basis === 'blade' ? 'blade' : 'hack'
   return {
     ...(pin ?? {}),
     pinned: true,
-    route: 'hack',
+    route,
     node: gift.node ?? null,
     file: '/tel/stanek.txt',
     text: "Stanek's Gift accepted",
     warn: pin?.warn ?? null,
-    why: `Stanek's Gift is accepted in BitNode ${gift.node}: the gameplan's 'stanek' route is the hacking route + gift (the Bladeburner route with the gift is not priced) — pinned to 'hack'`,
+    why:
+      route === 'hack'
+        ? `Stanek's Gift is accepted in BitNode ${gift.node}: the gameplan's 'stanek' route is the hacking route + gift — pinned to 'hack'`
+        : `Stanek's Gift is accepted in BitNode ${gift.node} for the Bladeburner route (the gameplan's 'bladeStanek', combat layout) — pinned to 'blade'`,
   }
 }

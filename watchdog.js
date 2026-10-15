@@ -612,7 +612,7 @@ const WATCHED = [
     trigger: (ns) => canAccessFeature(ns.getResetInfo(), 10),
   },
   // STANEK'S GIFT (stanek.js, ~20.5GB while it runs): accepts the gift at the
-  // node's start where the stack accepts it (stanekplan.GIFT_NODES: BN13),
+  // node's start where the stack wants it (stanekplan.giftWantOf: BN13, and the Bladeburner route where its priced exit wins),
   // places the layout, (re)launches charge.js on the FLEET's rooted hosts at
   // the plan's thread count (chargeFragment charges from any server), publishes /tel/stanek.txt, exits. Every 5 min (JOB_MIN_INTERVAL)
   // where the Church is reachable at all — BN13 or SF13 held, the getResetInfo

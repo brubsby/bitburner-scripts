@@ -63,6 +63,7 @@ import '../../test/gameresolve.mjs'
 import g, { setBitNode } from './game.mjs'
 // bbplan.js imports by the game's bare spelling ('coop.js'): load it after gameresolve's hook is registered.
 const bp = await import('bbplan.js')
+const sp = await import('../../../stanekplan.js')
 const gp = await import('goplan.js')
 
 const T = g.BladeburnerActionType
@@ -243,6 +244,15 @@ function gymStep(P, seconds, stat = null) {
  *        goplan.effectAt, applied as updateGoMults does, effect.ts:59-63), re-read every
  *        60s of sim time; an install zeroes it (Go/Go.ts:34-47 prestigeAugmentation) and
  *        it regrows from 0 — the wipe bbplan's live exit prices (1c484da) }
+ *      stanek: { placed: [{id, x, y, rot}], chargeAt(tSec) -> {highestCharge, numCharge} } | null —
+ *        STANEK'S GIFT accepted at the node's start: Genesis's multipliers (the game's
+ *        Augmentations["Stanek's Gift - Genesis"], x0.9 combat/charisma/hacking) from t 0, and
+ *        the layout's calculateMults (stanekplan.layoutMults — the game's StaneksGift.calculateMults
+ *        transcribed, every key checked identical against the game's class in ST1:
+ *        combat stat + exp, charisma, the four bladeburner_* keys) at chargeAt's charge, re-read
+ *        every 60s of sim time, merged multiplicatively as StaneksGift.updateMults does. The
+ *        layout must be legal on the node's grid (stanekplan.giftSize/canPlace at the SF13 in
+ *        o.sf: checked here). The charging POLICY is the caller's (chargeAt).
  * returns { hours, rank, blackOps, done, installs, why, trace }
  */
 export function runBladeburner(o) {
@@ -276,7 +286,41 @@ export function runBladeburner(o) {
       for (const a of bladeburnerAugs()) if (owned.has(a.name)) for (const [k, v] of Object.entries(a.mults ?? {})) if (typeof P.mults[k] === 'number') P.mults[k] *= v
       P.updateSkillLevels()
     }
+    // Stanek's Gift (o.stanek): the game's gift, placed once; its multipliers re-read from the charge
+    const stC = o.stanek ?? null
+    let stGift = null
+    let stM = null
+    let stNext = 0
+    const genesis = stC ? g.Augmentations[sp.GENESIS]?.mults : null
+    if (stC) {
+      if (!genesis) throw new Error(`bbsim o.stanek: no '${sp.GENESIS}' augmentation in the bundle`)
+      const l13 = new Map(sf).get(13) ?? 0
+      const { width, height } = sp.giftSize(mults.StaneksGiftExtraSize ?? 0, l13) // StaneksGift.ts:20-32
+      const placed = []
+      for (const p of stC.placed) {
+        if (!sp.canPlace(placed, width, height, p.x, p.y, p.rot, sp.fragmentById(p.id))) throw new Error(`bbsim o.stanek: fragment ${p.id} at ${p.x},${p.y} r${p.rot} not placeable on the ${width}x${height} grid (BN${node}, SF13.${l13})`)
+        placed.push(p)
+      }
+      stGift = { placed, nodePower: mults.StaneksGiftPowerMultiplier ?? 1 }
+    }
+    const applyGift = () => {
+      // o.mults: constant extra multipliers from t 0 ({key: factor}) — the elasticity probe (tools/sim/bbstanek.mjs)
+      if (o.mults) for (const [k, v] of Object.entries(o.mults)) if (typeof P.mults[k] === 'number') P.mults[k] *= v
+      if (genesis) for (const [k, v] of Object.entries(genesis)) if (typeof P.mults[k] === 'number') P.mults[k] *= v
+      if (stM) for (const [k, v] of Object.entries(stM)) if (typeof P.mults[k] === 'number') P.mults[k] *= v
+    }
+    const stanekStep = (t) => {
+      if (!stGift || t < stNext) return
+      stNext = t + 60
+      const nm = sp.layoutMults(stGift.placed, stC.chargeAt(t), stGift.nodePower)
+      for (const [k, v] of Object.entries(nm)) if (typeof P.mults[k] === 'number' && v !== (stM?.[k] ?? 1)) P.mults[k] *= v / (stM?.[k] ?? 1)
+      stM = nm
+      P.updateSkillLevels()
+    }
     applyMults()
+    applyGift()
+    P.updateSkillLevels()
+    stanekStep(0)
     P.exp.intelligence = intelligence > 0 ? g.calculateExp(intelligence, 1) : 0
     P.exp.hacking = hacking > 1 ? g.calculateExp(hacking, P.mults.hacking * mults.HackingLevelMultiplier) : 0
     P.updateSkillLevels()
@@ -299,6 +343,7 @@ export function runBladeburner(o) {
     // fleet onto the game's objects; no join gym, no default fleet.
     while (!o.setup && COMBAT.some((s) => P.skills[s] < 100) && t < 48 * 3600) {
       goStep(t)
+      stanekStep(t)
       gymStep(P, 60)
       t += 60
     }
@@ -462,6 +507,8 @@ export function runBladeburner(o) {
         goNext = t
       }
       applyMults()
+      applyGift()
+      P.updateSkillLevels()
       P.hp.current = P.hp.max
       bb.prestigeAugmentation() // resetAction + joinFaction (Bladeburner.ts:260)
       installs++
@@ -500,6 +547,7 @@ export function runBladeburner(o) {
       }
       if (o.perTick) o.perTick({ t, P, bb, g })
       goStep(t)
+      stanekStep(t)
       tick(bb, STEP)
       if (!fleetStarted && t >= sleevesFromS) {
         startFleet()
@@ -528,6 +576,7 @@ export function runBladeburner(o) {
       bbAugs: owned.size,
       augMult,
       goEffect: goC ? +goEff.toFixed(4) : null,
+      stanek: stM ? { strength: +(stM.strength * (genesis?.strength ?? 1)).toFixed(4), success: +stM.bladeburner_success_chance.toFixed(4), stamina: +stM.bladeburner_max_stamina.toFixed(4) } : null,
       skills: { ...bb.skills },
       stats: { ...P.skills },
       done,

@@ -21,6 +21,8 @@
 //       acceptGift refused, health 'fail', GIFT NOT ACCEPTED (refused), and the gate refuses
 //       the install that would make it permanent. A running charger whose gift charge mass
 //       stays flat pass to pass, or a gathered charge.js error -> FRAGMENTS NOT CHARGING.
+//   SG9 THE BLADEBURNER ROUTE'S GIFT IS PRICED (giftWantOf / BLADE_GIFT_PRICED): wanted iff withH < withoutH;
+//       BN11.1 accepts; held on an unknown route; pins 'blade'; stanek.js places BLADE_LAYOUTS (mock BN11).
 //   SG5 THE CHOKE POINTS (static): act.js's runActor gates buyaug/graft/install before its
 //       exec, the order loop gates before the install branch; no root script but the three
 //       actors calls purchaseAugmentation / installAugmentations / graftAugmentation;
@@ -48,7 +50,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '../..')
 const sp = await import('../../stanekplan.js')
 const { canAccessCotMG } = await import('../../sfgate.js')
-const stateOf = (ri) => sp.giftStateOf(ri, canAccessCotMG(ri))
+const stateOf = (ri, route = null) => sp.giftStateOf(ri, canAccessCotMG(ri), route)
 const NFG = sp.NFG
 const GEN = sp.GENESIS
 
@@ -68,7 +70,10 @@ function sg1() {
     ['BN13 accepted: install', info(13, [GEN]), { kind: 'install', args: [] }, true, false],
     ['BN13 forfeited: buyaug', info(13, ['BitWire']), { kind: 'buyaug', args: ['x', 'NeuroTrainer I'] }, true, true],
     ['BN7: non-NFG buyaug', info(7), { kind: 'buyaug', args: ['x', 'BitWire'] }, true, false],
-    ['BN7 with SF13: install', info(7, [], 1), { kind: 'install', args: [] }, true, false],
+    ['BN7 with SF13, hacking route: install', info(7, [], 1), { kind: 'install', args: [] }, true, false, 'hack'],
+    // route unknown where the Bladeburner gift is priced to win: HELD (never accepted on an unknown route)
+    ['BN7 with SF13, route unknown: install', info(7, [], 1), { kind: 'install', args: [] }, false, false, null],
+    ['BN7 with SF13, Bladeburner route: non-NFG buyaug', info(7, [], 1), { kind: 'buyaug', args: ['x', 'BitWire'] }, false, false, 'blade'],
     // THE PRICING HOLD (GIFT_HOLD_NODES): the option is kept open, the gift NOT accepted
     ...[...sp.GIFT_HOLD_NODES].flatMap((n) => [
       [`BN${n} hold, SF13: non-NFG buyaug`, info(n, [], 1), { kind: 'buyaug', args: ['x', 'BitWire'] }, false, false],
@@ -78,8 +83,8 @@ function sg1() {
     ]),
   ]
   c.examined(cases.length)
-  for (const [label, ri, o, allow, forfeited] of cases) {
-    const st = stateOf(ri)
+  for (const [label, ri, o, allow, forfeited, route = null] of cases) {
+    const st = stateOf(ri, route)
     const g = sp.giftOrderGate(st, o)
     if (g.allow !== allow) c.fail(`${label}: allow ${g.allow}, expected ${allow}`, g.why ?? st.why)
     if (!!g.forfeited !== forfeited) c.fail(`${label}: forfeited ${g.forfeited}, expected ${forfeited}`)
@@ -90,8 +95,101 @@ function sg1() {
     const sh = stateOf(info(n, [], 1))
     if (sh.want || !sh.hold) c.fail(`BN${n} is a pricing hold: hold true, want false (stanek.js must not accept on a hold)`, JSON.stringify(sh))
   }
-  const s7 = stateOf(info(7, [], 1))
-  if (s7.want !== false || !s7.available) c.fail('SF13 outside BN13: available but not wanted (GIFT_NODES)', JSON.stringify(s7))
+  const s7 = stateOf(info(7, [], 1), 'hack')
+  if (s7.want !== false || !s7.available || s7.hold) c.fail('SF13 outside BN13 on the hacking route: available, not wanted, not held', JSON.stringify(s7))
+  return c
+}
+
+// SG9 THE BLADEBURNER ROUTE'S GIFT IS A PRICED DECISION (stanekplan.giftWantOf / BLADE_GIFT_PRICED):
+//   on the Bladeburner route the gift is wanted iff the simulated exit WITH it beats the exit WITHOUT
+//   it (withH - withoutH < 0, the table tools/sim/bbstanek.mjs builds) — flipping an entry flips the
+//   decision; BN11.1 (SF13.1, SF7.1) accepts; the shipped table equals the gameplan's cached one (when
+//   built); the accepted gift pins 'blade' and stanek.js places BLADE_LAYOUTS (a mock BN11 pass: the
+//   route read from progress.txt, the accept, the combat layout, the charger on the biggest host);
+//   on an unknown route nothing is accepted and the option is held; progress.js publishes the
+//   priced decision (static). RED: a GIFT_NODES-only gate (the old rule) accepts nothing in BN11.
+async function sg9() {
+  const c = new Check('SG9', "the Bladeburner route's gift: accepted iff its priced exit wins (withH < withoutH)")
+  const ri11 = { currentNode: 11, lastAugReset: 1000, lastNodeReset: 1000, ownedSF: new Map([[13, 1], [7, 1], [6, 3]]), ownedAugs: new Map([[NFG, 1]]) }
+  const e = sp.BLADE_GIFT_PRICED['11|1|1']
+  c.examined(1)
+  if (!e) return c.fail('BLADE_GIFT_PRICED has no BN11 SF13.1 SF7.1 entry'), c
+  const w = sp.giftWantOf({ node: 11, l13: 1, l7: 1, route: 'blade' })
+  if (w.want !== e[1] < e[0] || w.priced?.d !== +(e[1] - e[0]).toFixed(4)) c.fail('the decision must be withH - withoutH < 0 on the table entry', JSON.stringify({ w, e }))
+  if (!w.want) c.fail(`BN11.1 (SF13.1 SF7.1) must accept on the Bladeburner route (priced ${e[0]}h -> ${e[1]}h)`)
+  // flip the entry: the decision follows the comparison, not the node
+  const keep = sp.BLADE_GIFT_PRICED['11|1|1']
+  sp.BLADE_GIFT_PRICED['11|1|1'] = [keep[1], keep[0]]
+  const flipped = sp.giftWantOf({ node: 11, l13: 1, l7: 1, route: 'blade' })
+  sp.BLADE_GIFT_PRICED['11|1|1'] = keep
+  c.examined(1)
+  if (flipped.want) c.fail('an entry where the gift LOSES (withH > withoutH) must not be accepted', JSON.stringify(flipped))
+  // every shipped entry: wanted on the blade route exactly when it wins; never on the hacking route; held on an unknown route iff it wins
+  for (const [k, [wo, wi]] of Object.entries(sp.BLADE_GIFT_PRICED)) {
+    const [n, l13, l7] = k.split('|').map(Number)
+    if (sp.GIFT_NODES.has(n)) continue
+    c.examined(1)
+    const b = sp.giftWantOf({ node: n, l13, l7, route: 'blade' })
+    const h = sp.giftWantOf({ node: n, l13, l7, route: 'hack' })
+    const u = sp.giftWantOf({ node: n, l13, l7, route: null })
+    if (b.want !== wi < wo || h.want || h.pending || u.want || u.pending !== wi < wo) c.fail(`${k}: blade ${b.want}, hack ${h.want}/${h.pending}, unknown ${u.want}/${u.pending} for ${wo}h -> ${wi}h`)
+  }
+  // the shipped table is the gameplan's (when the cache is built here)
+  try {
+    const bs = await import('../sim/gameplan/bladestanek.mjs')
+    const tab = bs.readTable()
+    let n = 0
+    for (const [k, v] of Object.entries(tab)) {
+      const [code, node, l13, l6, l7] = k.split('|')
+      if (code !== bs.TABLE_CODE || l6 !== '3') continue
+      const s = sp.BLADE_GIFT_PRICED[`${node}|${l13}|${l7}`]
+      n++
+      if (!s || Math.abs(s[0] - v.withoutH) > 1e-3 || Math.abs(s[1] - v.withH) > 1e-3) c.fail(`BLADE_GIFT_PRICED ${node}|${l13}|${l7} ${JSON.stringify(s)} != the gameplan's table ${v.withoutH}/${v.withH} (re-ship from tools/sim/bbstanek.mjs --table)`)
+    }
+    c.examined(n)
+    c.note(n ? `BLADE_GIFT_PRICED == the gameplan's table on ${n} entries (code ${bs.TABLE_CODE})` : 'the gameplan table is not built for this code here (tools/sim/bbstanek.mjs --table): the shipped table not compared')
+  } catch (err) {
+    c.note(`the gameplan table unreadable here: ${String(err).slice(0, 120)}`)
+  }
+  // the gift's state: wanted on the blade route, basis blade; the accepted gift pins 'blade'
+  const st = sp.giftStateOf(ri11, true, 'blade')
+  const stU = sp.giftStateOf(ri11, true, null)
+  const acc = sp.giftStateOf({ ...ri11, ownedAugs: new Map([[NFG, 1], [GEN, 1]]) }, true, null)
+  const rp = await import('../../routepin.js')
+  const pin = rp.giftPinOf(rp.routePinOf('', 11), acc)
+  c.examined(4)
+  if (!st.want || st.basis !== 'blade') c.fail('BN11 on the Bladeburner route: wanted, basis blade', JSON.stringify(st))
+  if (stU.want || !stU.hold) c.fail('BN11, route unknown: not wanted (never accept on an unknown route) but held', JSON.stringify(stU))
+  if (!acc.accepted || acc.basis !== 'blade' || pin.route !== 'blade') c.fail("the gift accepted outside BN13 pins 'blade'", JSON.stringify({ acc: acc.basis, pin }))
+  if (sp.giftOrderGate(st, { kind: 'buyaug', args: ['x', 'BitWire'] }).allow) c.fail('BN11 on the Bladeburner route before the accept: a non-NFG buyaug must be refused')
+  // routeOfProgress: only this node and life, only fresh
+  const prog = (route, node = 11, lar = 1000, at = new Date().toISOString()) => JSON.stringify({ at, route: { route, node, lastAugReset: lar } })
+  c.examined(4)
+  if (sp.routeOfProgress(prog('blade'), ri11) !== 'blade') c.fail('routeOfProgress: a fresh blade route of this node and life')
+  if (sp.routeOfProgress(prog('blade', 10), ri11) !== null) c.fail('routeOfProgress: another node must read null')
+  if (sp.routeOfProgress(prog('blade', 11, 999), ri11) !== null) c.fail('routeOfProgress: another life must read null')
+  if (sp.routeOfProgress(prog('blade', 11, 1000, new Date(Date.now() - 3600e3).toISOString()), ri11) !== null) c.fail('routeOfProgress: a stale record must read null')
+  // stanek.js against a mock BN11: route read from progress.txt -> accept -> combat layout -> charger on the biggest host
+  const g11 = mockGame({ node: 11, sf13: 1, extraSf: [[7, 1], [6, 3]], progressRoute: 'blade' })
+  if (g11) {
+    const r1 = await g11.run()
+    c.examined(3)
+    if (!g11.accepted()) c.fail('stanek.js in BN11 on the Bladeburner route did not accept', JSON.stringify(r1?.why))
+    if (r1?.layout?.key !== '6x5|1' || !sp.sameLayout(g11.active(), sp.BLADE_LAYOUTS['6x5|1'])) c.fail('stanek.js must place BLADE_LAYOUTS 6x5|1 in BN11 SF13.1', JSON.stringify(r1?.layout))
+    if (!(r1?.charger?.threads > 0)) c.fail('stanek.js must launch the charger on the fleet', JSON.stringify(r1?.charger))
+    const gU = mockGame({ node: 11, sf13: 1, extraSf: [[7, 1], [6, 3]], progressRoute: null })
+    await gU.run()
+    c.examined(1)
+    if (gU.accepted()) c.fail('stanek.js must NOT accept on an unknown route')
+  } else c.note('mockGame unavailable: the stanek.js pass not run')
+  // RED: the old GIFT_NODES-only rule (want = GIFT_NODES.has(node)) never accepts in BN11
+  c.examined(1)
+  if (sp.GIFT_NODES.has(11) || !(st.want && !sp.GIFT_NODES.has(st.node))) c.fail('the BN11 accept must come from the priced decision, not GIFT_NODES')
+  // progress.js publishes the priced decision (static)
+  const prog_ = fs.readFileSync(path.join(REPO, 'progress.js'), 'utf8')
+  c.examined(2)
+  if (!/if \(gift\.basis === 'blade'\) \{[\s\S]{0,400}withH: p\?\.withH[\s\S]{0,80}withoutH: p\?\.withoutH/.test(prog_)) c.fail("progress.js stanekDecisionOf must publish the Bladeburner route's priced decision (withH / withoutH)")
+  if (!/giftNow\.accepted \|\| giftNow\.basis === 'blade'\) await stanekDecisionOf/.test(prog_)) c.fail('progress.js must price the decision on the Bladeburner basis before the accept too')
   return c
 }
 
@@ -140,7 +238,7 @@ async function sg2() {
 }
 
 /** The game, as far as the gift is concerned: Helper.tsx canAcceptStaneksGift, Stanek.ts, the aug queue. */
-function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 1024, homeUsed = 100, homeCores = 4, others = [] } = {}) {
+function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 1024, homeUsed = 100, homeCores = 4, others = [], extraSf = [], progressRoute = undefined, extraSize = node === 13 ? 1 : 0 } = {}) {
   const g = { installed: new Map(installed.map((n) => [n, 1])), queued: [...queued], frags: [], charge: new Map(), log: [], files: {}, remote: {}, procs: [], nextPid: 10, atExit: null }
   // The fleet: home + `others` [{ host, max, used (non-charger use), cores, workers: [{filename, threads}] }].
   g.hosts = new Map([['home', { max: homeMax, used: homeUsed, cores: homeCores, workers: [] }], ...others.map((o) => [o.host, { max: o.max, used: o.used, cores: o.cores ?? 1, workers: o.workers ?? [] }])])
@@ -155,7 +253,11 @@ function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 
           g.charge.set(key, sp.chargeOnce(af, p.threads * sp.coreBonus(g.hosts.get(p.host).cores)))
         }
   }
-  const grid = sp.giftSize(1, sf13)
+  const grid = sp.giftSize(extraSize, sf13)
+  // progress.js's route record of this node and life (stanekplan.routeOfProgress); undefined = none written
+  if (progressRoute !== undefined) g.files[sp.PROGRESS_FILE] = JSON.stringify({ at: new Date().toISOString(), route: { route: progressRoute, node, lastAugReset: 1000 } })
+  g.accepted = () => g.installed.has(GEN)
+  g.active = () => g.frags.map((p) => ({ id: p.id, x: p.x, y: p.y, rotation: p.rot }))
   const canAccept = () => (node === 13 || sf13 > 0) && [...g.installed.keys(), ...g.queued].filter((a) => a !== NFG).length === 0
   const need = () => {
     if (!g.installed.has(GEN)) throw new Error("Stanek's Gift is not installed")
@@ -166,7 +268,7 @@ function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 
     atExit(f) {
       g.atExit = f
     },
-    getResetInfo: () => ({ currentNode: node, lastAugReset: 1000, lastNodeReset: 0, ownedSF: new Map(sf13 ? [[13, sf13]] : []), ownedAugs: new Map(g.installed) }),
+    getResetInfo: () => ({ currentNode: node, lastAugReset: 1000, lastNodeReset: 0, ownedSF: new Map([...(sf13 ? [[13, sf13]] : []), ...extraSf]), ownedAugs: new Map(g.installed) }),
     stanek: {
       acceptGift() {
         if (g.installed.has(GEN)) return true
@@ -356,19 +458,19 @@ function sg5() {
   const act = rd('act.js')
   const ra = act.indexOf('async function runActor(')
   const raBody = act.slice(ra, act.indexOf('\n}\n', ra))
-  const gi = raBody.indexOf('const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri)), { kind, args })')
+  const gi = raBody.indexOf('const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri), routeOfProgress(readHomeFile(ns, PROGRESS_FILE), ri)), { kind, args })')
   const fresh = raBody.indexOf('const ri = ns.getResetInfo()')
   const gr = raBody.search(/if \(!gate\.allow\) return \{ ran: false, ok: false/)
   const ex = raBody.indexOf('ns.exec(actor')
   c.examined(1)
   if (!(fresh > 0 && gi > fresh && gr > gi && ex > gr)) c.fail("act.js runActor must gate buyaug/graft/install (giftOrderGate on a FRESH getResetInfo) and RETURN on a refusal before its exec", `gate at ${gi}, return at ${gr}, exec at ${ex}`)
   if (!/if \(kind === 'buyaug' \|\| kind === 'graft' \|\| kind === 'install'\)/.test(raBody)) c.fail('act.js runActor gate must cover buyaug, graft and install')
-  const loopGate = act.indexOf("const ri = ns.getResetInfo()\n            const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri)), o)")
+  const loopGate = act.indexOf("const ri = ns.getResetInfo()\n            const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri), routeOfProgress(readHomeFile(ns, PROGRESS_FILE), ri)), o)")
   const installBranch = act.indexOf("if (o.kind === 'install') {\n            // THE MANUAL HOLD")
   if (!(loopGate > 0 && installBranch > loopGate)) c.fail("act.js's order loop must gate before the install branch", `${loopGate} / ${installBranch}`)
   // ...and act on it there: runActor's own gate would refuse the install only AFTER the
   // liquidation and the home spend-down this branch runs first.
-  const loopAct = act.slice(loopGate, loopGate + 400)
+  const loopAct = act.slice(loopGate, loopGate + 480)
   if (!/\n\s*if \(!gate\.allow\) \{\n\s*results\.push\(\{[^\n]*skipped: gate\.why[^\n]*\n\s*if \(CHAIN\.has\(o\.kind\)\) chainFailed[^\n]*\n\s*if \(o\.kind === 'install'\) break\n\s*continue/.test(loopAct)) c.fail("act.js's order-loop gate must skip the order, break the chain and stop the batch at an install — before the liquidation and spend-down")
   const actors = new Set(['act-buyaug.js', 'act-install.js', 'act-graft.js'])
   const callers = []
@@ -520,5 +622,5 @@ async function sg8() {
 }
 
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9()]
 }

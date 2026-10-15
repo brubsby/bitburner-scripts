@@ -275,8 +275,9 @@ export function layoutValue(placed, weights, c, nodePower = 1) {
  * player-side keys this repo reads). charge: { highestCharge, numCharge } shared by every
  * charged fragment (the round-robin policy), or a per-fragment array.
  */
+export const LAYOUT_MULT_KEYS = ['hacking', 'hacking_exp', 'hacking_speed', 'hacking_money', 'hacking_grow', 'faction_rep', 'company_rep', 'strength', 'strength_exp', 'defense', 'defense_exp', 'dexterity', 'dexterity_exp', 'agility', 'agility_exp', 'charisma', 'charisma_exp', 'crime_success', 'crime_money', 'work_money', 'hacknet_node_money', 'bladeburner_max_stamina', 'bladeburner_stamina_gain', 'bladeburner_analysis', 'bladeburner_success_chance']
 export function layoutMults(placed, charge, nodePower = 1) {
-  const m = { hacking: 1, hacking_exp: 1, hacking_speed: 1, hacking_money: 1, hacking_grow: 1, faction_rep: 1, company_rep: 1, strength: 1, defense: 1, dexterity: 1, agility: 1, bladeburner_success_chance: 1 }
+  const m = Object.fromEntries(LAYOUT_MULT_KEYS.map((k) => [k, 1]))
   const b = boostsOf(placed)
   placed.forEach((p, i) => {
     const f = fragmentById(p.id)
@@ -303,17 +304,38 @@ export function layoutMults(placed, charge, nodePower = 1) {
         break
       case TYPE.Strength:
         m.strength *= e
+        m.strength_exp *= e
         break
       case TYPE.Defense:
         m.defense *= e
+        m.defense_exp *= e
         break
       case TYPE.Dexterity:
         m.dexterity *= e
+        m.dexterity_exp *= e
         break
       case TYPE.Agility:
         m.agility *= e
+        m.agility_exp *= e
+        break
+      case TYPE.Charisma:
+        m.charisma *= e
+        m.charisma_exp *= e
+        break
+      case TYPE.HacknetMoney:
+        m.hacknet_node_money *= e
+        break
+      case TYPE.WorkMoney:
+        m.work_money *= e
+        break
+      case TYPE.Crime:
+        m.crime_success *= e
+        m.crime_money *= e
         break
       case TYPE.Bladeburner:
+        m.bladeburner_max_stamina *= e
+        m.bladeburner_stamina_gain *= e
+        m.bladeburner_analysis *= e
         m.bladeburner_success_chance *= e
         break
     }
@@ -636,6 +658,117 @@ export function bestNodeModel(o) {
 }
 
 // ===========================================================================
+// THE GIFT ON THE BLADEBURNER ROUTE (combat / Bladeburner fragments)
+// ===========================================================================
+/**
+ * THE BLADEBURNER NODE'S CHARGER (the model tools/sim/bbstanek.mjs and the gameplan's
+ * 'bladeStanek' route run bbsim with). The route never installs (bbsim g 0, no install),
+ * so the charge accumulates over the WHOLE node. Charging POLICY (stated, and what
+ * stanek.js runs on a blade-gift node, bladeChargeFOf): one charge.js holding the biggest
+ * rooted host, cycling the k charged fragments round robin, one call per second
+ * (Stanek.ts:48-50) — highestCharge = that script's threads x core bonus (it dominates the
+ * effect through ln), numCharge = (sum of threads charged)/highest (the invariant above).
+ * Other hosts would add numCharge only (^0.07): not modelled, not run.
+ *   the biggest host's GB over the node: log-linear from g0 at t 0 to gbMax at rampH, flat after.
+ *   MEASURED (telemetry history.jsonl, the Bladeburner-route nodes BN6.1..BN10.2, 2026-10-01..14):
+ *     the largest of home / purchased servers at ~4h into the node: 128 (BN7.1, BN14.2/3),
+ *     256 (BN6.2, BN6.3, BN9.3), 4096 (BN10.2), all 1 core; home starts at 32-128GB.
+ *   SOURCE (Server/data/servers.ts maxRamExponent): rooted world hosts at 5 ports add
+ *     fulcrumtech 2^7..2^11, blade/omnitek/run4theh111z 2^5..2^9 (drawn per save).
+ *   ASSUMED: gbMax lo 256 / mid 512 / hi 4096; rampH 4; duty 0.9 (ALLOC_DUTY: restarts, exec gaps).
+ *   NOT PRICED: the batcher's money on that host (bbsim's money is not binding on this route).
+ */
+export const BLADE_HOST = { g0: 128, rampH: 4, gbMax: { lo: 256, mid: 512, hi: 4096 }, cores: 1, duty: 0.9 }
+
+/** The charger's host GB at tH hours into the node (BLADE_HOST's log-linear ramp). */
+export function bladeHostGbAt(tH, { g0 = BLADE_HOST.g0, rampH = BLADE_HOST.rampH, gbMax } = {}) {
+  const top = Math.max(g0, gbMax)
+  return g0 * Math.pow(top / g0, Math.min(1, Math.max(0, tH) / rampH))
+}
+
+/**
+ * chargeAt(tSec) -> { highestCharge, numCharge } of every charged fragment on the
+ * Bladeburner route's charger (BLADE_HOST policy): k charged fragments round robin, the
+ * mass integrated in 60s steps (memoised; tSec non-decreasing is the cheap path).
+ */
+export function bladeChargeAt({ gbMax, k, g0 = BLADE_HOST.g0, rampH = BLADE_HOST.rampH, cores = BLADE_HOST.cores, duty = BLADE_HOST.duty }) {
+  const kk = Math.max(1, k)
+  const thr = (tS) => threadsOf(bladeHostGbAt(tS / 3600, { g0, rampH, gbMax }), cores)
+  const STEP = 60
+  const mass = [0]
+  return (tSec) => {
+    const i = Math.floor(Math.max(0, tSec) / STEP)
+    while (mass.length <= i) {
+      const j = mass.length - 1
+      mass.push(mass[j] + (duty * thr(j * STEP) * STEP) / kk)
+    }
+    const H = thr(i * STEP)
+    const m = mass[i]
+    return H > 0 && m > 0 ? { highestCharge: H, numCharge: m / H } : { highestCharge: 0, numCharge: 0 }
+  }
+}
+
+/**
+ * THE BLADEBURNER LAYOUT'S WEIGHTS: w[type] = -d ln(Bladeburner exit hours) / d ln(the
+ * fragment's effect), MEASURED on bbsim (tools/sim/bbstanek.mjs --elastic: each fragment
+ * type's calculateMults keys x1.5 and /1.5 from t 0, mean ln hours over 15 common seeds, BN11 SF6.3 SF7.1, the 5-infiltrator
+ * fleet and the Go farm), central differences in ln. A type at 0 is not placed.
+ */
+export const BLADE_WEIGHTS = { [TYPE.Hacking]: 0.002, [TYPE.Strength]: 0.0722, [TYPE.Defense]: 0.0722, [TYPE.Dexterity]: 0.1943, [TYPE.Agility]: 0.3445, [TYPE.Charisma]: 0.0016, [TYPE.Bladeburner]: 0.8935 }
+/**
+ * THE BLADEBURNER ROUTE'S CHARGER IN THE GAME (BLADE_HOST's policy): the fraction of the
+ * fleet's RAM that holds the biggest rooted host's room for the charger (chargerPlaceOf fills
+ * the biggest host first), capped at BLADE_F_MAX so the actors and the batcher keep the rest.
+ */
+export const BLADE_F_MAX = 0.5
+export function bladeChargeFOf(fleet) {
+  const gb = (fleet ?? []).reduce((s, h) => s + (h.maxRam ?? 0), 0)
+  // the host chargerPlaceOf fills first (most chargeable power: GB x core bonus), its room in GB
+  const top = (fleet ?? []).reduce((b, h) => ((h.capGb ?? 0) * coreBonus(h.cores ?? 1) > (b?.capGb ?? 0) * coreBonus(b?.cores ?? 1) ? h : b), null)
+  return gb > 0 && top ? Math.min(BLADE_F_MAX, (top.capGb ?? 0) / gb) : 0
+}
+/** The charge factor c the layout is optimised at: chargeFactor at gbMax mid, 10h in, k 5 (bbstanek.mjs designC). FIXED, stated. */
+export const BLADE_DESIGN_C = 0.1505701248669863
+
+/**
+ * THE BLADEBURNER LAYOUTS SHIPPED: optimiseLayout(BLADE_WEIGHTS, BLADE_DESIGN_C) per grid,
+ * keyed like LAYOUTS (`${width}x${height}|${nodePower}`); tools/sim/bbstanek.mjs --layout prints
+ * them, SG9 re-derives and places them.
+ */
+export const BLADE_LAYOUTS = {
+  '6x5|1': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 100, x: 2, y: 1, rot: 0}, {id: 12, x: 0, y: 2, rot: 1}, {id: 30, x: 4, y: 2, rot: 1}, {id: 103, x: 1, y: 3, rot: 2}], // best found, value 0.2668
+  '6x6|1': [{id: 16, x: 0, y: 0, rot: 1}, {id: 103, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 106, x: 2, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 1, y: 3, rot: 1}, {id: 10, x: 3, y: 3, rot: 3}, {id: 12, x: 4, y: 3, rot: 3}], // best found, value 0.2807
+  '7x6|1': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 102, x: 3, y: 0, rot: 0}, {id: 30, x: 4, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 100, x: 1, y: 2, rot: 0}, {id: 103, x: 5, y: 2, rot: 1}, {id: 14, x: 3, y: 3, rot: 2}, {id: 12, x: 2, y: 4, rot: 0}], // best found, value 0.2831
+  '3x3|2': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}], // exact, value 0.2540
+  '4x3|2': [{id: 14, x: 0, y: 0, rot: 1}, {id: 16, x: 1, y: 0, rot: 1}, {id: 12, x: 2, y: 0, rot: 3}], // exact, value 0.2880
+  '5x4|0.75': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}, {id: 30, x: 3, y: 0, rot: 1}, {id: 10, x: 2, y: 2, rot: 2}], // exact, value 0.1639
+  '5x5|0.75': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}, {id: 30, x: 3, y: 0, rot: 1}, {id: 12, x: 0, y: 2, rot: 1}, {id: 106, x: 1, y: 2, rot: 2}], // best found, value 0.1789
+  '6x5|0.75': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 100, x: 2, y: 1, rot: 0}, {id: 12, x: 0, y: 2, rot: 1}, {id: 30, x: 4, y: 2, rot: 1}, {id: 103, x: 1, y: 3, rot: 2}], // best found, value 0.2059
+  '6x5|1.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 100, x: 2, y: 1, rot: 0}, {id: 12, x: 0, y: 2, rot: 1}, {id: 30, x: 4, y: 2, rot: 1}, {id: 103, x: 1, y: 3, rot: 2}], // best found, value 0.3795
+  '6x6|1.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 103, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 106, x: 2, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 1, y: 3, rot: 1}, {id: 10, x: 3, y: 3, rot: 3}, {id: 12, x: 4, y: 3, rot: 3}], // best found, value 0.3978
+  '7x6|1.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 102, x: 3, y: 0, rot: 0}, {id: 30, x: 5, y: 1, rot: 1}, {id: 101, x: 0, y: 2, rot: 3}, {id: 102, x: 1, y: 2, rot: 0}, {id: 14, x: 1, y: 3, rot: 0}, {id: 105, x: 4, y: 3, rot: 3}, {id: 12, x: 2, y: 4, rot: 0}], // best found, value 0.4061
+  '6x5|1.3': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 100, x: 2, y: 1, rot: 0}, {id: 12, x: 0, y: 2, rot: 1}, {id: 30, x: 4, y: 2, rot: 1}, {id: 103, x: 1, y: 3, rot: 2}], // best found, value 0.3358
+  '6x6|1.3': [{id: 16, x: 0, y: 0, rot: 1}, {id: 103, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 106, x: 2, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 1, y: 3, rot: 1}, {id: 10, x: 3, y: 3, rot: 3}, {id: 12, x: 4, y: 3, rot: 3}], // best found, value 0.3524
+  '7x6|1.3': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 102, x: 3, y: 0, rot: 0}, {id: 30, x: 5, y: 1, rot: 1}, {id: 101, x: 0, y: 2, rot: 3}, {id: 102, x: 1, y: 2, rot: 0}, {id: 14, x: 1, y: 3, rot: 0}, {id: 105, x: 4, y: 3, rot: 3}, {id: 12, x: 2, y: 4, rot: 0}], // best found, value 0.3596
+  '7x6|0.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 30, x: 4, y: 0, rot: 1}, {id: 12, x: 5, y: 0, rot: 3}, {id: 100, x: 2, y: 1, rot: 1}, {id: 101, x: 0, y: 2, rot: 3}, {id: 14, x: 1, y: 3, rot: 3}, {id: 102, x: 3, y: 3, rot: 2}, {id: 101, x: 3, y: 4, rot: 2}], // best found, value 0.1505
+  '7x7|0.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}, {id: 100, x: 3, y: 0, rot: 3}, {id: 12, x: 5, y: 0, rot: 3}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 3, y: 2, rot: 1}, {id: 102, x: 5, y: 2, rot: 1}, {id: 105, x: 1, y: 3, rot: 3}, {id: 106, x: 4, y: 4, rot: 3}, {id: 10, x: 1, y: 5, rot: 2}], // best found, value 0.1540
+  '8x7|0.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}, {id: 10, x: 3, y: 0, rot: 0}, {id: 100, x: 5, y: 0, rot: 1}, {id: 100, x: 3, y: 1, rot: 3}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 6, y: 2, rot: 1}, {id: 101, x: 1, y: 3, rot: 1}, {id: 12, x: 3, y: 3, rot: 1}, {id: 100, x: 4, y: 3, rot: 1}, {id: 101, x: 4, y: 5, rot: 2}], // best found, value 0.1552
+  '5x5|0.9': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}, {id: 10, x: 3, y: 0, rot: 1}, {id: 12, x: 0, y: 2, rot: 1}, {id: 30, x: 3, y: 2, rot: 1}, {id: 1, x: 1, y: 3, rot: 0}], // best found, value 0.2113
+  '6x5|0.9': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 100, x: 2, y: 1, rot: 0}, {id: 12, x: 0, y: 2, rot: 1}, {id: 30, x: 4, y: 2, rot: 1}, {id: 103, x: 1, y: 3, rot: 2}], // best found, value 0.2428
+  '6x6|0.9': [{id: 16, x: 0, y: 0, rot: 1}, {id: 103, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 106, x: 2, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 1, y: 3, rot: 1}, {id: 10, x: 3, y: 3, rot: 3}, {id: 12, x: 4, y: 3, rot: 3}], // best found, value 0.2557
+  '4x4|0.75': [{id: 16, x: 0, y: 0, rot: 1}, {id: 30, x: 2, y: 0, rot: 1}, {id: 14, x: 0, y: 2, rot: 0}], // exact, value 0.1492
+  '6x6|1.02': [{id: 16, x: 0, y: 0, rot: 1}, {id: 103, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 106, x: 2, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 1, y: 3, rot: 1}, {id: 10, x: 3, y: 3, rot: 3}, {id: 12, x: 4, y: 3, rot: 3}], // best found, value 0.2856
+  '7x6|1.02': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 102, x: 3, y: 0, rot: 0}, {id: 30, x: 4, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 100, x: 1, y: 2, rot: 0}, {id: 103, x: 5, y: 2, rot: 1}, {id: 14, x: 3, y: 3, rot: 2}, {id: 12, x: 2, y: 4, rot: 0}], // best found, value 0.2881
+  '7x7|1.02': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}, {id: 100, x: 3, y: 0, rot: 3}, {id: 12, x: 5, y: 0, rot: 3}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 3, y: 2, rot: 1}, {id: 102, x: 5, y: 2, rot: 1}, {id: 105, x: 1, y: 3, rot: 3}, {id: 106, x: 4, y: 4, rot: 3}, {id: 10, x: 1, y: 5, rot: 2}], // best found, value 0.2948
+  '6x6|2': [{id: 16, x: 0, y: 0, rot: 1}, {id: 103, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 106, x: 2, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 1, y: 3, rot: 1}, {id: 10, x: 3, y: 3, rot: 3}, {id: 12, x: 4, y: 3, rot: 3}], // best found, value 0.5041
+  '7x6|2': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 102, x: 3, y: 0, rot: 0}, {id: 30, x: 5, y: 1, rot: 1}, {id: 101, x: 0, y: 2, rot: 3}, {id: 102, x: 1, y: 2, rot: 0}, {id: 14, x: 1, y: 3, rot: 0}, {id: 105, x: 4, y: 3, rot: 3}, {id: 12, x: 2, y: 4, rot: 0}], // best found, value 0.5149
+  '7x7|2': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}, {id: 100, x: 3, y: 0, rot: 3}, {id: 12, x: 5, y: 0, rot: 3}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 3, y: 2, rot: 1}, {id: 102, x: 5, y: 2, rot: 1}, {id: 105, x: 1, y: 3, rot: 3}, {id: 106, x: 4, y: 4, rot: 3}, {id: 10, x: 1, y: 5, rot: 2}], // best found, value 0.5221
+  '5x5|0.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 14, x: 1, y: 0, rot: 3}, {id: 30, x: 3, y: 0, rot: 1}, {id: 12, x: 0, y: 2, rot: 1}, {id: 106, x: 1, y: 2, rot: 2}], // best found, value 0.1228
+  '6x5|0.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 10, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 100, x: 2, y: 1, rot: 0}, {id: 12, x: 0, y: 2, rot: 1}, {id: 30, x: 4, y: 2, rot: 1}, {id: 103, x: 1, y: 3, rot: 2}], // best found, value 0.1415
+  '6x6|0.5': [{id: 16, x: 0, y: 0, rot: 1}, {id: 103, x: 1, y: 0, rot: 0}, {id: 14, x: 4, y: 0, rot: 3}, {id: 106, x: 2, y: 1, rot: 0}, {id: 101, x: 0, y: 2, rot: 3}, {id: 30, x: 1, y: 3, rot: 1}, {id: 10, x: 3, y: 3, rot: 3}, {id: 12, x: 4, y: 3, rot: 3}], // best found, value 0.1496
+}
+
+// ===========================================================================
 // THE IN-GAME SURFACE: what stanek.js (accept, place, launch the charger),
 // charge.js (the 2.0GB worker), act.js (the purchase gate), progress.js (the
 // charging allocation, priced by the exit), batch.js (the home hold) and
@@ -655,13 +788,72 @@ export const GENESIS = "Stanek's Gift - Genesis" // Augmentation/Enums.ts (sfgat
  */
 export const GIFT_NODES = new Set([13])
 /**
- * THE PRICING HOLD (reversible, stated): nodes where the gift is being priced
- * (2026-10-15: combat/Bladeburner Stanek in BN11, the Bladeburner route). The
- * stack does NOT accept here, but act.js refuses every non-NeuroFlux buyaug /
- * graft / install while the gift is unaccepted and still acceptable, so the
- * option stays open until the pricing lands. Remove the node to release it.
+ * THE MANUAL PRICING HOLD (reversible, stated): nodes where the option is held open
+ * by hand while something is priced — act.js refuses every non-NeuroFlux buyaug /
+ * graft / install while the gift is unaccepted, and stanek.js does NOT accept.
+ * Empty: BN11's hold (2026-10-15) is now the priced decision below.
  */
-export const GIFT_HOLD_NODES = new Set([11])
+export const GIFT_HOLD_NODES = new Set([])
+
+/**
+ * THE GIFT ON THE BLADEBURNER ROUTE, PRICED (tools/sim/bbstanek.mjs --table -> tools/sim/
+ * gameplan/.cache/bbstanek.json; tools/sim/gameplan/bladestanek.mjs): per `${node}|${SF13}|${SF7}`
+ * (SF6 3) the Bladeburner exit WITHOUT the gift and WITH it accepted at the node's start —
+ * bbsim, both arms on 9 shared seeds, the planner's 5-infiltrator fleet and Go farm, the
+ * layout BLADE_LAYOUTS, the charger BLADE_HOST at gbMax mid — [withoutH, withH] in simulated
+ * hours (the live leg is k x the leg). NOT CALIBRATED: no Bladeburner node has run with the
+ * gift. Pure data so the decision costs no RAM; SG9 checks it against the gameplan's table.
+ */
+export const BLADE_GIFT_PRICED = {
+  '1|1|1': [11.579, 9.83], '1|1|2': [11.578, 9.648], '1|1|3': [11.127, 9.787], '1|2|1': [11.579, 9.764], '1|2|2': [11.578, 9.622], '1|2|3': [11.127, 9.575], '1|3|1': [11.579, 9.769], '1|3|2': [11.578, 9.45], '1|3|3': [11.127, 9.467],
+  '2|1|1': [11.579, 9.786], '2|1|2': [11.575, 9.627], '2|1|3': [11.127, 9.27], '2|2|1': [11.579, 9.786], '2|2|2': [11.575, 9.627], '2|2|3': [11.127, 9.27], '2|3|1': [11.579, 9.384], '2|3|2': [11.575, 8.983], '2|3|3': [11.127, 9.082],
+  '3|1|1': [11.579, 10.759], '3|1|2': [11.575, 10.32], '3|1|3': [11.127, 10.064], '3|2|1': [11.579, 10.56], '3|2|2': [11.575, 10.243], '3|2|3': [11.127, 9.898], '3|3|1': [11.579, 10.321], '3|3|2': [11.575, 9.988], '3|3|3': [11.127, 9.961],
+  '4|1|1': [11.579, 9.092], '4|1|2': [11.578, 8.697], '4|1|3': [11.127, 8.661], '4|2|1': [11.579, 8.703], '4|2|2': [11.578, 8.488], '4|2|3': [11.127, 8.578], '4|3|1': [11.579, 8.664], '4|3|2': [11.578, 8.517], '4|3|3': [11.127, 8.515],
+  '5|1|1': [11.579, 9.059], '5|1|2': [11.578, 9.1], '5|1|3': [11.127, 8.913], '5|2|1': [11.579, 9.047], '5|2|2': [11.578, 9.053], '5|2|3': [11.127, 8.74], '5|3|1': [11.579, 9.179], '5|3|2': [11.578, 9.081], '5|3|3': [11.127, 8.871],
+  '6|1|1': [11.579, 11.217], '6|1|2': [11.575, 10.586], '6|1|3': [11.127, 10.361], '6|2|1': [11.579, 10.598], '6|2|2': [11.575, 10.728], '6|2|3': [11.127, 10.065], '6|3|1': [11.579, 10.706], '6|3|2': [11.575, 10.845], '6|3|3': [11.127, 10.508],
+  '7|1|1': [21.505, 19.96], '7|1|2': [21.429, 19.727], '7|1|3': [21.269, 19.203], '7|2|1': [21.505, 19.881], '7|2|2': [21.429, 18.245], '7|2|3': [21.269, 18.436], '7|3|1': [21.505, 18.781], '7|3|2': [21.429, 18.758], '7|3|3': [21.269, 18.577],
+  '9|1|1': [22.137, 21.313], '9|1|2': [21.28, 19.348], '9|1|3': [20.49, 18.922], '9|2|1': [22.137, 20.652], '9|2|2': [21.28, 19.607], '9|2|3': [20.49, 19.447], '9|3|1': [22.137, 20.151], '9|3|2': [21.28, 18.694], '9|3|3': [20.49, 19.464],
+  '10|1|1': [21.914, 20.711], '10|1|2': [21.864, 19.396], '10|1|3': [22.655, 20.196], '10|2|1': [21.914, 20.192], '10|2|2': [21.864, 19.928], '10|2|3': [22.655, 19.929], '10|3|1': [21.914, 20.123], '10|3|2': [21.864, 19.348], '10|3|3': [22.655, 19.522],
+  '11|1|1': [11.579, 9.83], '11|1|2': [11.575, 9.659], '11|1|3': [11.127, 9.716], '11|2|1': [11.579, 9.764], '11|2|2': [11.575, 9.622], '11|2|3': [11.127, 9.595], '11|3|1': [11.579, 9.769], '11|3|2': [11.575, 9.45], '11|3|3': [11.127, 9.467],
+  '12|1|1': [12.25, 9.998], '12|1|2': [11.438, 9.321], '12|1|3': [11.351, 9.671], '12|2|1': [12.25, 10.099], '12|2|2': [11.438, 9.717], '12|2|3': [11.351, 9.533], '12|3|1': [12.25, 9.982], '12|3|2': [11.438, 9.409], '12|3|3': [11.351, 9.692],
+  '13|0|1': [36.927, 21.992], '13|0|2': [34.296, 22.383], '13|0|3': [34.863, 21.724], '13|1|1': [36.927, 22.658], '13|1|2': [34.296, 21.355], '13|1|3': [34.863, 23.318], '13|2|1': [36.927, 22.183], '13|2|2': [34.296, 21.02], '13|2|3': [34.863, 21.461], '13|3|1': [36.927, 23.727], '13|3|2': [34.296, 21.269], '13|3|3': [34.863, 20.693],
+  '14|1|1': [18.99, 18.739], '14|1|2': [18.025, 17.222], '14|1|3': [18.374, 17.704], '14|2|1': [18.99, 17.673], '14|2|2': [18.025, 16.515], '14|2|3': [18.374, 17.167], '14|3|1': [18.99, 18.13], '14|3|2': [18.025, 16.394], '14|3|3': [18.374, 16.848],
+}
+
+/** Fresh enough to act on: /tel/progress.txt's route, this node and life (progress.js routeOut). */
+export const PROGRESS_FILE = '/tel/progress.txt'
+export function routeOfProgress(text, resetInfo, now = Date.now(), maxAgeMin = 30) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return null
+  }
+  const r = rec?.route
+  if (!r || r.node !== resetInfo?.currentNode || r.lastAugReset !== resetInfo?.lastAugReset) return null
+  if (!(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
+  return r.route === 'blade' || r.route === 'hack' ? r.route : null
+}
+
+/**
+ * WHETHER THE STACK WANTS THE GIFT HERE (the per-node decision, at its start):
+ *   BitNode 13 (GIFT_NODES)        the hacking route + gift (the gameplan's 'stanek' route) — basis 'hack'
+ *   the Bladeburner route (route)  BLADE_GIFT_PRICED: accept iff withH < withoutH — basis 'blade'
+ *   route unknown (no fresh progress.txt of this node and life) and the Bladeburner gift wins here:
+ *                                  HOLD (pending) — never accept on an unknown route, keep the option
+ *   otherwise                      no (the hacking route's gift outside BN13 is not priced in-game)
+ * Returns { want, pending, basis, priced: {withoutH, withH, d} | null, why }.
+ */
+export function giftWantOf({ node, l13, l7, route }) {
+  if (GIFT_NODES.has(node)) return { want: true, pending: false, basis: 'hack', priced: null, why: `BitNode ${node}: the stack accepts the gift (GIFT_NODES, the hacking route + gift)` }
+  const e = BLADE_GIFT_PRICED[`${node}|${l13}|${Math.max(1, Math.min(3, l7 ?? 1))}`] ?? null
+  const priced = e ? { withoutH: e[0], withH: e[1], d: +(e[1] - e[0]).toFixed(4) } : null
+  const wins = !!priced && priced.d < 0
+  const txt = priced ? `the Bladeburner exit ${priced.withoutH}h without the gift vs ${priced.withH}h with it (bbsim, shared seeds, NOT CALIBRATED; stanekplan.BLADE_GIFT_PRICED)` : 'the Bladeburner route with the gift is not priced for this node/SF13/SF7'
+  if (route === 'blade') return { want: wins, pending: false, basis: 'blade', priced, why: wins ? `the Bladeburner route: accept — ${txt}` : `the Bladeburner route: never — ${txt}` }
+  if (route == null && wins) return { want: false, pending: true, basis: 'blade', priced, why: `route unknown (no fresh /tel/progress.txt route of this node and life): HELD open, not accepted — on the Bladeburner route ${txt}` }
+  return { want: false, pending: false, basis: null, priced, why: route === 'hack' ? `the hacking route outside BitNode 13: the gift is not priced in-game there (GIFT_NODES ${[...GIFT_NODES].join(', ')})` : `not wanted: ${txt}` }
+}
 
 const namesOf = (owned) => (owned == null ? [] : typeof owned.keys === 'function' ? [...owned.keys()] : Array.isArray(owned) ? owned.map((x) => x?.name ?? x) : Object.keys(owned))
 
@@ -678,35 +870,43 @@ const namesOf = (owned) => (owned == null ? [] : typeof owned.keys === 'function
  *              blocks it too — invisible here (getResetInfo has no queue); stanek.js reads
  *              it from acceptGift's refusal.
  */
-export function giftStateOf(resetInfo, available) {
+export function giftStateOf(resetInfo, available, route = null) {
   // The capability rule lives in sfgate.js (canAccessCotMG); the caller passes it. A
   // missing answer throws: "could not tell" must never read as "no Church here".
-  if (typeof available !== 'boolean') throw new Error('giftStateOf(resetInfo, available): pass sfgate.canAccessCotMG(resetInfo)')
+  if (typeof available !== 'boolean') throw new Error('giftStateOf(resetInfo, available, route): pass sfgate.canAccessCotMG(resetInfo)')
   const node = resetInfo?.currentNode ?? null
   const names = namesOf(resetInfo?.ownedAugs)
   const accepted = names.includes(GENESIS)
   const blocking = accepted ? [] : names.filter((n) => n !== NFG)
-  const want = available && GIFT_NODES.has(node)
-  const hold = available && !want && GIFT_HOLD_NODES.has(node)
+  const sf = (n) => (typeof resetInfo?.ownedSF?.get === 'function' ? resetInfo.ownedSF.get(n) ?? 0 : 0)
+  const w = available ? giftWantOf({ node, l13: sf(13), l7: sf(7), route }) : { want: false, pending: false, basis: null, priced: null, why: null }
+  const want = available && w.want
+  const hold = available && !accepted && !want && (w.pending || GIFT_HOLD_NODES.has(node))
+  // the basis the gift serves: BN13's is the hacking route's; anywhere else only the Bladeburner route accepts
+  const basis = !available ? null : GIFT_NODES.has(node) ? 'hack' : accepted || want || hold ? 'blade' : null
   return {
     node,
     available,
     want,
     hold,
+    basis,
+    route,
+    priced: w.priced,
+    wantWhy: w.why,
     accepted,
     forfeited: !accepted && blocking.length > 0,
     blocking,
     why: !available
       ? 'no access to the Church (not BitNode 13, no Source-File 13)'
-      : !want
+      : !want && !accepted
         ? hold
-          ? `BitNode ${node}: the gift is being priced (stanekplan.GIFT_HOLD_NODES) — not accepted yet; non-NeuroFlux augmentation orders are held so the option stays open`
-          : `BitNode ${node} is not one the stack accepts the gift in (stanekplan.GIFT_NODES: ${[...GIFT_NODES].join(', ')}) — the gameplan prices it per node and nothing in-game reads that yet`
+          ? `BitNode ${node}: ${w.pending ? w.why : 'held by hand (stanekplan.GIFT_HOLD_NODES)'} — non-NeuroFlux augmentation orders are held so the option stays open`
+          : `BitNode ${node}: ${w.why}`
         : accepted
           ? `accepted (${GENESIS} installed)`
           : blocking.length
             ? `FORFEITED: ${blocking.length} non-NeuroFlux augmentation(s) installed (${blocking.slice(0, 3).join(', ')}) — canAcceptStaneksGift can never pass in this node`
-            : 'not accepted yet — acceptable (nothing but NeuroFlux installed)',
+            : `not accepted yet — acceptable (nothing but NeuroFlux installed); wanted: ${w.why}`,
   }
 }
 
@@ -732,7 +932,7 @@ export function giftOrderGate(state, order) {
   return {
     allow: false,
     forfeited: false,
-    why: `STANEK GATE${state.want ? '' : ' (PRICING HOLD, stanekplan.GIFT_HOLD_NODES)'}: Stanek's Gift is not accepted yet in BitNode ${state.node} — ${kind}${aug ? ` '${aug}'` : ''} refused: ${kind === 'install' ? 'an install before the accept forfeits the gift for the node (or buys nothing)' : 'a non-NeuroFlux augmentation queued or grafted blocks acceptGift (canAcceptStaneksGift) and, installed, forfeits it for the node'}; ${state.want ? `stanek.js accepts it (${STANEK_FILE})` : 'the option is held open while the gift is priced here'}`,
+    why: `STANEK GATE${state.want ? '' : ' (PRICING HOLD)'}: Stanek's Gift is not accepted yet in BitNode ${state.node} — ${kind}${aug ? ` '${aug}'` : ''} refused: ${kind === 'install' ? 'an install before the accept forfeits the gift for the node (or buys nothing)' : 'a non-NeuroFlux augmentation queued or grafted blocks acceptGift (canAcceptStaneksGift) and, installed, forfeits it for the node'}; ${state.want ? `stanek.js accepts it (${STANEK_FILE})` : 'the option is held open while the gift is priced here'}`,
   }
 }
 
@@ -756,8 +956,13 @@ export const LAYOUT_DESIGN = { Hg: 2.5, epsM: 0.09, epsR: 0.12, c: 0.30363672076
 export const LAYOUT_FALLBACK_BUDGET = 2e4
 
 /** The layout for a grid: the shipped table, else a bounded search (`source` says which). */
-export function layoutForGrid(width, height, nodePower) {
+export function layoutForGrid(width, height, nodePower, basis = 'hack') {
   const key = `${width}x${height}|${nodePower}`
+  if (basis === 'blade') {
+    if (BLADE_LAYOUTS[key]) return { placed: BLADE_LAYOUTS[key], key, source: 'tabled (stanekplan.BLADE_LAYOUTS: the Bladeburner route)' }
+    const o = optimiseLayout({ width, height, weights: BLADE_WEIGHTS, c: BLADE_DESIGN_C, nodePower, budget: LAYOUT_FALLBACK_BUDGET })
+    return { placed: o.placed, key, source: `searched in-game for the Bladeburner route (${o.nodes} nodes, ${o.exact ? 'exact' : 'best found within the budget'}) — not tabled` }
+  }
   if (LAYOUTS[key]) return { placed: LAYOUTS[key], key, source: 'tabled (stanekplan.LAYOUTS)' }
   const o = optimiseLayout({ width, height, weights: hackWeights(LAYOUT_DESIGN), c: LAYOUT_DESIGN.c, nodePower, budget: LAYOUT_FALLBACK_BUDGET })
   return { placed: o.placed, key, source: `searched in-game (${o.nodes} nodes, ${o.exact ? 'exact' : 'best found within the budget'}) — not tabled` }

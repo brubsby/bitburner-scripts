@@ -36,6 +36,10 @@
 //          node - in BN6), both simulated by bbsim (the game's own skill
 //          formula at the node's combat level multipliers: BN14 x0.5)
 //
+//   bladeStanek  B with the gift accepted at the node's start: the join + joinD and the leg x
+//          ratio from bbsim's two arms on shared seeds (bbstanek.mjs --table, bladestanek.mjs) —
+//          NOT CALIBRATED (no Bladeburner node has run with the gift)
+//
 //   stanek H with the gift accepted at the node's start (stanek.mjs): g x gMul, W x the
 //          gift's exit divisor, the favor life x favorMul — wherever the gift is
 //          available (BN13, or SF13 >= 1); min over routes = accept or never, per node
@@ -50,6 +54,7 @@
 import { earlyOf, gFactorOf, hackSfOf, EFFECTS, sfKeyStr, LIVE_SFS, sleevesOf } from './effects.mjs'
 import { goScale, goGFactor, w0rldDiv, exitShift, favorLifeOf, goWindow } from './go.mjs'
 import { giftAvailable, stanekFactors } from './stanek.mjs'
+import { giftLegOf } from './bladestanek.mjs'
 import { isCovenantBuyClear } from './sleeves.mjs'
 
 /** phase 1's SF14.1 effect (nextnode d14 mid): GP3's regression mode only. */
@@ -165,6 +170,22 @@ export function stanekParts(a) {
   return p ? { ...p, st, base } : null
 }
 
+/**
+ * The Bladeburner route's hours; gift = the bladeStanek table entry (bladestanek.giftLegOf) or null.
+ * With the gift: the join shifted by the table's joinD and the leg x its ratio — the same open,
+ * early, fleet leg and k as without, so the two routes differ only in the gift.
+ */
+export function bladeHours({ node, lv, world, S }, gift = null) {
+  const l6 = Math.max(1, Math.min(3, lv(6)))
+  const l7 = Math.min(3, lv(7))
+  // the fleet: sleeves.mjs sleeveCount (SF10 + BN10's own + 4 Covenant); phase 1 priced 5 infiltrators
+  const leg = S.bbLeg(node, l6, l7, world.phase1 ? 5 : sleevesOf(lv, node, world.fleet))
+  if (!leg) return null
+  // the opening measured in BN6 (2.5h), plus the gym hours this node's combat multipliers add over BN6's
+  const open = world.phase1 ? world.open : Math.max(0.5, world.open + (S.bbJoin(node, l6, l7) ?? 0) - (S.bbJoin(6, l6, l7) ?? 0) + (gift?.joinD ?? 0))
+  return open - Math.min(earlyOf(lv, node, world.sf), Math.max(0, open - 0.5)) + leg.median * world.k * (gift?.ratio ?? 1)
+}
+
 /** hackParts, kept on the call's ctx for the routes that build on it (stanek). */
 const hackOnCtx = (a) => {
   const p = hackParts(a)
@@ -183,16 +204,7 @@ export const ROUTES = [
     id: 'blade',
     status: "SIMULATED (bbsim, the game's Bladeburner, bbplan's POLICY, the Go farm's Tetrads combat channel; opening scaled by the simulated gym); k CALIBRATED on BN6.1/BN4.3/BN14.1 (posterior)",
     applies: (node, lv, world, S) => !world.bbOff && S.bbRank(node) > 0 && (node === 6 || node === 7 || lv(6) > 0 || lv(7) > 0),
-    hours({ node, lv, world, S }) {
-      const l6 = Math.max(1, Math.min(3, lv(6)))
-      const l7 = Math.min(3, lv(7))
-      // the fleet: sleeves.mjs sleeveCount (SF10 + BN10's own + 4 Covenant); phase 1 priced 5 infiltrators
-      const leg = S.bbLeg(node, l6, l7, world.phase1 ? 5 : sleevesOf(lv, node, world.fleet))
-      if (!leg) return null
-      // the opening measured in BN6 (2.5h), plus the gym hours this node's combat multipliers add over BN6's
-      const open = world.phase1 ? world.open : Math.max(0.5, world.open + (S.bbJoin(node, l6, l7) ?? 0) - (S.bbJoin(6, l6, l7) ?? 0))
-      return open - Math.min(earlyOf(lv, node, world.sf), Math.max(0, open - 0.5)) + leg.median * world.k
-    },
+    hours: (a) => bladeHours(a),
   },
   // ---- node-special hooks
   {
@@ -218,12 +230,28 @@ export const ROUTES = [
   },
   {
     id: 'stanek',
-    status: "MODELLED (stanekplan.js, stanek.mjs): the hacking route (BN14: go) with Stanek's Gift accepted at the node's start — in BN13, or anywhere at SF13>=1; source formulas, MEASURED home RAM, ASSUMED elasticities/rep/duty; with the gift on the Bladeburner route NOT PRICED",
+    status: "MODELLED (stanekplan.js, stanek.mjs): the hacking route (BN14: go) with Stanek's Gift accepted at the node's start — in BN13, or anywhere at SF13>=1; source formulas, MEASURED home RAM, ASSUMED elasticities/rep/duty; the gift on the Bladeburner route is 'bladeStanek'",
     readsSf13: true, // the only route that reads SF13 (clearTime memoises the others without it)
     applies: (node, lv, world) => !world.phase1 && !world.stanekOff && giftAvailable(node, lv) && (!world.stanekBn13Only || node === 13),
     hours: (a) => stanekParts(a)?.h ?? null,
   },
+  {
+    id: 'bladeStanek',
+    status: "SIMULATED, NOT CALIBRATED (tools/sim/bbstanek.mjs -> gameplan/bladestanek.mjs): the Bladeburner route with Stanek's Gift accepted at the node's start — bbsim both arms on shared seeds (Genesis x0.9 from t 0, stanekplan.BLADE_LAYOUTS charged by BLADE_HOST at gbMax mid: MEASURED host sizes, ASSUMED spread); the leg ratio at the planner's 5-infiltrator fleet applied to the route's leg; the batcher's money on the charger's host NOT PRICED",
+    readsSf13: true,
+    applies: (node, lv, world, S) => !world.phase1 && !world.stanekOff && !world.bladeStanekOff && (!world.stanekBn13Only || node === 13) && giftAvailable(node, lv) && ROUTES.find((r) => r.id === 'blade').applies(node, lv, world, S),
+    hours(a) {
+      const gift = giftLegOf(a.node, a.lv(13), a.lv(6), a.lv(7))
+      if (!gift) {
+        MISSING_BLADE_GIFT.add(`BN${a.node} SF13.${a.lv(13)} SF7.${a.lv(7)}`)
+        return null
+      }
+      return bladeHours(a, gift)
+    },
+  },
 ]
+/** The (node, SF13, SF7) cells the bladeStanek route found no table entry for (plan.mjs prints them: NOT PRICED there). */
+export const MISSING_BLADE_GIFT = new Set()
 
 /**
  * C(node, state, world) -> { h, via, by: {route: hours|null} }.
@@ -275,7 +303,7 @@ export function clearTime(node, lv, world, S, routes = ROUTES) {
     if (typeof world.covLegOf !== 'function') throw new Error(`clearTime: fleet ${world.fleet} buys the 5th Covenant sleeve in BN10.${lv(10) + 1} but the world has no covLegOf (worldOf covLegOf)`)
     const leg = world.covLegOf(lv)
     let buy = null
-    for (const [id, h] of Object.entries(by)) if (id !== 'blade' && h !== null && isFinite(h) && (buy === null || h + leg < buy.h)) buy = { h: h + leg, via: `${id}+cov5` }
+    for (const [id, h] of Object.entries(by)) if (id !== 'blade' && id !== 'bladeStanek' && h !== null && isFinite(h) && (buy === null || h + leg < buy.h)) buy = { h: h + leg, via: `${id}+cov5` }
     return { ...(buy ?? { h: Infinity, via: null }), by: { ...by, cov5: leg } }
   }
   return best ? { ...best, by } : { h: Infinity, via: null, by }

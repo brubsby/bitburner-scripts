@@ -44,7 +44,7 @@ import { bootstrapHomeStep, stockRecordFromText, raiseToServe, raiseFileOf, RAIS
 // Pure: can the Bladeburner claim be exercised (actplan's lend), and the server that unblocks it.
 import { bladeSlotStallOf, LITE_FILE, BB_FILE, LITE_COORD_GB, LITE_ACTOR_GB } from 'bbliteplan.js'
 import { BB_HOST, cloudCostOf } from 'raiseplace.js'
-import { giftStateOf, giftOrderGate } from 'stanekplan.js'
+import { giftStateOf, giftOrderGate, routeOfProgress, PROGRESS_FILE } from 'stanekplan.js'
 
 const STATUS = '/tel/act.txt'
 const RESULT = '/tel/act-result.txt'
@@ -198,7 +198,7 @@ async function runActor(ns, kind, args) {
   // accepted (stanekplan.giftOrderGate; the gift read fresh from the game).
   if (kind === 'buyaug' || kind === 'graft' || kind === 'install') {
     const ri = ns.getResetInfo()
-    const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri)), { kind, args })
+    const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri), routeOfProgress(readHomeFile(ns, PROGRESS_FILE), ri)), { kind, args })
     if (!gate.allow) return { ran: false, ok: false, why: gate.why, stanekGate: 'refused' }
   }
   const actorArgs = kind === 'tor' ? ['tor'] : kind === 'program' ? ['program', ...args] : args
@@ -524,7 +524,7 @@ export async function main(ns) {
           // the result — /tel/stanek.txt and the health check fail loud.
           if (o.kind === 'buyaug' || o.kind === 'graft' || o.kind === 'install') {
             const ri = ns.getResetInfo()
-            const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri)), o)
+            const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri), routeOfProgress(readHomeFile(ns, PROGRESS_FILE), ri)), o)
             if (!gate.allow) {
               results.push({ id: o.id, kind: o.kind, args: o.args, skipped: gate.why, stanekGate: 'refused' })
               if (CHAIN.has(o.kind)) chainFailed = gate.why.slice(0, 160)

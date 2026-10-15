@@ -42,7 +42,7 @@
 //
 // Publishes /tel/stanek.txt on every exit path (atExit): gift state, accept
 // outcome, layout, fragments with their charge, charger, allocation, health.
-import { giftStateOf, layoutForGrid, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME } from 'stanekplan.js'
+import { giftStateOf, layoutForGrid, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME, routeOfProgress, PROGRESS_FILE, bladeChargeFOf, BLADE_F_MAX } from 'stanekplan.js'
 import { reservesOf, heldOn, FREEABLE } from 'raiseplace.js'
 import { singularityRamMultiplier, canAccessCotMG } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -65,7 +65,10 @@ export async function main(ns) {
     if (!published) publish({ health: 'error', why: rec.why ?? `stanek.js exited before publishing (phase ${rec.phase})` })
   })
   try {
-    let gift = giftStateOf(info, canAccessCotMG(info))
+    // the route this node plays (progress.js's record of this node and life): outside BN13 the gift is
+    // wanted only on the Bladeburner route where its priced exit wins (stanekplan.giftWantOf)
+    const route = routeOfProgress(ns.read(PROGRESS_FILE), info)
+    let gift = giftStateOf(info, canAccessCotMG(info), route)
     rec.gift = gift
     if (!gift.available) return publish({ health: 'n/a', why: gift.why })
     // ---- 1. THE ACCEPT ---------------------------------------------------
@@ -73,7 +76,7 @@ export async function main(ns) {
       rec.phase = 'accept'
       const returned = ns.stanek.acceptGift()
       info = ns.getResetInfo() // read back from the game, not from the call's return
-      gift = giftStateOf(info, canAccessCotMG(info))
+      gift = giftStateOf(info, canAccessCotMG(info), route)
       rec.gift = gift
       rec.accept = { at: new Date().toISOString(), returned, accepted: gift.accepted }
       if (!gift.accepted) {
@@ -87,7 +90,7 @@ export async function main(ns) {
     const height = ns.stanek.giftHeight()
     const nodePower = bitNodeMults(info)?.StaneksGiftPowerMultiplier
     if (typeof nodePower !== 'number' || !isFinite(nodePower)) return publish({ health: 'fail', why: `StaneksGiftPowerMultiplier unknown for BitNode ${info.currentNode} (bitNodeMultipliers.js) — no layout chosen` })
-    const lay = layoutForGrid(width, height, nodePower)
+    const lay = layoutForGrid(width, height, nodePower, gift.basis === 'blade' ? 'blade' : 'hack')
     let active = ns.stanek.activeFragments()
     let placeFails = []
     if (!sameLayout(active, lay.placed)) {
@@ -111,8 +114,8 @@ export async function main(ns) {
     rec.progress = chargeProgressOf(prevRec, rec.fragments, info.lastAugReset)
     // What is actually placed is what can be charged (a failed placement is published, not charged).
     const roots = chargeRootsOf(active.filter((f) => f.type !== TYPE.Booster).map((f) => ({ id: f.id, x: f.x, y: f.y, rot: f.rotation })))
-    const plan = planAllocOf(ns.read('/tel/plan.txt'), info.lastAugReset)
-    const f = plan ? plan.f : DEFAULT_F
+    const plan = gift.basis === 'blade' ? null : planAllocOf(ns.read('/tel/plan.txt'), info.lastAugReset)
+    let f = plan ? plan.f : DEFAULT_F
     rec.alloc = { f, basis: 'fraction of the fleet RAM', source: plan ? `the plan (${plan.at}, decisions.stanek)` : `DEFAULT_F ${DEFAULT_F} (UNPRICED): no priced fleet-basis decision of this life in /tel/plan.txt decisions.stanek`, why: plan?.why ?? null }
     // THE FLEET: every rooted host (chargeFragment charges from any server, at its cores).
     const seen = new Set(['home'])
@@ -137,6 +140,12 @@ export async function main(ns) {
       raw.push({ host, maxRam, used: ns.getServerUsedRam(host), cores: ns.getServer(host).cpuCores, workerGb, chargerGb, reserveGb: (host === 'home' ? reserveGb : 0) + heldOn(raised, host) })
     }
     const fleet = chargerFleetOf(raw)
+    // THE BLADEBURNER ROUTE'S CHARGER (stanekplan.BLADE_HOST, the policy its exit was priced with):
+    // the biggest rooted host's room, at most BLADE_F_MAX of the fleet
+    if (gift.basis === 'blade') {
+      f = bladeChargeFOf(fleet)
+      rec.alloc = { f, basis: 'fraction of the fleet RAM', source: `the Bladeburner route's charger (stanekplan.bladeChargeFOf: the biggest host, <= ${BLADE_F_MAX} of the fleet)`, why: gift.wantWhy ?? null }
+    }
     rec.fleet = { gb: fleet.reduce((s, h) => s + h.maxRam, 0), hosts: fleet.map((h) => ({ host: h.host, cores: h.cores, maxRam: h.maxRam, capGb: h.capGb, capNow: h.capNow })) }
     const cp = chargerPlanOf({ f: roots.length ? f : 0, fleet })
     const rootsArg = JSON.stringify(roots)

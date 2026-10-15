@@ -295,7 +295,7 @@ const covLegOf = (lv) => {
 }
 const COV5 = arg('--covenant5', 'auto')
 if (!['auto', '10.2', '10.3', 'none'].includes(COV5)) throw new Error(`--covenant5 ${COV5}: expected auto, 10.2, 10.3 or none`)
-const wOptsBase = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, w0Window: W0_WINDOW, w0Live: has('--w0-live'), covLegOf }
+const wOptsBase = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, bladeStanekOff: has('--no-blade-stanek'), w0Window: W0_WINDOW, w0Live: has('--w0-live'), covLegOf }
 const L0 = lattice(entry)
 const L1 = lattice(start)
 const COV_FLEETS = { none: 'live', '10.2': 'cov2', '10.3': 'cov3' }
@@ -422,7 +422,7 @@ console.log('  clear     hack   blade  special   via     own     T total   dT')
 const fm1 = firstMoves(L1, T1, V1).sort((a, b) => a.T - b.T)
 for (const x of fm1) {
   const c = clearTime(x.n, lvOf(start), mid, S)
-  const sp = ROUTES.filter((r) => r.node === x.n || (r.id === 'stanek' && c.by.stanek !== undefined)).map((r) => `${r.id}:${c.by[r.id] === undefined || c.by[r.id] === null ? '-' : c.by[r.id].toFixed(1)}`).join(' ')
+  const sp = ROUTES.filter((r) => r.node === x.n || ((r.id === 'stanek' || r.id === 'bladeStanek') && c.by[r.id] !== undefined)).map((r) => `${r.id}:${c.by[r.id] === undefined || c.by[r.id] === null ? '-' : c.by[r.id].toFixed(1)}`).join(' ')
   console.log(`  ${clearLabel(x.n, start).padEnd(7)} ${f1(c.by.hack)} ${f1(c.by.blade)}  ${sp.padEnd(9)} ${String(c.via).padEnd(6)} ${f1(x.own)}  ${f1(x.T)}  +${(x.T - fm1[0].T).toFixed(1)}`)
 }
 
@@ -536,7 +536,7 @@ if (!NO_STANEK && !has('--phase1')) {
     for (const l13 of levels) {
       const lv = lvWith(start, 13, l13)
       const c = clearTime(n, lv, w, S)
-      const never = Math.min(...Object.entries(c.by).filter(([k, v]) => k !== 'stanek' && v !== null && isFinite(v)).map(([, v]) => v))
+      const never = Math.min(...Object.entries(c.by).filter(([k, v]) => k !== 'stanek' && k !== 'bladeStanek' && v !== null && isFinite(v)).map(([, v]) => v))
       const p = stanekParts({ node: n, lv, world: w, S })
       const g = gridOf(m, l13)
       const lay = layoutFor(m, l13)
@@ -557,6 +557,30 @@ if (!NO_STANEK && !has('--phase1')) {
   const tAll = V1[0]
   console.log(`  SF13's VALUE (mid world, optimal order from ${sig(start)}): the gift everywhere ${tAll.toFixed(1)}h; in BN13 only (SF13 grants nothing elsewhere) ${tOnly.toFixed(1)}h; never ${tOff.toFixed(1)}h`)
   console.log(`    -> SF13's own value ${(tOnly - tAll).toFixed(1)}h; BN13's gift (inside BN13) ${(tOff - tOnly).toFixed(1)}h; the gift in total ${(tOff - tAll).toFixed(1)}h`)
+  // THE GIFT ON THE BLADEBURNER ROUTE (routes.mjs 'bladeStanek', bladestanek.mjs): per node, blade vs blade + gift
+  // on the same world and state, and the plan's total without that route (draw for draw at the mid world)
+  {
+    const { MISSING_BLADE_GIFT } = await import('./routes.mjs')
+    const { giftLegOf } = await import('./bladestanek.mjs')
+    console.log("  ON THE BLADEBURNER ROUTE ('bladeStanek', NOT CALIBRATED: bbsim both arms on shared seeds, combat layout stanekplan.BLADE_LAYOUTS, charger BLADE_HOST mid): own hours at the start's state with SF13 at each level")
+    console.log('  clear     SF13  layout     blade   +gift   d(h)    leg ratio  join d   verdict')
+    for (const n of [...new Set(owed(start))]) {
+      const from = lvl(start, 13)
+      const levels = n === 13 ? [0, 1, 2].filter((l) => l >= from) : [1, 2, 3].filter((l) => l >= from)
+      for (const l13 of levels) {
+        const lv = lvWith(start, 13, l13)
+        const c = clearTime(n, lv, w, S)
+        if (c.by.blade === undefined) continue
+        const gl = giftLegOf(n, l13, lv(6), lv(7))
+        const bs = c.by.bladeStanek
+        const label = n === 13 ? `BN13.${l13 + 1}` : `BN${n}`
+        console.log(`  ${label.padEnd(8)}  ${String(l13).padEnd(4)}  ${(gl?.layout ?? '-').padEnd(9)}  ${f1(c.by.blade)}  ${f1(bs)}  ${bs == null || c.by.blade == null ? '    -' : (bs - c.by.blade).toFixed(2).padStart(6)}  ${gl ? gl.ratio.toFixed(4).padStart(9) : '        -'}  ${gl ? gl.joinD.toFixed(2).padStart(6) : '     -'}   ${bs == null ? 'NOT PRICED (no table entry)' : bs < c.by.blade ? 'ACCEPT' : 'never'}`)
+      }
+    }
+    const tNoBlade = totalOf({ bladeStanekOff: true })
+    console.log(`  -> the plan with the gift on the Bladeburner route ${tAll.toFixed(1)}h, without it ${tNoBlade.toFixed(1)}h: its value ${(tNoBlade - tAll).toFixed(1)}h`)
+    if (MISSING_BLADE_GIFT.size) console.log(`  !! bladeStanek NOT PRICED (no table entry; build: node tools/sim/bbstanek.mjs --table): ${[...MISSING_BLADE_GIFT].slice(0, 12).join(', ')}${MISSING_BLADE_GIFT.size > 12 ? ` (+${MISSING_BLADE_GIFT.size - 12})` : ''}`)
+  }
   tick("Stanek's Gift (section)", t0)
 }
 
@@ -890,8 +914,8 @@ if (ADAPT && DRAWS >= 10) {
   const owedOf = (n) => owed(start).filter((x) => x === n).length
   const kgRows = moves.map((A) => {
     const via = clearTime(A, lvOf(start), mid, S).via
-    const param = via === 'blade' ? 'k' : `g${A}`
-    const noise = via === 'blade' ? 0.1 / kScale : OBS_SD_G / gScaleOf(A) // one reading's sd in z units (OBS_SD k 0.1, g 0.15)
+    const param = via === 'blade' || via === 'bladeStanek' ? 'k' : `g${A}`
+    const noise = via === 'blade' || via === 'bladeStanek' ? 0.1 / kScale : OBS_SD_G / gScaleOf(A) // one reading's sd in z units (OBS_SD k 0.1, g 0.15)
     const ms = [...new Set([1, owedOf(A)])]
     const byM = new Map()
     for (const m of [...ms, Infinity]) {
