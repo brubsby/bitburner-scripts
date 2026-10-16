@@ -38,7 +38,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { finalRatesOf } from './rates.mjs'
-import { giftSize, optimiseLayout, hackWeights, bestNodeModel, chargeFactor, threadsOf, homeAt, fragmentById, TYPE, TYPE_NAME } from '../../../stanekplan.js'
+import { giftSize, optimiseLayout, hackWeights, bestNodeModel, nodeModel, lifePolicyOf, chargeFactor, threadsOf, homeAt, fragmentById, TYPE, TYPE_NAME } from '../../../stanekplan.js'
 import { SF_PARAMS } from './effects.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -109,24 +109,14 @@ export function expTermOf(m, profile, cycleH, node = null) {
 }
 
 /**
- * The gift's factors for node `node` at SF13 level `l13` in `world`, given the
- * no-gift clear's hours H0 and growth g (memoised on the world, H0 and g binned at 4%).
- * Returns { W, gMul, favorMul, f, hours (the gift run, linearised), giftAt, layout, model } .
+ * The gift run's length: a fixed point (damped) on the linearised exit H0 - ln W / g - H0 (1 - e^-dlng),
+ * modelAt(H) the node model at a run of H hours. Returns { hours, model }.
  */
-export function stanekFactors(node, l13, world, m, { H0, g }) {
-  const memo = (world._stanek ??= new Map())
-  const key = ((node * 4 + l13) * 8192 + 4096 + Math.round(Math.log(Math.max(H0, 0.1)) * 25)) * 8192 + 4096 + Math.round(Math.log(g) * 25)
-  let r = memo.get(key)
-  if (r) return r
-  const lay = layoutFor(m, l13)
-  const cycleH = world.cycleHours ?? 2
-  const p = world.sf
-  const base = { layout: lay.placed, nodePower: m.StaneksGiftPowerMultiplier, repCost: m.AugmentationRepCost, cycleH, p, Hg: H0 * g, L0: expTermOf(m, world.profile, cycleH, node), ramHours: H0, favorU: FAVOR_U }
-  // the gift run's length: a fixed point (damped) on the linearised exit
+export function giftRunOf(H0, g, modelAt) {
   let H1 = H0
   let model = null
   for (let i = 0; i < 8; i++) {
-    model = bestNodeModel({ ...base, hours: H1 })
+    model = modelAt(H1)
     const next = Math.max(0.5, H0 - Math.log(model.W) / g - H0 * (1 - Math.exp(-model.dlng)))
     if (Math.abs(next - H1) < 0.01 * H0) {
       H1 = next
@@ -134,7 +124,49 @@ export function stanekFactors(node, l13, world, m, { H0, g }) {
     }
     H1 = (H1 + next) / 2
   }
-  model = bestNodeModel({ ...base, hours: H1 })
+  return { hours: H1, model: modelAt(H1) }
+}
+
+/** The node model's shared options for node m at SF13 l13 in `world` (the layout tabled per grid). */
+export function giftBaseOf(node, l13, world, m, { H0, g }) {
+  const lay = layoutFor(m, l13)
+  const cycleH = world.cycleHours ?? 2
+  return { lay, base: { layout: lay.placed, nodePower: m.StaneksGiftPowerMultiplier, repCost: m.AugmentationRepCost, cycleH, p: world.sf, Hg: H0 * g, L0: expTermOf(m, world.profile, cycleH, node), ramHours: H0, favorU: FAVOR_U } }
+}
+
+/**
+ * THE PER-LIFE LAYOUT POLICY's run (stanekplan.lifePolicyOf: each life's layout optimised on that
+ * life's marginal exit-hours, measured on the trajectory) vs the fixed layout's, from the same
+ * inputs: { fixed: {hours, f}, perLife: {hours, f, lives}, dH = perLife - fixed }. Not in the
+ * route's hours (the search per life is ~0.1-0.5s; tools/sim/stanekperlife.mjs prices it).
+ */
+export function perLifeRunOf(node, l13, world, m, { H0, g }, { budget = LAYOUT_BUDGET } = {}) {
+  const { lay, base } = giftBaseOf(node, l13, world, m, { H0, g })
+  const fixed = giftRunOf(H0, g, (H) => bestNodeModel({ ...base, hours: H }))
+  let pol = null
+  const modelAt = (H) => {
+    const b = bestNodeModel({ ...base, hours: H })
+    pol = lifePolicyOf({ ...base, hours: H, f: b.f }, { width: lay.width, height: lay.height, budget, g })
+    return nodeModel({ ...base, hours: H, f: b.f, layouts: pol.layouts })
+  }
+  const per = giftRunOf(H0, g, modelAt)
+  return { fixed: { hours: fixed.hours, f: fixed.model.f, lives: fixed.model.lives }, perLife: { hours: per.hours, f: per.model.f, lives: pol.lives, dJ: pol.dJ }, dH: per.hours - fixed.hours, layout: lay }
+}
+
+/**
+ * The gift's factors for node `node` at SF13 level `l13` in `world`, given the
+ * no-gift clear's hours H0 and growth g (memoised on the world, H0 and g binned at 4%).
+ * Returns { W, gMul, favorMul, f, hours (the gift run, linearised), giftAt, layout, model } .
+ * The FIXED layout (one per grid): the per-life policy is never slower in the model
+ * (perLifeRunOf; NOT SIMULATED here, published in the route's status).
+ */
+export function stanekFactors(node, l13, world, m, { H0, g }) {
+  const memo = (world._stanek ??= new Map())
+  const key = ((node * 4 + l13) * 8192 + 4096 + Math.round(Math.log(Math.max(H0, 0.1)) * 25)) * 8192 + 4096 + Math.round(Math.log(g) * 25)
+  let r = memo.get(key)
+  if (r) return r
+  const { lay, base } = giftBaseOf(node, l13, world, m, { H0, g })
+  const { hours: H1, model } = giftRunOf(H0, g, (H) => bestNodeModel({ ...base, hours: H }))
   r = { W: model.W, gMul: Math.exp(model.dlng), favorMul: model.favorMul, f: model.f, hours: H1, giftAt: model.giftAt, layout: lay, model }
   memo.set(key, r)
   return r

@@ -230,7 +230,7 @@ export const ROUTES = [
   },
   {
     id: 'stanek',
-    status: "MODELLED (stanekplan.js, stanek.mjs): the hacking route (BN14: go) with Stanek's Gift accepted at the node's start — in BN13, or anywhere at SF13>=1; source formulas, MEASURED home RAM, ASSUMED elasticities/rep/duty; the gift on the Bladeburner route is 'bladeStanek'",
+    status: "MODELLED (stanekplan.js, stanek.mjs): the hacking route (BN14: go) with Stanek's Gift accepted at the node's start — in BN13, or anywhere at SF13>=1; source formulas, MEASURED home RAM, ASSUMED elasticities/rep/duty; ONE tabled layout every life (the live per-life layout, priced by tools/sim/stanekperlife.mjs at -0.0..-1.2h on the node model, NOT SIMULATED here); the gift on the Bladeburner route is 'bladeStanek'",
     readsSf13: true, // the only route that reads SF13 (clearTime memoises the others without it)
     applies: (node, lv, world) => !world.phase1 && !world.stanekOff && giftAvailable(node, lv) && (!world.stanekBn13Only || node === 13),
     hours: (a) => stanekParts(a)?.h ?? null,

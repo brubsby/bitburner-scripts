@@ -18,9 +18,14 @@
 // The rest of the API throws until Genesis is installed (Stanek.ts:18), so the
 // accept comes first and every other call is behind it.
 //
-// THE LAYOUT: stanekplan.layoutForGrid (the optimiser's layout for the grid the
-// game reports, tabled for BN13 at SF13 0..3). Placed only when the active set
-// differs (an install keeps it; a node's end clears it), verified by re-reading.
+// THE LAYOUT, PER LIFE (stanekplan.lifeTargetOf): an install zeroes the charge and
+// keeps the layout, so each life may carry its own. progress.js decides this life's
+// on the live exit model (decisions.stanek.layout: weights = the exit's marginal hours
+// per unit ln of each fragment type; options priced as trajectories); placed while the
+// life is young (LIFE_LAYOUT_WINDOW_MIN), else the incumbent kept; the tabled layout
+// (stanekplan.layoutForGrid) on an empty grid and on the Bladeburner route. Placed only
+// when the active set differs, verified by re-reading; /tel/stanek.txt lifeLayout is
+// the decision record (STANEK LAYOUT STALE when the placed one is not it).
 //
 // THE CHARGER: charge.js on ANY rooted host — chargeFragment charges from whatever
 // server the script runs on, at its threads x that server's core bonus (Stanek.ts;
@@ -42,7 +47,7 @@
 //
 // Publishes /tel/stanek.txt on every exit path (atExit): gift state, accept
 // outcome, layout, fragments with their charge, charger, allocation, health.
-import { giftStateOf, layoutForGrid, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME, routeOfProgress, PROGRESS_FILE, bladeChargeFOf, BLADE_F_MAX } from 'stanekplan.js'
+import { giftStateOf, lifeTargetOf, planLayoutOf, layoutKeyOf, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME, routeOfProgress, PROGRESS_FILE, bladeChargeFOf, BLADE_F_MAX } from 'stanekplan.js'
 import { reservesOf, heldOn, FREEABLE } from 'raiseplace.js'
 import { singularityRamMultiplier, canAccessCotMG } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -90,20 +95,6 @@ export async function main(ns) {
     const height = ns.stanek.giftHeight()
     const nodePower = bitNodeMults(info)?.StaneksGiftPowerMultiplier
     if (typeof nodePower !== 'number' || !isFinite(nodePower)) return publish({ health: 'fail', why: `StaneksGiftPowerMultiplier unknown for BitNode ${info.currentNode} (bitNodeMultipliers.js) — no layout chosen` })
-    const lay = layoutForGrid(width, height, nodePower, gift.basis === 'blade' ? 'blade' : 'hack')
-    let active = ns.stanek.activeFragments()
-    let placeFails = []
-    if (!sameLayout(active, lay.placed)) {
-      ns.stanek.clearGift()
-      for (const p of lay.placed) if (!ns.stanek.placeFragment(p.x, p.y, p.rot, p.id)) placeFails.push(p)
-      active = ns.stanek.activeFragments()
-      rec.placedAt = new Date().toISOString()
-    }
-    const placedOk = sameLayout(active, lay.placed)
-    rec.layout = { width, height, nodePower, key: lay.key, source: lay.source, placed: lay.placed, ok: placedOk, placeFails }
-    rec.fragments = active.map((f) => ({ id: f.id, x: f.x, y: f.y, rot: f.rotation, type: TYPE_NAME[f.type] ?? f.type, highestCharge: f.highestCharge, numCharge: f.numCharge, effect: f.chargedEffect }))
-    // ---- 3. THE CHARGER --------------------------------------------------
-    rec.phase = 'charger'
     const prevRec = (() => {
       try {
         return JSON.parse(ns.read(STANEK_FILE) || 'null')
@@ -111,6 +102,27 @@ export async function main(ns) {
         return null
       }
     })()
+    // THE LIFE'S LAYOUT (stanekplan.lifeTargetOf): the plan's decision of this life (progress.js, the
+    // live exit model, decided while the install's zero charge makes a re-lay free), else the
+    // incumbent an install kept, else the tabled one; the Bladeburner route keeps its tabled layout.
+    let active = ns.stanek.activeFragments()
+    const planLayout = gift.basis === 'blade' ? null : planLayoutOf(ns.read('/tel/plan.txt'), info.lastAugReset, width, height)
+    const target = lifeTargetOf({ basis: gift.basis, width, height, nodePower, active, plan: planLayout, prev: prevRec, lastAugReset: info.lastAugReset, lastNodeReset: info.lastNodeReset ?? null })
+    rec.lifeLayout = target.record
+    let placeFails = []
+    if (!sameLayout(active, target.placed)) {
+      ns.stanek.clearGift()
+      for (const p of target.placed) if (!ns.stanek.placeFragment(p.x, p.y, p.rot, p.id)) placeFails.push(p)
+      active = ns.stanek.activeFragments()
+      rec.placedAt = new Date().toISOString()
+      rec.lifeLayout.relaid = rec.placedAt
+    }
+    const placedOk = sameLayout(active, target.placed)
+    const activePlaced = active.map((f) => ({ id: f.id, x: f.x, y: f.y, rot: f.rotation }))
+    rec.layout = { width, height, nodePower, key: `${width}x${height}|${nodePower}`, decidedKey: target.record.key, placedKey: layoutKeyOf(activePlaced), source: target.record.source, placed: target.placed, ok: placedOk, placeFails }
+    rec.fragments = active.map((f) => ({ id: f.id, x: f.x, y: f.y, rot: f.rotation, type: TYPE_NAME[f.type] ?? f.type, highestCharge: f.highestCharge, numCharge: f.numCharge, effect: f.chargedEffect }))
+    // ---- 3. THE CHARGER --------------------------------------------------
+    rec.phase = 'charger'
     rec.progress = chargeProgressOf(prevRec, rec.fragments, info.lastAugReset)
     // What is actually placed is what can be charged (a failed placement is published, not charged).
     const roots = chargeRootsOf(active.filter((f) => f.type !== TYPE.Booster).map((f) => ({ id: f.id, x: f.x, y: f.y, rot: f.rotation })))

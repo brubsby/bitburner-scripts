@@ -23,6 +23,11 @@
 //       stays flat pass to pass, or a gathered charge.js error -> FRAGMENTS NOT CHARGING.
 //   SG9 THE BLADEBURNER ROUTE'S GIFT IS PRICED (giftWantOf / BLADE_GIFT_PRICED): wanted iff withH < withoutH;
 //       BN11.1 accepts; held on an unknown route; pins 'blade'; stanek.js places BLADE_LAYOUTS (mock BN11).
+//   SG10 THE LIFE'S LAYOUT IN THE GAME: an install with the plan's decision -> stanek.js re-lays and
+//       charges it (index, key, why recorded); kept with no decision; a late decision not followed;
+//       STANEK LAYOUT STALE on a mismatch 15 min in or no decision 60 min in. SG11 the life's
+//       layout is the fastest simulated exit, weights = the exit's marginal hours (exitplan).
+//       SG12 the node model's per-life policy: never slower than fixed, the final life its own.
 //   SG5 THE CHOKE POINTS (static): act.js's runActor gates buyaug/graft/install before its
 //       exec, the order loop gates before the install branch; no root script but the three
 //       actors calls purchaseAugmentation / installAugmentations / graftAugmentation;
@@ -275,7 +280,7 @@ function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 
     atExit(f) {
       g.atExit = f
     },
-    getResetInfo: () => ({ currentNode: node, lastAugReset: 1000, lastNodeReset: 0, ownedSF: new Map([...(sf13 ? [[13, sf13]] : []), ...extraSf]), ownedAugs: new Map(g.installed) }),
+    getResetInfo: () => ({ currentNode: node, lastAugReset: g.lastAugReset ?? 1000, lastNodeReset: 0, ownedSF: new Map([...(sf13 ? [[13, sf13]] : []), ...extraSf]), ownedAugs: new Map(g.installed) }),
     stanek: {
       acceptGift() {
         if (g.installed.has(GEN)) return true
@@ -439,6 +444,7 @@ async function sg4() {
   if (sp.stanekHealthOf({ stanek: late, charge: null, now, nodeStartMs: now - 5 * 60e3 }).some((p) => p.problem === 'GIFT NOT ACCEPTED')) c.fail('5 min into BN13: inside the grace, must not fail yet')
   // not charging: judged by the gift's OWN charge (highestCharge x numCharge), pass to pass
   const ok = mockGame()
+  ok.lastAugReset = Date.now() - 2 * 60e3 // a young life: no life-layout decision is due yet (STANEK LAYOUT STALE waits 60 min)
   const ro = await ok.run()
   if (sp.stanekHealthOf({ stanek: ro, charge: null, now: Date.now() }).length) c.fail('a charger just launched (no previous pass to compare) must be healthy', JSON.stringify(sp.stanekHealthOf({ stanek: ro, charge: null, now: Date.now() })))
   const back = (r, min) => ({ ...r, at: new Date(Date.now() - min * 60e3).toISOString() })
@@ -451,7 +457,7 @@ async function sg4() {
   ok.tick(30)
   const grew = await ok.run()
   if (sp.stanekHealthOf({ stanek: grew, charge: null, now: Date.now() }).length) c.fail('a growing charge mass must be healthy', JSON.stringify(sp.stanekHealthOf({ stanek: grew, charge: null, now: Date.now() })))
-  const errBeat = { at: new Date().toISOString(), lastAugReset: 1000, hosts: { home: { at: new Date().toISOString(), error: 'chargeFragment(0, 0) threw: x' } } }
+  const errBeat = { at: new Date().toISOString(), lastAugReset: ok.lastAugReset, hosts: { home: { at: new Date().toISOString(), error: 'chargeFragment(0, 0) threw: x' } } }
   if (!sp.stanekHealthOf({ stanek: grew, charge: errBeat, now: Date.now() }).some((p) => /chargeFragment/.test(p.detail))) c.fail('a fresh charge.js error in the gathered heartbeats: not reported')
   if (sp.stanekHealthOf({ stanek: null }).length !== 1) c.fail('no stanek.txt must be reported (STANEK UNREPORTED)')
   return c
@@ -507,11 +513,19 @@ function sg5() {
   const basisKeys = ret.match(/\n\s+basis:/g)?.length ?? 0
   if (!ret || basisKeys !== 1) c.fail(`progress.js stanekDecisionOf's priced decision must carry exactly ONE basis key (basis: ALLOC_BASIS), has ${basisKeys} — a later duplicate overrides 'fleet' and stanek.js never follows the plan`)
   else {
-    const lit = Function('ALLOC_BASIS', 'c', 'without', 'priced', 'fleetGB', 'hosts', 'fNow', 'cycleH', 'ctx', 'basis', 't0', `${ret.replace('return {', 'return ({')}\n    })`)
-    const d = lit(sp.ALLOC_BASIS, { f: 0.1, hours: 100, why: 'w' }, 110, [], 756, [{}], 0, 0.5, { nodePower: 2 }, null, Date.now())
-    const plan = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 7, decisions: { stanek: d } })
-    const got = sp.planAllocOf(plan, 7)
+    const lit = Function('ALLOC_BASIS', 'c', 'without', 'priced', 'fleetGB', 'hosts', 'fNow', 'cycleH', 'ctx', 'basis', 't0', 'layout', 'info', 'lifeMin', 'LIFE_LAYOUT_WINDOW_MIN', `${ret.replace('return {', 'return ({')}\n    })`)
+    const lar = Date.now() - 3 * 60e3
+    const alt = sp.LAYOUTS['6x5|2'] // legal on BN13.2's 6x6 grid
+    const lay = { key: sp.layoutKeyOf(alt), placed: alt, lifeKey: lar, why: 'test', decidedAt: new Date().toISOString() }
+    const d = lit(sp.ALLOC_BASIS, { f: 0.1, hours: 100, why: 'w' }, 110, [], 756, [{}], 0, 0.5, { nodePower: 2 }, null, Date.now(), lay, { lastAugReset: lar }, 3, sp.LIFE_LAYOUT_WINDOW_MIN)
+    const plan = JSON.stringify({ at: new Date().toISOString(), lastAugReset: lar, decisions: { stanek: d } })
+    const got = sp.planAllocOf(plan, lar)
     if (got?.f !== 0.1) c.fail(`stanek.js does not follow progress.js's own priced decision: planAllocOf -> ${JSON.stringify(got)} (decision basis ${JSON.stringify(d.basis)})`)
+    // the life's layout round-trips: progress.js's decision -> plan.txt -> stanek.js's planLayoutOf (this life, legal on the grid)
+    const gl = sp.planLayoutOf(plan, lar, 6, 6)
+    if (gl?.key !== lay.key) c.fail(`stanek.js does not read progress.js's own life layout decision: planLayoutOf -> ${JSON.stringify(gl)}`)
+    if (sp.planLayoutOf(plan, lar + 1, 6, 6) !== null) c.fail("planLayoutOf followed another life's layout")
+    if (sp.planLayoutOf(plan, lar, 5, 5) !== null) c.fail('planLayoutOf followed a layout that does not fit the grid')
   }
   if (!/stanek: pc\.decisions\.stanek \?\? pc\.prev\?\.decisions\?\.stanek \?\? null/.test(pr)) c.fail('progress.js must publish decisions.stanek in /tel/plan.txt')
   if (!/giftPinOf\(routePinOf\(/.test(pr)) c.fail("progress.js must pin the hacking route where the gift is accepted (routepin.giftPinOf)")
@@ -628,6 +642,152 @@ async function sg8() {
   return c
 }
 
+// SG10 THE LAYOUT PER LIFE, IN THE GAME (stanek.js on the mock): life 1 on the tabled layout; an
+//      install (new lastAugReset) with the plan's decision of this life -> stanek.js re-lays to it
+//      and charges it, the record names the life (index 2), its key and why; a second pass does
+//      not re-lay; no decision -> the incumbent is KEPT (no clear); a decision past the install
+//      window is not followed; the Bladeburner route keeps BLADE_LAYOUTS. STANEK LAYOUT STALE
+//      when the placed layout is not the decided one 15 min in, or no decision after 60 min.
+async function sg10() {
+  const c = new Check('SG10', "the life's layout: re-laid at an install to the plan's decision, kept otherwise, health on the match")
+  const g = mockGame({ node: 13, sf13: 1, installed: [NFG, GEN] })
+  const t0 = Date.now()
+  g.lastAugReset = t0 - 90 * 60e3
+  const r1 = await g.run()
+  const tab = sp.layoutForGrid(6, 6, 2).placed
+  c.examined(1)
+  if (!sp.sameLayout(g.active(), tab)) c.fail('life 1 on an empty grid must place the tabled layout', JSON.stringify(g.active()))
+  if (r1?.lifeLayout?.lifeIndex !== 1 || r1.lifeLayout.decided !== false) c.fail('life 1 record: index 1, not decided (no plan)', JSON.stringify(r1?.lifeLayout))
+  // the install: the charge clears, the layout stays (StaneksGift.ts:226-228)
+  g.charge = new Map()
+  g.lastAugReset = t0 - 2 * 60e3
+  const alt = sp.LAYOUTS['6x5|2']
+  const decision = { key: sp.layoutKeyOf(alt), placed: alt, lifeKey: g.lastAugReset, why: 'the live exit model (test)', weights: { Hacking: 1 }, decidedAt: new Date().toISOString(), source: 'live weights' }
+  g.files['/tel/plan.txt'] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: g.lastAugReset, decisions: { stanek: { f: 0.1, basis: 'fleet', why: 't', layout: decision } } })
+  const clears0 = g.log.filter((e) => e.ev === 'clear').length
+  const r2 = await g.run()
+  c.examined(1)
+  if (!sp.sameLayout(g.active(), alt)) c.fail("an install with the plan's decision of this life: stanek.js did not re-lay to it", JSON.stringify(g.active()))
+  if (r2?.lifeLayout?.key !== decision.key || r2.lifeLayout.lifeIndex !== 2 || !r2.lifeLayout.decided || !r2.lifeLayout.relaid) c.fail('the life 2 record must carry the decided key, index 2, decided, relaid', JSON.stringify(r2?.lifeLayout))
+  if (r2?.layout?.placedKey !== decision.key) c.fail('rec.layout.placedKey must be the placed layout', JSON.stringify(r2?.layout))
+  const roots = JSON.stringify(sp.chargeRootsOf(alt))
+  if (!g.procs.some((p) => p.filename === 'charge.js' && p.args[0] === roots)) c.fail("the charger must charge the re-laid layout's fragments", JSON.stringify(g.procs.map((p) => p.args[0])))
+  if (sp.stanekHealthOf({ stanek: r2, charge: null, now: Date.now() }).some((p) => p.problem === 'STANEK LAYOUT STALE')) c.fail('placed = decided: no STANEK LAYOUT STALE')
+  await g.run()
+  if (g.log.filter((e) => e.ev === 'clear').length !== clears0 + 1) c.fail('a second pass of the same life re-laid (it must place only when the layout differs)')
+  // the next install, no decision of it yet: the incumbent stays (no clear)
+  g.lastAugReset = t0 - 60e3
+  const r3 = await g.run()
+  c.examined(1)
+  if (!sp.sameLayout(g.active(), alt) || g.log.filter((e) => e.ev === 'clear').length !== clears0 + 1) c.fail('no decision of this life: the incumbent must be kept (no clear)')
+  if (r3?.lifeLayout?.decided !== false || r3.lifeLayout.lifeIndex !== 3) c.fail('life 3 record: index 3, not decided', JSON.stringify(r3?.lifeLayout))
+  // a decision arriving past the install window is not followed (the re-lay would delete the charge: L2)
+  g.lastAugReset = t0 - (sp.LIFE_LAYOUT_WINDOW_MIN + 5) * 60e3
+  g.files['/tel/plan.txt'] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: g.lastAugReset, decisions: { stanek: { f: 0.1, basis: 'fleet', why: 't', layout: { ...decision, key: sp.layoutKeyOf(tab), placed: tab, lifeKey: g.lastAugReset } } } })
+  await g.run()
+  if (!sp.sameLayout(g.active(), alt)) c.fail('a decision past the install window was followed (re-laid mid-life)')
+  // health: placed != decided 20 min in -> STALE; a hack life with no decision 90 min in -> STALE
+  const now = Date.now()
+  const lar = now - 20 * 60e3
+  const st = { at: new Date(now).toISOString(), lastAugReset: lar, gift: { accepted: true, basis: 'hack' }, layout: { placed: alt, placedKey: 'X' }, lifeLayout: { lastAugReset: lar, key: 'Y', decided: true, source: 'plan' } }
+  c.examined(3)
+  if (!sp.lifeLayoutHealthOf(st, now).some((p) => p.problem === 'STANEK LAYOUT STALE')) c.fail('placed != decided 20 min into the life: no STANEK LAYOUT STALE')
+  if (sp.lifeLayoutHealthOf({ ...st, lastAugReset: now - 5 * 60e3, lifeLayout: { ...st.lifeLayout, lastAugReset: now - 5 * 60e3 } }, now).length) c.fail('placed != decided 5 min in: inside the grace, must not fail yet')
+  const und = { ...st, lastAugReset: now - 90 * 60e3, layout: { placedKey: 'Y' }, lifeLayout: { lastAugReset: now - 90 * 60e3, key: 'Y', decided: false, why: 'no decision' } }
+  if (!sp.lifeLayoutHealthOf(und, now).some((p) => /no decision/.test(p.detail))) c.fail('a hacking life 90 min in with no decision: no STANEK LAYOUT STALE')
+  if (sp.lifeLayoutHealthOf({ ...und, gift: { accepted: true, basis: 'blade' } }, now).length) c.fail('the Bladeburner route (one tabled layout per node) must not need a life decision')
+  // the Bladeburner route: BLADE_LAYOUTS whatever the plan says (SG9 places it; here the plan's layout is ignored)
+  const bl = mockGame({ node: 11, sf13: 1, installed: [NFG, GEN], progressRoute: 'blade', extraSf: [[7, 1], [6, 3]] })
+  bl.lastAugReset = 1000
+  bl.files['/tel/plan.txt'] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1000, decisions: { stanek: { layout: { ...decision, lifeKey: 1000 } } } })
+  const rb = await bl.run()
+  const gs = sp.giftSize(0, 1)
+  c.examined(1)
+  if (rb?.gift?.basis === 'blade' && !sp.sameLayout(bl.active(), sp.layoutForGrid(gs.width, gs.height, 1, 'blade').placed)) c.fail('the Bladeburner route must keep its tabled layout', JSON.stringify(rb?.lifeLayout))
+  c.note(`life 1 tabled ${sp.layoutKeyOf(tab)} -> life 2 re-laid to the plan's ${decision.key} (charged), life 3 kept, a late decision not followed; blade basis ${rb?.gift?.basis}: ${rb?.lifeLayout?.key}`)
+  return c
+}
+
+// SG11 THE LIFE'S LAYOUT IS A COMPARISON OF SIMULATED EXITS (liveWeightInputsOf / liveLayoutOptionsOf /
+//      liveLayoutChoiceOf on exitplan.bestExitPolicy): the weights are (H0 - H(type x e^d)) / d on the
+//      same inputs; every option is a trajectory from the same base; the choice is the fastest exit,
+//      the incumbent kept within tolerance. progress.js prices it through the trajectory (static).
+async function sg11() {
+  const c = new Check('SG11', "the life's layout is the fastest of the simulated exits; weights = the exit's marginal hours")
+  const { bestExitPolicy, expForLevel } = await import('../../exitplan.js')
+  // SG6's measured BN5 shape (hacking 4051/4500, mult 9.25, 0.625h lives) with no gift charged
+  const raw = { money: 8.85e9, incomePerSec: 39e6, hacking: 4051, hackingExp: expForLevel(4051, 9.25), hackingMult: 9.25, expPerSec: 190000, repPerSec: 200, exitRep: 0, exitFavor: 78, cycleHours: 0.625, multGainPerCycle: 1.34, exitLevel: 4500, joinMoney: 100e9, terminalRep: 2.5e6, donationCost: 791e9 }
+  const hoursOf = (inp) => bestExitPolicy(inp, 6).best?.hours ?? null
+  const hosts = [{ host: 'home', cores: 4, capGb: 2 ** 14 - 100 }, ...Array.from({ length: 25 }, (_, i) => ({ host: `p${i}`, cores: 1, capGb: 2 ** 12 }))]
+  const tab = sp.layoutForGrid(6, 6, 2).placed
+  const ctx0 = { layout: [], nodePower: 2, fleetGB: 2 ** 14 + 25 * 2 ** 12, hosts, fNow: 0, cycleH: raw.cycleHours }
+  const f = 0.2
+  const base = sp.layoutInputsOf(raw, ctx0, f, tab)
+  const ctx = { ...ctx0, layout: tab, fNow: f }
+  // the incumbent's option IS the measured trajectory (same inputs, same hours)
+  const H0 = hoursOf(base)
+  const same = hoursOf(sp.layoutInputsOf(base, ctx, f, tab))
+  c.examined(1)
+  if (!(Math.abs(same - H0) < 1e-9)) c.fail(`the incumbent at the measured f must be the measured trajectory: ${same} vs ${H0}`)
+  const wIn = sp.liveWeightInputsOf(base)
+  const wp = wIn.map((x) => ({ type: x.type, hours: hoursOf(x.inputs) }))
+  const w = sp.liveWeightsOf(H0, wp)
+  for (const p of wp) {
+    c.examined(1)
+    if (Math.abs(w[p.type] - Math.max(0, (H0 - p.hours) / sp.LIFE_DLN)) > 1e-12) c.fail(`weight ${sp.TYPE_NAME[p.type]} is not (H0 - H(bumped)) / d`)
+  }
+  if (!(w[sp.TYPE.Hacking] > 0)) c.fail('a larger hacking multiplier must shorten the exit (weight > 0)', JSON.stringify(w))
+  const { options, c: cL } = sp.liveLayoutOptionsOf({ base, ctx, f, width: 6, height: 6, nodePower: 2, incumbent: tab }, w)
+  const priced = options.map((o) => ({ ...o, hours: hoursOf(o.inputs) }))
+  const ch = sp.liveLayoutChoiceOf(priced, { lifeKey: 7, weights: w, c: cL, f, H0 })
+  const min = Math.min(...priced.map((p) => p.hours))
+  const inc = priced.find((p) => p.src === 'incumbent')
+  c.examined(2)
+  if (!(ch.hours === +(inc.hours - min >= 0.01 ? min : inc.hours).toFixed(3))) c.fail(`the choice is not the fastest exit (or the incumbent within 0.01h): ${ch.hours} vs ${JSON.stringify(priced.map((p) => [p.src, p.hours]))}`)
+  // a synthetic option faster by 1h is taken; one faster by 0.001h is not (the incumbent kept)
+  const fast = sp.liveLayoutChoiceOf([{ src: 'incumbent', key: 'A', placed: tab, hours: 10 }, { src: 'live weights', key: 'B', placed: tab, hours: 9 }], { lifeKey: 7, weights: w, c: cL, f, H0 })
+  const near = sp.liveLayoutChoiceOf([{ src: 'incumbent', key: 'A', placed: tab, hours: 10 }, { src: 'live weights', key: 'B', placed: tab, hours: 9.999 }], { lifeKey: 7, weights: w, c: cL, f, H0 })
+  c.examined(2)
+  if (fast.key !== 'B' || fast.dH !== -1) c.fail('an option 1h faster than the incumbent must be taken', JSON.stringify(fast))
+  if (near.key !== 'A') c.fail('an option 0.001h faster must not displace the incumbent', JSON.stringify(near))
+  if (ch.lifeKey !== 7 || !ch.weights || !/exit hours/.test(ch.weightsUnit)) c.fail('the record must carry its life, the weights it used and their unit', JSON.stringify(ch))
+  // progress.js: the layout options are priced through the trajectory simulator, once per life
+  const pr = fs.readFileSync(path.join(REPO, 'progress.js'), 'utf8')
+  c.examined(1)
+  if (!/liveWeightInputsOf\(baseF\)/.test(pr) || !/lp\.push\(\{ \.\.\.o, hours: yield\* tg\(o\.inputs\) \}\)/.test(pr) || !/liveLayoutChoiceOf\(lp,/.test(pr)) c.fail('progress.js stanekDecisionOf must price the life layout options through the trajectory simulator (tg)')
+  if (!/prev\?\.layout\?\.lifeKey === info\.lastAugReset \? prev\.layout : null/.test(pr)) c.fail('progress.js must carry the life layout decision for the rest of the life')
+  if (!/if \(!layout && lifeMin <= LIFE_LAYOUT_WINDOW_MIN && typeof st\.layout\.width === 'number'\) \{/.test(pr)) c.fail('progress.js must decide the life layout whenever the life is young and none is carried (the gate on the decision changed)')
+  if (!/layout: layout \?\? \{ key: null, lifeKey: info\.lastAugReset/.test(pr)) c.fail('progress.js must publish decisions.stanek.layout (or why there is none) every priced decision')
+  c.note(`SG6's BN5 shape, life ${raw.cycleHours}h, 6x6|2 at f ${f}: weights ${JSON.stringify(ch.weights)}; ${ch.why.slice(0, 260)}`)
+  return c
+}
+
+// SG12 THE PER-LIFE POLICY IN THE NODE MODEL (stanekplan.lifePolicyOf, the gameplan's): never slower
+//      than the fixed layout (J >= Jfixed), and on BN13.2's grid it re-lays at least one life — the
+//      final life (the exit level) on a different layout from the build lives. Weights per life are
+//      the finite difference of J with only that life's multipliers bumped.
+async function sg12() {
+  const c = new Check('SG12', 'the per-life policy in the node model: never worse than fixed, the final life its own layout')
+  const st = await import('../sim/gameplan/stanek.mjs')
+  const { SF_PARAMS } = await import('../sim/gameplan/effects.mjs')
+  const world = { sf: Object.fromEntries(Object.entries(SF_PARAMS).map(([k, v]) => [k, v.mid])), cycleHours: 2.6, profile: null }
+  const m = { StaneksGiftPowerMultiplier: 2, StaneksGiftExtraSize: 1, AugmentationRepCost: 1, HackExpGain: 1, HackingSpeedMultiplier: 1 }
+  const { lay, base } = st.giftBaseOf(13, 1, world, m, { H0: 25, g: 0.1 })
+  const o = { ...base, hours: 16.6, f: 0.3 }
+  const pol = sp.lifePolicyOf(o, { width: lay.width, height: lay.height, budget: 2e4, g: 0.1 })
+  c.examined(3)
+  if (!(pol.J >= pol.Jfixed - 1e-12)) c.fail(`the per-life policy is slower than the fixed layout in the model: J ${pol.J} < ${pol.Jfixed}`)
+  if (!(pol.dJ > 0) || !pol.lives.some((l) => l.changed)) c.fail('on BN13.2 no life was re-laid (the per-life choice is not running)', JSON.stringify(pol.lives.map((l) => l.key)))
+  const fin = pol.lives[pol.lives.length - 1]
+  if (fin.stage !== 'final' || !(fin.weights[sp.TYPE.Hacking] > 3 * pol.lives[0].weights[sp.TYPE.Hacking])) c.fail('the final life must carry the exit level (Hacking weight far above a build life)', JSON.stringify([pol.lives[0].weights, fin.weights]))
+  const J0 = sp.nodeModel({ ...o, layouts: pol.layouts }).J
+  const i = 0
+  const wb = sp.nodeModel({ ...o, layouts: pol.layouts, bump: { life: i, type: sp.TYPE.Rep, d: sp.LIFE_DLN } }).J
+  if (Math.abs(sp.lifeWeightsOf({ ...o, layouts: pol.layouts }, i, { g: 0.1 })[sp.TYPE.Rep] - Math.max(0, (wb - J0) / sp.LIFE_DLN / 0.1)) > 1e-9) c.fail('a life weight is not the finite difference of J in that life')
+  c.note(`BN13.2 6x6|2, ${pol.lives.length} lives: dJ ${pol.dJ.toFixed(4)} (${(pol.dJ / 0.1).toFixed(3)}h at g 0.1); ${pol.lives.map((l) => `${l.life + 1}:${l.stage}${l.changed ? '*' : ''}`).join(' ')}`)
+  return c
+}
+
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12()]
 }

@@ -301,7 +301,15 @@ life length decision prices each option L at the gift's life-average over L
 lifeInputsOf and lifeTableGen; tests GL1-GL5). batch.js keeps the charger's shortfall free per host
 (`stanekHoldsOf`). Health: GIFT NOT ACCEPTED / FRAGMENTS NOT CHARGING (the
 binding cause named, or the gift's own charge mass flat) / STANEK STALE.
-Tests: SG1-SG9.
+**The layout is per life** (L1 of the dynamic layout, 2026-10-16): an install zeroes the charge
+and keeps the layout, so progress.js decides each young life's layout on the live exit model
+(`decisions.stanek.layout`: weights = the exit's marginal hours per unit ln of each fragment
+type, `liveWeightInputsOf`; options incumbent / tabled / the live-weights layout priced as
+trajectories, `liveLayoutChoiceOf`) and stanek.js re-lays to it within `LIFE_LAYOUT_WINDOW_MIN`
+(`lifeTargetOf`, record `/tel/stanek.txt` lifeLayout); no decision keeps the incumbent. Health
+STANEK LAYOUT STALE (placed != decided 15 min in; no decision 60 min in). The gameplan's node
+model prices the per-life sequence (`lifePolicyOf`, `tools/sim/stanekperlife.mjs`, NOT
+CALIBRATED; not in the route's hours). Tests: SG1-SG12.
 **Outside BN13 the gift is the Bladeburner route's** (2026-10-15): `stanekplan.giftWantOf` wants it
 where progress.txt's route (this node and life, `routeOfProgress`) is 'blade' and the priced exit wins
 (`BLADE_GIFT_PRICED`: bbsim with vs without, `tools/sim/bbstanek.mjs --table`, NOT CALIBRATED); an unknown

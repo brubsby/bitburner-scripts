@@ -50,7 +50,9 @@
 //     RAM, cycling the charged fragments round robin (one call per second: so after
 //     tau seconds of a life each fragment holds highestCharge = T, numCharge = tau/k);
 //     f is CHOSEN per node and world by maximising the exit objective; the layout is
-//     chosen once per grid size (optimiseLayout at the mid world's weights).
+//     chosen once per grid size (optimiseLayout at the mid world's weights) — the live game
+//     re-chooses it per life on the live exit model (liveLayout*); the per-life policy's gain is
+//     NOT SIMULATED in the gameplan's route (tools/sim/stanekperlife.mjs prices it).
 //   MEASURED  home RAM at a hacking-route exit (telemetry history.jsonl, every node
 //     played: log2 GB 14..25, median 21) and its shape over the node (log2 RAM rises
 //     ~ u^2 in the node's time fraction u: the median node is at 2^11-12 at u = 0.5 and
@@ -574,12 +576,16 @@ export function nodeModel(o) {
   const { layout, nodePower, repCost = 1, hours, cycleH, f, p, Hg, L0 = 750, favorU = 0.8 } = o
   const ramHours = o.ramHours ?? hours
   const duty = Math.min(1, Math.max(0, p.stDuty))
-  const cl = compileLayout(layout)
-  const k = cl.k
+  // THE PER-LIFE LAYOUT (lifePolicyOf): o.layouts[i] is life i's layout (an install keeps the charge at
+  // zero, so each life may carry its own); missing entries are o.layout. o.bump {life, type, d} multiplies
+  // that life's multipliers of a fragment type by e^d (lifeWeightsOf's finite difference).
+  const layouts = Array.isArray(o.layouts) ? o.layouts : null
+  const bump = o.bump ?? null
+  const trace = o.trace ? [] : null
   const nLives = Math.max(1, Math.ceil(hours / cycleH - 1e-9))
   const tauLife = cycleH * 3600 * duty // charging seconds per life
-  let level = 1 // gift level: 1 Genesis, 2 Awakening, 3 Serenity
-  let favor = 0
+  let level = o.level0 ?? 1 // gift level: 1 Genesis, 2 Awakening, 3 Serenity (o.level0: installed now)
+  let favor = o.favor0 ?? 0
   let sumI = 0
   let sumR = 0
   let wsum = 0
@@ -589,20 +595,25 @@ export function nodeModel(o) {
   let W = 1
   const quad = [0.125, 0.375, 0.625, 0.875] // the life's charge ramp, midpoint rule
   for (let i = 0; i < nLives; i++) {
+    const cl = compileLayout(layouts?.[i] ?? layout)
+    const k = cl.k
+    const bumpT = bump && bump.life === i ? bump : null
+    const mults = (c) => (bumpT ? bumpMults(multsAt(cl, c, nodePower), bumpT.type, bumpT.d) : multsAt(cl, c, nodePower))
     const t0 = i * cycleH
     const len = Math.min(cycleH, hours - t0)
     const u = Math.min(1, (t0 + len / 2) / hours) // the node's own time fraction (rep, favor life)
     const uRam = Math.min(1, (t0 + len / 2) / ramHours) // hours into the node on the no-gift clock (RAM, augs)
     const home = homeAt(uRam, p.stRam)
-    const T = threadsOf(home.ram * f, home.cores)
+    const T = o.T > 0 ? o.T : threadsOf(home.ram * f, home.cores) // o.T: a measured charger (L3: a decision epoch mid-node)
     const pen = PENALTY[level]
     const frAug = Math.pow(p.stFr, uRam)
     let lnI = 0
     let lnR = 0
     let mMid = null
+    if (trace) trace.push({ life: i, u, len, T, k, c: chargeFactor(T, (0.5 * tauLife * (len / cycleH)) / k), level })
     for (const q of quad) {
       const N = (q * tauLife * (len / cycleH)) / k
-      const m = multsAt(cl, chargeFactor(T, N), nodePower)
+      const m = mults(chargeFactor(T, N))
       lnI += lnIncome(m, pen, f) / quad.length
       lnR += Math.log(pen * m.faction_rep) / quad.length
       if (q === 0.375) mMid = m
@@ -618,9 +629,9 @@ export function nodeModel(o) {
     if (i === nLives - 1) {
       // the exit: the end of the final life, home at its exit RAM
       const he = homeAt(Math.min(1, hours / ramHours), p.stRam)
-      const Te = threadsOf(he.ram * f, he.cores)
+      const Te = o.T > 0 ? o.T : threadsOf(he.ram * f, he.cores)
       const N = (tauLife * (len / cycleH)) / k
-      end = multsAt(cl, chargeFactor(Te, N), nodePower)
+      end = mults(chargeFactor(Te, N))
       const lnX = Math.log(pen * end.hacking_exp) + Math.log(pen * end.hacking) + Math.log(pen * end.hacking_speed) + Math.log(1 - f)
       W = pen * end.hacking * Math.max(0.5, 1 + (32 * lnX) / L0)
       end.pen = pen
@@ -636,7 +647,7 @@ export function nodeModel(o) {
     }
   }
   const dlng = p.stEpsM * (sumI / wsum) + p.stEpsR * (sumR / wsum)
-  return { W, dlng, favorMul, J: Math.log(W) + Hg * dlng, lives: nLives, giftAt, end, f }
+  return { W, dlng, favorMul, J: Math.log(W) + Hg * dlng, lives: nLives, giftAt, end, f, trace }
 }
 
 // favor <-> rep (Faction/formulas/favor.ts; the same as favor.js, inlined to keep this module import-free)
@@ -655,6 +666,333 @@ export function bestNodeModel(o) {
     if (!best || r.J > best.J) best = r
   }
   return best
+}
+
+// ===========================================================================
+// THE LAYOUT PER LIFE (L1 of the dynamic layout): chosen at every install
+// ===========================================================================
+// An install clears every fragment's charge and keeps the layout (StaneksGift.ts:226-228), and
+// StaneksGift.delete / clearGift remove a fragment WITH its charge (StaneksGift.ts:112): at an
+// install the charge is zero anyway, so the next life may carry the layout that is best for
+// THAT life at no cost beyond the placement. The life's weights are not hand-assigned: they are
+// the MARGINAL EXIT-HOURS per unit ln(multiplier) of each fragment type IN THAT LIFE, measured by
+// a finite difference of the trajectory (nodeModel's exit objective J, with only that life's
+// multipliers of the type bumped by e^d), the way tools/sim/bbstanek.mjs measured the Bladeburner
+// weights on bbsim. What makes lives differ, in the model: the final life carries the exit level
+// (hacking skill x the exp term: Hacking and Speed); the Church's rep (faction_rep) moves
+// Awakening / Serenity, so the penalty, only in the lives before it lands; each life's own charge
+// factor c (the fleet's threads that life). NOT IN THE WEIGHTS: the Daedalus favor life's hours
+// (nodeModel favorMul sits outside J), and exp banked in an early life (nodeModel's lives do not
+// carry exp forward: the exit level is the final life's) — both would favour Hacking early.
+//
+// THE DECISION OF RECORD is the live exit model's (liveLayout* below): the node model here is the
+// gameplan's (lifePolicyOf, priced by tools/sim/stanekperlife.mjs) and the per-life sequence model.
+//
+// EXTENSION POINTS (built so the next layers extend, not replace, this):
+//   L2 (phase re-layouts within a life)  liveLayoutChoiceOf takes `switchCostH` (the charge a
+//      re-lay deletes, 0 at an install) and stanek.js's install window (LIFE_LAYOUT_WINDOW_MIN)
+//      becomes a priced epoch; nodeModel's o.layouts per life become per phase.
+//   L3 (the layout as a control decision)  lifePolicyOf is a policy over lives (o.layouts) with
+//      a mid-node state (o.T, o.level0, o.favor0); a decision epoch compares keep vs switch to the
+//      exit with the rest of the policy fixed — the records' dH / incumbentH are that comparison.
+//   L4 (the route pin)  the weights are the hacking route's; the route is an input of the model.
+
+/** The hacking-route fragment types a life's weights are measured for, and the multsAt keys each sets (StaneksGift.ts:134-160). */
+export const LIFE_TYPES = [TYPE.Hacking, TYPE.HackingSpeed, TYPE.HackingMoney, TYPE.HackingGrow, TYPE.Rep]
+const LIFE_TYPE_KEYS = { [TYPE.Hacking]: ['hacking', 'hacking_exp'], [TYPE.HackingSpeed]: ['hacking_speed'], [TYPE.HackingMoney]: ['hacking_money'], [TYPE.HackingGrow]: ['hacking_grow'], [TYPE.Rep]: ['faction_rep'] }
+/** m with a fragment type's multipliers x e^d (a copy). */
+export function bumpMults(m, type, d) {
+  const out = { ...m }
+  const e = Math.exp(d)
+  for (const k of LIFE_TYPE_KEYS[type] ?? []) out[k] *= e
+  return out
+}
+
+/** The finite-difference step (ln units) the life weights are measured at. FIXED, stated. */
+export const LIFE_DLN = 0.05
+
+/**
+ * Life i's weights: for each type, the exit hours saved per unit ln(multiplier) in life i alone,
+ * (J(bumped) - J) / d / g (J's unit is ln-growth; g, the node's log growth per hour, makes it
+ * hours — stanek.mjs's linearised exit H0 - J/g). o: nodeModel's options (o.layouts the policy the
+ * other lives run). Weights never below 0 (a larger multiplier cannot lengthen the exit in the model).
+ */
+export function lifeWeightsOf(o, i, { d = LIFE_DLN, g = 1 } = {}) {
+  const J0 = nodeModel({ ...o, trace: false }).J
+  const w = {}
+  for (const t of LIFE_TYPES) w[t] = Math.max(0, (nodeModel({ ...o, trace: false, bump: { life: i, type: t, d } }).J - J0) / d / g)
+  return w
+}
+
+const lifeOptMemo = new Map()
+/** optimiseLayout memoised on its inputs (weights and c at 4 significant digits). */
+function optimiseMemo({ width, height, weights, c, nodePower, budget }) {
+  const r4 = (x) => Number(x).toPrecision(4)
+  const key = `${width}x${height}|${nodePower}|${budget}|${r4(c)}|${LIFE_TYPES.map((t) => r4(weights[t] ?? 0)).join(',')}`
+  let r = lifeOptMemo.get(key)
+  if (!r) {
+    r = optimiseLayout({ width, height, weights, c, nodePower, budget })
+    if (lifeOptMemo.size > 4096) lifeOptMemo.clear()
+    lifeOptMemo.set(key, r)
+  }
+  return r
+}
+
+/** A layout's short key: its charged types and booster count, and a hash of the exact placement. */
+export function layoutKeyOf(placed) {
+  if (!Array.isArray(placed)) return null
+  const charged = placed.filter((p) => fragmentById(p.id)?.type !== TYPE.Booster)
+  const txt = charged.map((p) => (TYPE_NAME[fragmentById(p.id)?.type] ?? String(p.id)).replace('Hacking', 'H')).join('-') || 'none'
+  let h = 2166136261
+  const s = placed.map((p) => `${p.id}@${p.x},${p.y},${p.rot ?? p.rotation}`).sort().join(';')
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0
+  return `${txt}+${placed.length - charged.length}b#${h.toString(16).padStart(8, '0').slice(0, 6)}`
+}
+
+/**
+ * The life's stage in the model: 'final' (the exit life: the exit level's skill and exp terms),
+ * 'church' (a life whose Church rep lands Awakening / Serenity at its end), else 'build'. The
+ * Daedalus favor life's hours (nodeModel favorMul) sit outside J: NOT in the life weights.
+ */
+export function lifeStageOf(trace, i) {
+  if (i === trace.length - 1) return 'final'
+  return trace[i + 1] && trace[i + 1].level > trace[i].level ? 'church' : 'build'
+}
+
+/**
+ * THE PER-LIFE POLICY over a node (nodeModel options o; o.layout is the fixed policy's layout):
+ * sweep the lives from the exit back, measure each life's weights on the current policy
+ * (lifeWeightsOf), optimise that life's layout at its own charge factor (the life's midpoint c),
+ * keep it only if the trajectory's J rises — so the policy is never worse than the fixed one in
+ * the model. Returns { layouts, J, Jfixed, dJ, lives: [{life, stage, weights, c, T, key, changed}] }.
+ */
+export function lifePolicyOf(o, { width, height, sweeps = 2, budget = LAYOUT_FALLBACK_BUDGET, g = 1 } = {}) {
+  const base = nodeModel({ ...o, layouts: null, trace: true })
+  const n = base.lives
+  const layouts = Array.from({ length: n }, () => o.layout)
+  let J = base.J
+  const lives = []
+  for (let s = 0; s < sweeps; s++) {
+    let moved = false
+    for (let i = n - 1; i >= 0; i--) {
+      const oo = { ...o, layouts }
+      const w = lifeWeightsOf(oo, i, { g })
+      const tr = nodeModel({ ...oo, trace: true }).trace[i]
+      const cand = optimiseMemo({ width, height, weights: w, c: tr.c, nodePower: o.nodePower, budget }).placed
+      let changed = false
+      if (cand.length && !sameLayout(cand.map((p) => ({ ...p, rotation: p.rot })), layouts[i])) {
+        const trial = layouts.slice()
+        trial[i] = cand
+        const Jt = nodeModel({ ...o, layouts: trial }).J
+        if (Jt > J + 1e-9) {
+          layouts[i] = cand
+          J = Jt
+          changed = moved = true
+        }
+      }
+      lives[i] = { life: i, stage: lifeStageOf(base.trace, i), weights: w, c: tr.c, T: tr.T, key: layoutKeyOf(layouts[i]), changed: changed || lives[i]?.changed || false }
+    }
+    if (!moved) break
+  }
+  return { layouts, J, Jfixed: base.J, dJ: J - base.J, lives }
+}
+
+// ---------------------------------------------------------------------------
+// THE LIFE'S LAYOUT ON THE LIVE EXIT MODEL (progress.js prices it; stanek.js places it)
+// ---------------------------------------------------------------------------
+// The node model above leaves out a channel the live exit simulator carries: a life's exp
+// (hacking_exp, and speed's ops) raises that life's level and so its income and rep. Priced on
+// BN7.2's live inputs (tools/sim/stanekperlife.mjs --live, 2026-10-16) the node model's build-life
+// layout was 0.53h SLOWER than the tabled one. So the decision of record is the live exit model's:
+// the weights are its marginal exit-hours per unit ln(multiplier) — each fragment type's channel
+// shift (chargeLnOf's: income, exp, rep, hacking) on the measured inputs, priced by the exit
+// simulator — the layout optimised at the life's charge factor, and each option's trajectory
+// (layoutInputsOf: the layout held over the lives the exit model repeats) against the incumbent's.
+// Two phases so the caller drives the simulator (a generator in progress.js, plain in the tool):
+//   liveWeightInputsOf(base)              -> [{type, inputs}]       price each: hours
+//   liveLayoutOptionsOf({...}, weights)   -> [{src, placed, key, inputs}]
+//   liveLayoutChoiceOf(priced, ...)       -> the decision record
+// The exit model has one life shape, so an option is priced as held for every later life; at the
+// install that opens the final life the remaining trajectory IS that life (exact there). L3 prices
+// the sequence; L2 adds the re-lay's lost charge (switchCostH, 0 at an install).
+
+/** The channel shifts of a type's multipliers x e^d on the hacking route (chargeLnOf's channels, at mults 1). */
+export function typeChannelsOf(type, d, a = HACK_SHARE) {
+  const z = { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
+  if (type === TYPE.Hacking) return { lnIncome: d, lnExp: d, lnRep: d, lnHack: d }
+  if (type === TYPE.HackingSpeed) return { ...z, lnIncome: d, lnExp: d }
+  if (type === TYPE.HackingMoney) return { ...z, lnIncome: -Math.log(a * Math.exp(-d) + 1 - a) }
+  if (type === TYPE.HackingGrow) return { ...z, lnIncome: -Math.log(a + (1 - a) * Math.exp(-d)) }
+  if (type === TYPE.Rep) return { ...z, lnRep: d }
+  return z
+}
+const ZERO_LN = { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
+/** The weight phase: one input set per type, its multipliers x e^LIFE_DLN this life. */
+export function liveWeightInputsOf(base, d = LIFE_DLN) {
+  return LIFE_TYPES.map((type) => ({ type, inputs: scaleByGift(base, typeChannelsOf(type, d), ZERO_LN) }))
+}
+/** Weights (exit hours saved per unit ln) from the priced weight phase and the base hours H0. Null if unpriced. */
+export function liveWeightsOf(H0, priced, d = LIFE_DLN) {
+  if (!(typeof H0 === 'number' && isFinite(H0))) return null
+  const w = {}
+  for (const p of priced) {
+    if (!(typeof p.hours === 'number' && isFinite(p.hours))) return null
+    w[p.type] = Math.max(0, (H0 - p.hours) / d)
+  }
+  return w
+}
+/** The life's charge factor at mid-life for a layout of k charged fragments (chargeLnOf's placement and rate). */
+export function lifeChargeCOf(ctx, f, k) {
+  const place = Array.isArray(ctx.hosts) ? chargerPlaceOf(Math.max(0, f) * ctx.fleetGB, ctx.hosts) : chargerPlaceOf(Math.max(0, f) * ctx.homeGB, [{ host: 'home', cores: ctx.cores, capGb: Math.max(0, f) * ctx.homeGB }])
+  const rate = place.H > 0 ? place.power / place.H : 0
+  const tau = Math.max(0, ctx.cycleH) * 3600 * (ctx.duty ?? ALLOC_DUTY)
+  return { c: place.H > 0 ? chargeFactor(place.H, (rate * 0.5 * tau) / Math.max(1, k)) : 0, H: place.H }
+}
+/**
+ * The options phase: the incumbent (placed now), the tabled layout, the layout optimised on the
+ * live weights at this life's c, and (when given) a node-model candidate (lifePolicyOf's layout
+ * for this life). ctx: the stanek decision's charging context (layout = the placed one, fNow), f
+ * the allocation. Each option carries the inputs its trajectory is priced on.
+ */
+export function liveLayoutOptionsOf({ base, ctx, f, width, height, nodePower, incumbent, nodeCand = null, budget = LAYOUT_FALLBACK_BUDGET }, weights) {
+  const fixed = layoutForGrid(width, height, nodePower, 'hack').placed
+  const k = Math.max(1, (incumbent ?? fixed).filter((p) => fragmentById(p.id)?.type !== TYPE.Booster).length)
+  const { c } = lifeChargeCOf(ctx, f, k)
+  const opts = [['incumbent', incumbent], ['tabled', fixed]]
+  if (weights && c > 0) opts.push(['live weights', optimiseMemo({ width, height, weights, c, nodePower, budget }).placed])
+  if (Array.isArray(nodeCand) && nodeCand.length) opts.push(['node model', nodeCand])
+  const seen = new Set()
+  const out = []
+  for (const [src, placed] of opts) {
+    if (!Array.isArray(placed) || !placed.length) continue
+    const key = layoutKeyOf(placed)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ src, placed, key, inputs: layoutInputsOf(base, ctx, f, placed) })
+  }
+  return { options: out, c }
+}
+/**
+ * The choice: the fastest exit; the incumbent kept unless the best beats it by tolH (at an install
+ * the re-lay is free, so tolH is only the noise floor). priced: options with hours.
+ */
+export function liveLayoutChoiceOf(priced, { lifeKey, weights, c, f, H0, tolH = 0.01, switchCostH = 0, notSimulated = null } = {}) {
+  const ok = priced.filter((p) => typeof p.hours === 'number' && isFinite(p.hours))
+  const inc = ok.find((p) => p.src === 'incumbent') ?? null
+  if (!ok.length) return { key: null, placed: null, lifeKey, why: 'no layout option priced (the exit is unpriced)' }
+  const best = ok.reduce((b, p) => (p.hours < b.hours ? p : b))
+  const take = !inc || (best !== inc && inc.hours - best.hours - switchCostH >= tolH) ? best : inc
+  const table = ok.map((p) => `${p.src} ${p.key} ${p.hours.toFixed(3)}h`).join('; ')
+  const wTxt = weights ? LIFE_TYPES.map((t) => `${TYPE_NAME[t].replace('Hacking', 'H')} ${weights[t].toPrecision(3)}`).join(', ') : 'unpriced'
+  return {
+    key: take.key,
+    placed: take.placed,
+    source: take.src,
+    lifeKey,
+    hours: +take.hours.toFixed(3),
+    incumbentH: inc ? +inc.hours.toFixed(3) : null,
+    dH: inc ? +(take.hours - inc.hours).toFixed(3) : null,
+    switchCostH,
+    f,
+    c: +c.toFixed(5),
+    baseH: typeof H0 === 'number' ? +H0.toFixed(3) : null,
+    weights: weights ? Object.fromEntries(LIFE_TYPES.map((t) => [TYPE_NAME[t], +weights[t].toPrecision(4)])) : null,
+    weightsUnit: 'exit hours saved per unit ln(multiplier) this life (the live exit model, finite difference)',
+    priced: ok.map((p) => ({ src: p.src, key: p.key, hours: +p.hours.toFixed(3) })),
+    why: `${take === inc ? 'kept the incumbent' : `the ${take.src} layout`} ${take.key}${inc && take !== inc ? `: ${(inc.hours - take.hours).toFixed(3)}h faster exit than the incumbent` : best !== take ? ` (the best saves ${(inc.hours - best.hours).toFixed(3)}h < ${tolH}h)` : ''}; weights (h per ln) ${wTxt} — ${table}`.slice(0, 500),
+    notSimulated: notSimulated ?? 'the layout held for every later life (the exit model has one life shape); the final life priced as the others until its own install',
+  }
+}
+
+/** Does `placed` fit a width x height grid legally (every fragment placeable in turn: StaneksGift.canPlace)? */
+export function layoutFits(placed, width, height) {
+  if (!Array.isArray(placed)) return false
+  const done = []
+  for (const p of placed) {
+    const f = fragmentById(p.id)
+    if (!f || !canPlace(done, width, height, p.x, p.y, p.rot, f)) return false
+    done.push(p)
+  }
+  return true
+}
+
+/** How young a life must be for the life's layout decision to re-lay (the charge it deletes is not priced in L1: L2). FIXED, stated. */
+export const LIFE_LAYOUT_WINDOW_MIN = 30
+/**
+ * The plan's layout for THIS life (/tel/plan.txt decisions.stanek.layout, decided by progress.js on
+ * the live exit model), or null: the plan of this life (lastAugReset), fresh, its lifeKey this life,
+ * and legal on the grid the game reports.
+ */
+export function planLayoutOf(text, lastAugReset, width, height, now = Date.now(), maxAgeMin = 120) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return null
+  }
+  const d = rec?.decisions?.stanek?.layout
+  if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
+  if (!d || d.lifeKey !== lastAugReset || !Array.isArray(d.placed) || !d.placed.length) return null
+  if (!layoutFits(d.placed, width, height)) return null
+  return { placed: d.placed, key: d.key, why: String(d.why ?? '').slice(0, 300), weights: d.weights ?? null, decidedAt: d.decidedAt ?? null, source: d.source ?? null }
+}
+
+/**
+ * THE LAYOUT stanek.js PLACES THIS PASS, and the life's decision record. basis 'blade': the tabled
+ * Bladeburner layout (the route never installs). 'hack': the plan's decision of this life (the live
+ * exit model, planLayoutOf) when there is one; else the layout already placed when it is legal on
+ * the grid (an install keeps it: nothing to re-lay until the plan decides); else the tabled one
+ * (a node's start, the grid empty). Re-lays only when the target differs from the active set.
+ * prev: the last /tel/stanek.txt (the life counter). Returns { placed, record }.
+ */
+export function lifeTargetOf({ basis, width, height, nodePower, active, plan, prev, lastAugReset, lastNodeReset, now = Date.now() }) {
+  const sameNode = prev && prev.lastNodeReset === lastNodeReset && prev.node !== undefined
+  const prevLife = sameNode ? prev.lifeLayout ?? null : null
+  const lifeIndex = !prevLife?.lifeIndex ? (sameNode ? null : 1) : prevLife.lastAugReset === lastAugReset ? prevLife.lifeIndex : prevLife.lifeIndex + 1
+  const ageMin = (now - lastAugReset) / 60e3
+  const activePlaced = (active ?? []).map((f) => ({ id: f.id, x: f.x, y: f.y, rot: f.rotation ?? f.rot }))
+  const tab = layoutForGrid(width, height, nodePower, basis === 'blade' ? 'blade' : 'hack')
+  let placed
+  let source
+  let why
+  let decided = true
+  if (basis === 'blade') {
+    placed = tab.placed
+    source = tab.source
+    why = "the Bladeburner route's tabled layout (no install on this route: one layout per node)"
+  } else if (plan && (ageMin <= LIFE_LAYOUT_WINDOW_MIN || sameLayout(active, plan.placed))) {
+    placed = plan.placed
+    source = `the plan (${plan.decidedAt ?? '?'}: the live exit model)`
+    why = plan.why
+  } else if (activePlaced.length && layoutFits(activePlaced, width, height)) {
+    placed = activePlaced
+    source = 'the incumbent (placed)'
+    decided = false
+    why = plan ? `the plan's layout ${plan.key} arrived ${ageMin.toFixed(0)} min into the life, past the ${LIFE_LAYOUT_WINDOW_MIN} min install window: a re-lay now deletes the life's charge (unpriced in L1: L2's mid-life re-lay)` : 'no decision of this life in /tel/plan.txt decisions.stanek.layout yet: the incumbent kept (an install keeps the layout; re-laid when the plan decides)'
+  } else {
+    placed = tab.placed
+    source = tab.source
+    decided = false
+    why = 'the grid is empty (a node start): the tabled layout until the plan decides this life'
+  }
+  const record = { lastAugReset, lifeIndex, key: layoutKeyOf(placed), source, decided, ageMin: +ageMin.toFixed(1), weights: basis === 'blade' ? null : plan?.weights ?? null, why: String(why ?? '').slice(0, 400), at: new Date(now).toISOString() }
+  return { placed, record }
+}
+
+/**
+ * STANEK LAYOUT STALE (tools/healthcheck.mjs via stanekHealthOf): the placed layout must match the
+ * life's decided layout within `staleMin` of the install, and a hacking-route life must HAVE a
+ * decision of the live exit model within `decideMin` (else the per-life choice silently never runs).
+ */
+export function lifeLayoutHealthOf(stanek, now = Date.now(), { staleMin = 15, decideMin = 60 } = {}) {
+  const L = stanek?.lifeLayout
+  const g = stanek?.gift ?? {}
+  if (!g.accepted || !L || L.lastAugReset !== stanek.lastAugReset) return g.accepted && stanek?.layout ? [{ key: 'STANEK LAYOUT STALE', problem: 'STANEK LAYOUT STALE', detail: `${STANEK_FILE} has no life layout record of this life (lifeLayout) — stanek.js predates the per-life layout or failed before deciding` }] : []
+  const age = (now - stanek.lastAugReset) / 60e3
+  const placedKey = stanek.layout?.placedKey ?? null
+  if (age >= staleMin && placedKey !== L.key) return [{ key: 'STANEK LAYOUT STALE', problem: 'STANEK LAYOUT STALE', detail: `${age.toFixed(0)} min into the life the placed layout ${placedKey ?? '(none)'} is not the decided ${L.key} (${L.source})` }]
+  if (g.basis !== 'blade' && !L.decided && age >= decideMin) return [{ key: 'STANEK LAYOUT STALE', problem: 'STANEK LAYOUT STALE', detail: `${age.toFixed(0)} min into the life and no decision of this life's layout: ${L.why}` }]
+  return []
 }
 
 // ===========================================================================
@@ -1200,6 +1538,14 @@ export function chargeInputsOf(base, ctx, f) {
   return scaleByGift(base, chargeLnOf({ ...ctx, f }), chargeLnOf({ ...ctx, f: ctx.fNow ?? 0 }))
 }
 
+/**
+ * The exit inputs with `layout` charged at f in place of the layout they were measured under
+ * (ctx.layout at ctx.fNow): the live exit model's price of a layout held for the lives it repeats.
+ */
+export function layoutInputsOf(base, ctx, f, layout) {
+  return scaleByGift(base, chargeLnOf({ ...ctx, layout, f }), chargeLnOf({ ...ctx, f: ctx.fNow ?? 0 }))
+}
+
 /** `base` with its batcher channels moved from the gift state `now` to `at` (chargeLnOf records). */
 function scaleByGift(base, at, now) {
   const fin = (x) => typeof x === 'number' && isFinite(x)
@@ -1357,6 +1703,9 @@ export function stanekHoldsOf(rec, lastAugReset, now = Date.now(), maxAgeMs = 15
  *                           pass, or a fresh charge.js error (stanek.js gathers every
  *                           host's heartbeat into /tel/charge.txt)
  *   STANEK STALE            the record is old (stanek.js is not being run)
+ *   STANEK LAYOUT STALE     the placed layout is not the life's decided one 15 min after the
+ *                           install, or a hacking-route life has no decision after 60 min
+ *                           (lifeLayoutHealthOf)
  */
 export function stanekHealthOf({ stanek, charge, now = Date.now(), nodeStartMs = null, graceMin = 15, staleMin = 12, waitMin = 10 }) {
   const out = []
@@ -1385,5 +1734,6 @@ export function stanekHealthOf({ stanek, charge, now = Date.now(), nodeStartMs =
       out.push({ key: NC, problem: NC, detail: `charge.js held ${p.chargerWas} threads but the gift's charge did not grow in ${p.minutes} min (mass ${p.prevMass} -> ${p.mass})${errText ? ` — ${errText}` : ' — no charge.js error reported'}` })
     } else if (errs.length) out.push({ key: NC, problem: NC, detail: `charge.js: ${errText}` })
   }
+  out.push(...lifeLayoutHealthOf(stanek, now))
   return out
 }

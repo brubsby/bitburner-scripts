@@ -182,7 +182,7 @@ import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -3093,6 +3093,30 @@ async function stanekDecisionOf(ns, info, inputsFn, route = null) {
       yield
     }
     const c = chooseAlloc(priced, typeof prev?.f === 'number' ? prev.f : null)
+    // THE LIFE'S LAYOUT (stanekplan.liveLayout*): once per life, while it is young enough that a
+    // re-lay deletes ~no charge (an install zeroes it). Weights = this exit's marginal hours per unit
+    // ln of each fragment type at the chosen f; options (incumbent, tabled, the live-weights layout)
+    // priced as trajectories; stanek.js places the choice. Carried for the rest of the life.
+    let layout = prev?.layout?.lifeKey === info.lastAugReset ? prev.layout : null
+    const lifeMin = (Date.now() - info.lastAugReset) / 60e3
+    if (!layout && lifeMin <= LIFE_LAYOUT_WINDOW_MIN && typeof st.layout.width === 'number') {
+      const fL = c.f > 0 ? c.f : fNow > 0 ? fNow : DEFAULT_F
+      const baseF = chargeInputsOf(base, ctx, fL)
+      const H0 = yield* tg(baseF)
+      const wp = []
+      for (const x of liveWeightInputsOf(baseF)) {
+        wp.push({ type: x.type, hours: yield* tg(x.inputs) })
+        yield
+      }
+      const weights = liveWeightsOf(H0, wp)
+      const { options, c: cL } = liveLayoutOptionsOf({ base, ctx, f: fL, width: st.layout.width, height: st.layout.height, nodePower: st.layout.nodePower, incumbent: st.layout.placed }, weights)
+      const lp = []
+      for (const o of options) {
+        lp.push({ ...o, hours: yield* tg(o.inputs) })
+        yield
+      }
+      layout = { ...liveLayoutChoiceOf(lp, { lifeKey: info.lastAugReset, weights, c: cL, f: fL, H0 }), lifeMin: +lifeMin.toFixed(1), decidedAt: new Date().toISOString() }
+    }
     const without = priced.find((p) => p.f === 0)?.hours ?? null
     return {
       key: c.f === null ? null : `f=${c.f}`,
@@ -3107,6 +3131,7 @@ async function stanekDecisionOf(ns, info, inputsFn, route = null) {
       installBasis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null } : { kind: 'default policy (no committed install)' },
       decidedAt: new Date().toISOString(),
       notSimulated: 'the fleet growing within the node (more threads later), the Church rep -> Awakening/Serenity, bonus time, batcher income not linear in its RAM — the first two favour charging',
+      layout: layout ?? { key: null, lifeKey: info.lastAugReset, why: `no layout decision of this life: ${lifeMin > LIFE_LAYOUT_WINDOW_MIN ? `${lifeMin.toFixed(0)} min in, past the ${LIFE_LAYOUT_WINDOW_MIN} min install window (a re-lay would delete the charge: L2)` : 'the grid size is not in /tel/stanek.txt yet'}` },
       ms: Date.now() - t0,
     }
   })
