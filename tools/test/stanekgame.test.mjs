@@ -42,13 +42,8 @@
 //   SG8 THE LIVE SHAPE: a full 1-core home, rooted hosts free or full of h/g/w, no decision ->
 //       the charger runs on the fleet at DEFAULT_F (UNPRICED), batch.js holds the rest per
 //       host, heartbeats gathered home, the fragments charge. RED: home only -> named cause.
-//   SG7 THE GIFT NEVER PINS (L4, 2026-10-16): accepted and no /route-pin.txt -> the PRICED route is
-//       acted on (BN13 and elsewhere, either key); the manual pin still wins; the accepted gift's basis
-//       follows the acted route (the layout decision moves with a route switch); the route decision prices
-//       both arms WITH the gift (plan.decideBladeRouteGen `gift`: the hacking arm is the best gift option's
-//       inputs, the Bladeburner arm the best gift path's members) and a switch pays ROUTE_GIFT's floor;
-//       routeHealthOf fails an acted != priced route with no file pin, a non-file pin, and a gift-accepted
-//       route not priced with it. RED: giftPinOf back; the gift options dropped; the file pin ignored.
+//   SG7 THE GIFT PINS THE HACKING ROUTE (routepin.giftPinOf): accepted and no file pin -> 'hack',
+//       a priced 'blade' acted on as 'hack' with the hours forgone; a file pin is kept.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -161,23 +156,24 @@ async function sg9() {
   } catch (err) {
     c.note(`the gameplan table unreadable here: ${String(err).slice(0, 120)}`)
   }
-  // the gift's state: wanted on the blade route, basis blade; accepted, the basis is the acted route's
-  // (L4: no pin — the route decision prices both routes with the gift, SG7)
+  // the gift's state: wanted on the blade route, basis blade; the accepted gift pins 'blade'
   const st = sp.giftStateOf(ri11, true, 'blade')
   const stU = sp.giftStateOf(ri11, true, null)
   const acc = sp.giftStateOf({ ...ri11, ownedAugs: new Map([[NFG, 1], [GEN, 1]]) }, true, null)
   const rp = await import('../../routepin.js')
-  c.examined(3)
+  const pin = rp.giftPinOf(rp.routePinOf('', 11), acc)
+  c.examined(4)
   if (!st.want || st.basis !== 'blade') c.fail('BN11 on the Bladeburner route: wanted, basis blade', JSON.stringify(st))
   if (stU.want || !stU.hold) c.fail('BN11, route unknown: not wanted (never accept on an unknown route) but held', JSON.stringify(stU))
-  if (!acc.accepted || acc.basis !== 'blade') c.fail("the gift accepted outside BN13, no route read yet: basis 'blade'", JSON.stringify({ acc: acc.basis }))
+  if (!acc.accepted || acc.basis !== 'blade' || pin.route !== 'blade') c.fail("the gift accepted outside BN13 pins 'blade'", JSON.stringify({ acc: acc.basis, pin }))
   if (sp.giftOrderGate(st, { kind: 'buyaug', args: ['x', 'BitWire'] }).allow) c.fail('BN11 on the Bladeburner route before the accept: a non-NFG buyaug must be refused')
-  // the stack ACTS on the priced route (2026-10-15 BN11.1: a pin forced the wrong route at 136h forgone
-  // and installed over the charge): no file pin -> pinnedRouteOf returns the priced record as it is
-  const none11 = rp.routePinOf('', 11)
+  // the stack must ACT on the pinned route: a blade pin keeps 'blade' (2026-10-15 BN11.1: pinnedRouteOf
+  // read every pin as 'hack', forced the hacking route at 136h forgone and installed over the charge)
+  const acted = rp.pinnedRouteOf({ key: 'blade', hackH: 150, bladeH: 14 }, pin)
+  const actedH = rp.pinnedRouteOf({ key: 'hack', hackH: 150, bladeH: 14 }, pin)
   c.examined(2)
-  if (rp.pinnedRouteOf({ key: 'blade', hackH: 150, bladeH: 14 }, none11).key !== 'blade') c.fail("no file pin: the priced 'blade' must be acted on")
-  if (rp.pinnedRouteOf({ key: 'hack', hackH: 10, bladeH: 14 }, none11).key !== 'hack') c.fail("no file pin, the gift accepted: a priced 'hack' must be acted on (no gift pin to 'blade')")
+  if (acted.key !== 'blade') c.fail("pinnedRouteOf with the gift's blade pin must act on 'blade'", JSON.stringify(acted))
+  if (actedH.key !== 'blade') c.fail("pinnedRouteOf with the gift's blade pin must act on 'blade' even where hack prices lower", JSON.stringify(actedH))
   // routeOfProgress: only this node and life, only fresh
   const prog = (route, node = 11, lar = 1000, at = new Date().toISOString()) => JSON.stringify({ at, route: { route, node, lastAugReset: lar } })
   c.examined(4)
@@ -210,100 +206,18 @@ async function sg9() {
 }
 
 async function sg7() {
-  const c = new Check('SG7', 'the gift never pins (L4): the priced route is acted on, priced WITH the gift; the manual pin wins')
+  const c = new Check('SG7', "the gift pins the hacking route (routepin.giftPinOf): the gameplan's stanek route = hack + gift")
   const rp = await import('../../routepin.js')
-  const P = await import('../../plan.js')
-  const se = await import('../../stanekepoch.js')
-  const BB = await import('../../bbplan.js')
-  const { drain } = await import('../../coop.js')
-  const rd = (f) => fs.readFileSync(path.join(REPO, f), 'utf8')
-  // 1. no gift pin anywhere: routepin exports none, progress.js reads only the file pin
-  const pr = rd('progress.js')
-  c.examined(3)
-  if ('giftPinOf' in rp) c.fail('routepin.giftPinOf is back: the accepted gift must not pin a route (L4)')
-  if (/giftPinOf/.test(strip(pr))) c.fail('progress.js calls giftPinOf: the accepted gift must not pin a route (L4)')
-  if (!/const routePin = \(\(\) => \{\s*try \{\s*(?:\/\/[^\n]*\n\s*)*return routePinOf\(ns\.read\(ROUTE_PIN\), info\?\.currentNode \?\? null\)\s*\}/.test(pr)) c.fail('progress.js must take the route pin from /route-pin.txt alone (routePinOf(ns.read(ROUTE_PIN), ...))')
-  // 2. accepted, no file pin: the priced key is acted on, in BN13 and elsewhere
-  for (const node of [13, 11]) {
-    const none = rp.routePinOf('', node)
-    for (const key of ['hack', 'blade']) {
-      const d = { key, hackH: key === 'hack' ? 20 : 30, bladeH: key === 'blade' ? 20 : 30, why: 'priced' }
-      const a = rp.pinnedRouteOf(d, none)
-      c.examined(1)
-      if (a.key !== key) c.fail(`BN${node}, the gift accepted, no file pin: the priced '${key}' must be acted on, got '${a.key}'`)
-    }
-  }
-  // 3. the manual pin still wins (BN13 and elsewhere, over a priced 'blade')
-  for (const node of [13, 7]) {
-    const file = rp.routePinOf(`hack ${node}`, node)
-    const a = rp.pinnedRouteOf({ key: 'blade', hackH: 30, bladeH: 20, why: 'priced' }, file)
-    const rep = rp.routeReportOf(file, a, stateOf(info(node, [GEN])))
-    c.examined(1)
-    if (a.key !== 'hack' || a.pin?.pricedKey !== 'blade' || a.pin?.forgoneH !== 10 || !rep.pinned || rep.route !== 'hack' || rep.priced !== 'blade') c.fail(`BN${node}: /route-pin.txt 'hack' must win over a priced 'blade' (hours forgone published)`, JSON.stringify({ a: a.key, pin: a.pin, rep }))
-    if (rep.gift?.pinned !== false) c.fail('the gift is reported beside the route, never as a pin', JSON.stringify(rep.gift))
-  }
-  // a pin record that is not /route-pin.txt's (the gift's old shape) is never acted on
-  c.examined(2)
-  for (const [route, priced] of [['hack', 'blade'], ['blade', 'hack']]) {
-    const fake = { pinned: true, route, file: '/tel/stanek.txt', text: "Stanek's Gift accepted" }
-    if (rp.pinnedRouteOf({ key: priced, hackH: 10, bladeH: 20 }, fake).key !== priced) c.fail(`a '${route}' pin from anything but /route-pin.txt (the gift pin's shape) must not move the priced '${priced}'`)
-  }
-  // 4. the accepted gift's basis follows the acted route (a route switch moves the layout decision)
-  const acc13 = info(13, [GEN])
+  const none = rp.routePinOf('', 13)
+  const acc = stateOf(info(13, [GEN]))
+  const pin = rp.giftPinOf(none, acc)
   c.examined(4)
-  if (sp.giftStateOf(acc13, true, 'blade').basis !== 'blade') c.fail("BN13, accepted, the acted route 'blade': the gift must be laid for the Bladeburner route (L3's epoch)")
-  if (sp.giftStateOf(acc13, true, null).basis !== 'hack') c.fail('BN13, accepted, no route read: basis hack')
-  const acc11 = { ...info(13, [GEN]), currentNode: 11 }
-  if (sp.giftStateOf(acc11, true, 'hack').basis !== 'hack') c.fail("BN11, accepted, the acted route 'hack': the gift must be laid for the hacking route (L1)")
-  if (sp.giftStateOf(acc11, true, 'blade').basis !== 'blade') c.fail("BN11, accepted, the acted route 'blade': basis blade")
-  // 5. the route decision prices both arms WITH the gift (the same function bladeRouteOf calls)
-  const mults = { strength: 1.12, defense: 1.12, dexterity: 1.12, agility: 1.12, charisma: 1.12, strength_exp: 1.15, defense_exp: 1.15, dexterity_exp: 1.15, agility_exp: 1.15, charisma_exp: 1.15, bladeburner_success_chance: 1, bladeburner_max_stamina: 1, bladeburner_stamina_gain: 1 }
-  const person = { skills: { hacking: 900, strength: 300, defense: 300, dexterity: 300, agility: 300, charisma: 250, intelligence: 131 }, exp: Object.fromEntries(['strength', 'defense', 'dexterity', 'agility', 'charisma'].map((k) => [k, BB.expForLevel(300, 1.12)])), mults }
-  const tel = { joined: true, rank: 399000, skillPoints: 0, blackOps: { done: 20 }, levels: { "Blade's Intuition": 260, 'Digital Observer': 230, 'Short-Circuit': 110, Cloak: 130, Reaper: 190, 'Evasive System': 190, Overclock: 90, "Cyber's Edge": 80, Tracer: 5 } }
-  const s0 = BB.bladeStartOf({ tel, person, sleeves: { infiltrate: 5, support: 0, fa: 0 }, gymExpPerSec: 37.661, install: null })
-  const trajGen = function* (x) {
-    return x.fakeH
-  }
-  const flat = () => ({ factorAt: () => ({}) })
-  const boost = () => ({ factorAt: () => ({ bladeburner_success_chance: 1.5, agility: 1.5, dexterity: 1.5 }) })
-  const run = (gift) => drain(P.decideBladeRouteGen({ base: { fakeH: 50, cycleHours: 2 }, traj: (x) => x.fakeH, trajGen, bladeStart: s0, draws: [], post: false, gift }))
-  const g = run({ hackOptions: [{ src: 'hackL', inputs: { fakeH: 40, cycleHours: 2 } }, { src: 'placed', inputs: { fakeH: 45, cycleHours: 2 } }], bladeOptions: [{ src: 'keep', make: flat }, { src: 'relay', make: boost }], switchCostH: se.ROUTE_GIFT.switchCostH })
-  const g0 = run(null)
-  c.examined(5)
-  if (g.hackH !== 40 || g.gift?.hack?.chosen !== 'hackL') c.fail('the hacking arm must be the best gift option (40h), not the inputs as measured (50h)', JSON.stringify({ hackH: g.hackH, gift: g.gift?.hack }))
-  if (!(g.bladeH < g0.bladeH) || g.gift?.blade?.chosen !== 'relay') c.fail('the Bladeburner arm must be the best gift path (the boosted one), priced on the members', JSON.stringify({ with: g.bladeH, without: g0.bladeH, gift: g.gift?.blade }))
-  if (g.gift?.priced !== true || g0.gift?.priced !== false) c.fail('the record must say whether the route was priced with the gift', JSON.stringify({ g: g.gift?.priced, g0: g0.gift }))
-  if (!(se.ROUTE_GIFT.switchCostH >= se.EPOCH.minGainH)) c.fail(`the route switch floor ${se.ROUTE_GIFT.switchCostH}h is below the layout switch's (${se.EPOCH.minGainH}h, the exit model's replayed error)`)
-  // the floor reaches the commitment rule: a 0.1h gain switches at the default cost, not at the gift's floor
-  const opts = [{ key: 'hack', noiseKey: 'a', sim: () => 10, simGen: function* () { return 10 } }, { key: 'blade', noiseKey: 'a', sim: () => 9.9, simGen: function* () { return 9.9 } }]
-  const draws = P.makeDraws({ drift: { s: 0.01, nu: 4, a: 2, b: 0.0002 } }, 24, 7)
-  const a0 = drain(P.decideAmongGen({ options: opts, prev: { key: 'hack', meanH: 10 }, draws, redecide: true, budgetMs: 1e9 }))
-  const a1 = drain(P.decideAmongGen({ options: opts, prev: { key: 'hack', meanH: 10 }, draws, redecide: true, budgetMs: 1e9, switchCost: { hack: se.ROUTE_GIFT.switchCostH, blade: se.ROUTE_GIFT.switchCostH } }))
-  if (a0.key !== 'blade' || a1.key !== 'hack') c.fail('decideAmongGen must charge the route switch floor: a 0.1h gain switches at the default 0.05h, not at 0.2h', JSON.stringify({ a0: a0.key, a1: a1.key }))
-  // the route's installs clear the gift's charge in the Bladeburner arm (giftPathOf install)
-  const placed = sp.BLADE_LAYOUTS['6x5|1']
-  const liveG = { placed, charges: placed.map(() => ({ highestCharge: 192, numCharge: 500 })), masses: placed.map((p) => (sp.fragmentById(p.id).type === sp.TYPE.Booster ? 0 : 96000)), H: 192 }
-  const kept = se.giftPathOf({ ...liveG, nodePower: 1 })
-  const inst = se.giftPathOf({ ...liveG, nodePower: 1, install: { firstH: 1, everyH: 2 } })
-  const fk = kept.factorAt(1.5 * 3600).agility
-  const fi = inst.factorAt(1.5 * 3600).agility
-  inst.factorAt(3.5 * 3600)
-  c.examined(1)
-  if (!(fi < fk) || !(fi < 1) || inst.clears() !== 2) c.fail("an install on the route must clear the gift's charge in the Bladeburner arm (the factor drops below the live one; one clear per install)", JSON.stringify({ fk, fi, clears: inst.clears() }))
-  // the wiring: progress.js hands the gift to the route decision
-  c.examined(2)
-  if (!/decideBladeRouteGen\(\{[^\n]*\bgift \}\)/.test(pr) || !/gift = routeGiftOf\(ns, info, base, bladeS0\)/.test(pr)) c.fail('progress.js bladeRouteOf must price the route with the gift (routeGiftOf -> decideBladeRouteGen gift)')
-  if (!/routeReportOf\(routePin, bladeRoute, giftStateOf\(info, canAccessCotMG\(info\)\)\)/.test(pr)) c.fail('progress.js must publish the gift beside the route (routeReportOf giftState)')
-  // 6. health: acted != priced with no file pin; a non-file pin; accepted but not priced with the gift
-  const base = { node: 7, lastAugReset: 1, route: 'blade', priced: 'blade', pinned: false, pin: { file: rp.ROUTE_PIN }, gift: { accepted: true, pricedWithGift: true } }
-  const H = (r, st = null) => rp.routeHealthOf({ route: r, stanek: st, node: 7 }).map((x) => x.key)
-  c.examined(6)
-  if (H(base).length) c.fail('a healthy route must not fail', JSON.stringify(H(base)))
-  if (!H({ ...base, route: 'hack' }).includes('ROUTE NOT THE PRICED ONE')) c.fail('acted != priced with no file pin must fail ROUTE NOT THE PRICED ONE')
-  if (H({ ...base, route: 'hack', pinned: true }).length) c.fail('acted != priced under /route-pin.txt is the manual pin: no failure')
-  if (!H({ ...base, pinned: true, pin: { file: '/tel/stanek.txt' } }).includes('ROUTE NOT THE PRICED ONE')) c.fail('a pin from /tel/stanek.txt (the gift pin) must fail')
-  if (!H({ ...base, gift: { accepted: true, pricedWithGift: false, why: 'x' } }).includes('ROUTE NOT PRICED WITH THE GIFT')) c.fail('the gift accepted and the route not priced with it must fail')
-  if (!H(base, { node: 7, lastAugReset: 1, gift: { accepted: true, basis: 'hack', route: 'blade' } }).includes('STANEK LAYOUT OFF ROUTE')) c.fail('stanek.js laying the gift for another route than the one it read must fail STANEK LAYOUT OFF ROUTE')
+  if (!pin.pinned || pin.route !== 'hack') c.fail('gift accepted, no file pin: must pin hack', JSON.stringify(pin))
+  const d = rp.pinnedRouteOf({ key: 'blade', hackH: 30, bladeH: 20, why: 'priced' }, pin)
+  if (d.key !== 'hack' || d.pin?.pricedKey !== 'blade' || d.pin?.forgoneH !== 10) c.fail("a priced 'blade' route must be acted on as 'hack' with the hours forgone published", JSON.stringify(d))
+  if (rp.giftPinOf(none, stateOf(info(13))).pinned) c.fail('not accepted: no pin from the gift')
+  const file = rp.routePinOf('hack 13', 13)
+  if (rp.giftPinOf(file, acc) !== file) c.fail('a file pin must be kept as it is')
   return c
 }
 
@@ -628,7 +542,7 @@ function sg5() {
     if (sp.planLayoutOf(plan, lar, 5, 5) !== null) c.fail('planLayoutOf followed a layout that does not fit the grid')
   }
   if (!/stanek: pc\.decisions\.stanek \?\? pc\.prev\?\.decisions\?\.stanek \?\? null/.test(pr)) c.fail('progress.js must publish decisions.stanek in /tel/plan.txt')
-  if (/giftPinOf/.test(pr)) c.fail("progress.js must not pin a route for the gift (L4: priced, SG7)")
+  if (!/giftPinOf\(routePinOf\(/.test(pr)) c.fail("progress.js must pin the hacking route where the gift is accepted (routepin.giftPinOf)")
   // charge.js stays 2.0GB: only chargeFragment among the priced calls
   const ch = strip(rd('charge.js'))
   const nsCalls = [...new Set([...ch.matchAll(/\bns\.([a-zA-Z.]+)\(/g)].map((x) => x[1]))].filter((n) => !['read', 'write', 'atExit', 'sleep', 'disableLog'].includes(n))

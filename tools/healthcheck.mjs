@@ -639,18 +639,6 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
     }
   }
 }
-// THE ROUTE IS THE PRICED ONE (routepin.routeHealthOf, L4): with no /route-pin.txt pin the route the
-// stack acts on must be the priced route (the gift's automatic pin is gone: it is an input, not a pin);
-// with the gift accepted the route must have been priced WITH it, and stanek.js must lay the gift for
-// the route it read (stanekplan.giftStateOf basis = the acted route).
-{
-  const prog = readTel("progress.txt");
-  const stRec = readTel("stanek.txt");
-  const { routeHealthOf } = await import("../routepin.js");
-  const probs = routeHealthOf({ route: prog?.route ?? null, stanek: stRec, node: now.bitNode ?? null });
-  for (const p of probs) fail(`${p.problem}: ${p.detail}`, `progress.txt ${prog?.at ?? "absent"} route ${JSON.stringify(prog?.route ? { route: prog.route.route, priced: prog.route.priced, pinned: prog.route.pinned } : null)}`);
-  if (!probs.length && prog?.route?.node === now.bitNode) note(`route: acting on '${prog.route.route}' (priced '${prog.route.priced ?? "none"}'${prog.route.pinned ? `, PINNED by ${prog.route.pin?.file}` : ""}${prog.route.gift?.accepted ? `, gift priced in: ${prog.route.gift.pricedWithGift}` : ""})`);
-}
 // GO NOT PLAYING IN A GO NODE (tools/gohealth.mjs): where the placers'
 // priced verdict (goplace.js) places go.js, absent or idle for > 10 min of the
 // life. Live BN14.1 2026-10-03: nothing ran it for the node's first 17 minutes.

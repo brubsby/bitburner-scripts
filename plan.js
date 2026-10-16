@@ -2468,7 +2468,7 @@ export function decideAmong(o = {}) {
   return drain(decideAmongGen(o))
 }
 /** The generator decideAmong drains (yields inside the Monte Carlo). */
-export function* decideAmongGen({ options, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), pointOf = () => null, clock: budgetClock = clock, ocba = PLAN.ocba, switchCost = {} } = {}) {
+export function* decideAmongGen({ options, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), pointOf = () => null, clock: budgetClock = clock, ocba = PLAN.ocba } = {}) {
   const keys = new Set((options ?? []).map((o) => o.key))
   const committedKey = prev?.key && keys.has(prev.key) ? prev.key : null
   const use = !redecide && committedKey ? options.filter((o) => o.key === committedKey) : options
@@ -2479,7 +2479,7 @@ export function* decideAmongGen({ options, prev = null, draws, redecide = true, 
   const rows = optionRows(use, stats, (o) => pointOf(o.key), pricedAt)
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
   if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), ...heldFields(prev, rows, pricedAt), ...heldSanity(prev), ...cpu }
-  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: switchCost ?? {}, theta, committedPrevH: committedKey && fin(prev?.meanH) ? prev.meanH : null })
+  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: {}, theta, committedPrevH: committedKey && fin(prev?.meanH) ? prev.meanH : null })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
   return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, vowH: d.vowH ?? null, margins: marginsOf(ev.samples, d.choice), ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
 }
@@ -3086,22 +3086,9 @@ export const seedOf = (lastAugReset, node) => hashOf(`${node ?? ''}:${lastAugRes
  * comparison leans to 'hack'. The blade model is NOT CALIBRATED live; against
  * the game's own classes it is within -2..+15% (tools/sim/bb6.mjs).
  *
- * THE GIFT ACCEPTED (L4, `gift`, 2026-10-16): both arms priced CONDITIONED on it, never pinned —
- *   gift.hackOptions  [{src, key, inputs}]: the hacking arm's inputs with the gift (stanekplan
- *                     hackGiftInputsOf: the layout's life-average at the hacking charger, every install
- *                     clearing it); the best at the point is the arm (its draws scale the same inputs)
- *   gift.bladeOptions [{src, key, make}]: the Bladeburner arm's gift paths (stanekepoch.bladeGiftMakerOf:
- *                     keep the placed layout's live charge, or re-lay to the Bladeburner layout; the
- *                     route's installs clear it); each priced on all Q members, the best mean is the arm
- *   gift.switchCostH  the route switch's floor (stanekepoch.ROUTE_GIFT) — the option that is not the
- *                     committed route pays it in decideAmongGen's commitment rule
- *   gift.boundInputsOf(inputs) (optional) the Awakening bound: the hacking arm's point with it, published
- *                     with whether it would flip the point comparison (never folded into the decision)
- * The record carries `gift` (every option's hours, the chosen ones, the bound).
- *
  * Returns the decideAmong record plus { hackH, bladeH } (the points).
  */
-export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now(), gift = null } = {}) {
+export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now() } = {}) {
   // The cadence in steps of e^0.25 (28%) around the point's: the drawn
   // cadences collapse to a handful of simulations (~50-100ms each), however
   // wide the cadence posterior is.
@@ -3116,19 +3103,11 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   const Q = BLADE_ENSEMBLE.Q
   const memo = new Map()
   const c0 = fin(base?.cycleHours) && base.cycleHours > 0 ? base.cycleHours : null
-  // the Bladeburner arm's gift path (L4): a FRESH one per simulation (the path is stateful)
-  let giftMake = null
-  function* bladeHWith(make, cyc, m, tag) {
-    const k = bladeStart ? 0 : c0 && fin(cyc) && cyc > 0 ? Math.round(Math.log(cyc / c0) / 0.25) : 0
-    const key = `${tag}|${k}|${m}`
-    if (!memo.has(key)) {
-      const s = bladeStart ?? bladeStartAt(c0 ? c0 * Math.exp(0.25 * k) : 0)
-      memo.set(key, (yield* bladeExitGen(bladeMemberOf(make ? { ...s, gift: make() } : s, m, Q))).hours)
-    }
-    return memo.get(key)
-  }
   function* bladeH(cyc, m) {
-    return yield* bladeHWith(giftMake, cyc, m, giftMake ? 'gift' : '-')
+    const k = bladeStart ? 0 : c0 && fin(cyc) && cyc > 0 ? Math.round(Math.log(cyc / c0) / 0.25) : 0
+    const key = `${k}|${m}`
+    if (!memo.has(key)) memo.set(key, (yield* bladeExitGen(bladeMemberOf(bladeStart ?? bladeStartAt(c0 ? c0 * Math.exp(0.25 * k) : 0), m, Q))).hours)
+    return memo.get(key)
   }
   // THE HACKING ARM SLICED (`trajGen`, trajectoryGenOf on the same basis):
   // through the synchronous `traj` its point and every draw were a whole
@@ -3138,74 +3117,23 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   const hackGen = typeof trajGen === 'function' ? trajGen : function* (x, d = null) {
     return traj(x, d)
   }
-  const hoursOf = function* (x) {
-    try {
-      const h = yield* hackGen(x)
-      return fin(h) ? h : null
-    } catch {
-      return null
-    }
-  }
-  // THE GIFT (L4): each arm's options priced from the same live state; the best of each is the arm
-  let hackBase = base
-  let giftRec = null
   let pointHack = null
-  if (gift) {
-    const hackRows = []
-    for (const o of gift.hackOptions ?? []) {
-      if (!o?.inputs) continue
-      hackRows.push({ src: o.src, key: o.key ?? null, inputs: o.inputs, hours: yield* hoursOf(o.inputs) })
-      yield
-    }
-    const hb = hackRows.filter((r) => fin(r.hours)).reduce((b, r) => (!b || r.hours < b.hours ? r : b), null)
-    if (hb) {
-      hackBase = hb.inputs
-      pointHack = hb.hours
-    }
-    const bladeRows = []
-    for (const [i, o] of (gift.bladeOptions ?? []).entries()) {
-      if (typeof o?.make !== 'function') continue
-      const hs = []
-      for (let m = 0; m < Q; m++) hs.push(yield* bladeHWith(o.make, base?.cycleHours, m, `g${i}`))
-      const f = hs.filter(fin)
-      bladeRows.push({ src: o.src, key: o.key ?? null, make: o.make, members: hs, hours: f.length * 2 >= Q && f.length ? f.reduce((a, x) => a + x, 0) / f.length : null, tag: `g${i}` })
-    }
-    const bb = bladeRows.filter((r) => fin(r.hours)).reduce((b, r) => (!b || r.hours < b.hours ? r : b), null)
-    if (bb) {
-      giftMake = bb.make
-      // the chosen option's members are the arm's: copied under the arm's key (no re-simulation)
-      for (const [key, v] of [...memo.entries()]) if (key.startsWith(`${bb.tag}|`)) memo.set(`gift|${key.slice(bb.tag.length + 1)}`, v)
-    }
-    const r3 = (x) => (fin(x) ? +x.toFixed(3) : null)
-    giftRec = {
-      // priced with the gift only where BOTH arms carry it (a one-sided gift measures the gift, not the route)
-      priced: !!(hb && bb),
-      why: hb && bb ? null : `the gift is accepted but ${!hb ? 'the hacking arm' : ''}${!hb && !bb ? ' and ' : ''}${!bb ? 'the Bladeburner arm' : ''} could not be priced with it${gift.why ? `: ${gift.why}` : ''}`,
-      hack: { chosen: hb ? hb.src : null, options: hackRows.map((r) => ({ src: r.src, key: r.key, hours: r3(r.hours) })), why: hb ? null : 'no hacking option priced with the gift: the arm is the live inputs as measured (the gift as it is)' },
-      blade: { chosen: bb ? bb.src : null, options: bladeRows.map((r) => ({ src: r.src, key: r.key, hours: r3(r.hours), members: r.members.map(r3) })), why: bb ? null : 'no Bladeburner gift path priced: the arm holds the multipliers the player has now' },
-      switchCostH: fin(gift.switchCostH) ? gift.switchCostH : null,
-      notSimulated: gift.notSimulated ?? null,
-    }
+  try {
+    pointHack = yield* hackGen(base)
+  } catch {
+    pointHack = null
   }
-  if (pointHack === null) pointHack = yield* hoursOf(hackBase)
   yield
   const ens = yield* bladeExitMeanGen(null, { Q, hoursOfMember: (m) => bladeH(base?.cycleHours, m) })
   const pointBlade = ens.hours
   const memberOf = (d) => bladeMemberOfDraw(d, Q) ?? 0
   const options = [
-    { key: 'hack', noiseKey: noiseKeyOf(basis, hackBase), sim: (d) => traj(applyDraw(hackBase, d), d), simGen: (d) => hackGen(applyDraw(hackBase, d), d) },
+    { key: 'hack', noiseKey: noiseKeyOf(basis, base), sim: (d) => traj(applyDraw(base, d), d), simGen: (d) => hackGen(applyDraw(base, d), d) },
     { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeH(applyDraw(base, d)?.cycleHours, memberOf(d))), simGen: (d) => bladeH(applyDraw(base, d)?.cycleHours, memberOf(d)) },
   ]
   const was = prev?.key === 'hack' || prev?.key === 'blade' ? prev : null
-  // the route switch's floor with the gift (L4): the option that is not the committed route pays it
-  const switchCost = giftRec && fin(giftRec.switchCostH) ? { hack: giftRec.switchCostH, blade: giftRec.switchCostH } : {}
   const d = post
-    ? yield* decideAmongGen({ options, prev: was, draws, redecide: redecide || !was, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade), switchCost })
+    ? yield* decideAmongGen({ options, prev: was, draws, redecide: redecide || !was, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade) })
     : { key: fin(pointBlade) && (!fin(pointHack) || pointBlade < pointHack) ? 'blade' : fin(pointHack) ? 'hack' : null, why: 'no posterior: the point comparison' }
-  if (giftRec && typeof gift.boundInputsOf === 'function') {
-    const bh = yield* hoursOf(gift.boundInputsOf(hackBase))
-    const pointKey = (h) => (fin(pointBlade) && (!fin(h) || pointBlade < h) ? 'blade' : fin(h) ? 'hack' : null)
-    giftRec.awakeningBound = { hackH: fin(bh) ? +bh.toFixed(3) : null, flips: fin(bh) ? pointKey(bh) !== pointKey(pointHack) : null, why: 'the hacking arm with Awakening (x0.95) from its start: an upper bound, published, never in the decision' }
-  }
-  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size, gift: giftRec ?? { priced: false, why: 'the gift is not accepted: both routes priced without it' } }
+  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size }
 }

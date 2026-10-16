@@ -247,8 +247,8 @@ export async function run() {
       [prog, /exitCmp = await paced\(gangArmsGen\(bestExitPolicyGen, /, "progress.js: the gang's point arms run in slices"],
       [prog, /countCtx \? yield\* bestExitPolicyGen\(withIn\)/, "progress.js: the graft decision's with-run policy is a generator under a count"],
       [plan, /export function trajectoryOf\(spec, ctx = \{\}\) \{[^}]*const g = trajectoryGenOf\(spec, ctx\)\s*return \(x, d = null\) => drain\(g\(x, d\)\)/, 'plan.js: trajectoryOf is trajectoryGenOf drained'],
-      [plan, /simGen: \(d\) => hackGen\(applyDraw\(hackBase, d\), d\)/, "plan.js: the route decision's hacking arm carries simGen"],
-      [plan, /const hoursOf = function\* \(x\) \{\s*try \{\s*const h = yield\* hackGen\(x\)[\s\S]{0,4000}pointHack = yield\* hoursOf\(hackBase\)/, "plan.js: the route decision's hacking point is a generator"],
+      [plan, /simGen: \(d\) => hackGen\(applyDraw\(base, d\), d\)/, "plan.js: the route decision's hacking arm carries simGen"],
+      [plan, /pointHack = yield\* hackGen\(base\)/, "plan.js: the route decision's hacking point is a generator"],
       [plan, /pointH = yield\* o\.pointGen\(\)/, "plan.js: the batch choice's points are generators"],
       [plan, /simGen: simGen\(byKey\.get\(k\)\)/, 'plan.js: the count route options carry simGen'],
     ]

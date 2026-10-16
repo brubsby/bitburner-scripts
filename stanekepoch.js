@@ -46,20 +46,15 @@
 // (tools/sim/stanekepoch.mjs: the closed loop with this same function as the controller), where the
 // controller's model error is part of what is measured.
 //
-// L4 (the route with the gift, below): the accepted gift no longer PINS a route. The route decision
-// (plan.decideBladeRouteGen) prices both exits conditioned on the gift — the Bladeburner arm through
-// giftPathOf (the placed layout's live charge, the re-lay to the Bladeburner layout where the placed one
-// is not it, the route's installs clearing the charge), the hacking arm through stanekplan.hackGiftInputsOf
-// (the hacking layout's life-average at the hacking charger, every install clearing the charge) — and a
-// route switch pays ROUTE_GIFT.switchCostH, the same floor as a layout switch. Not epochChoiceOf's
-// paired members: the hacking arm has no Bladeburner members to pair with, so the route keeps the
-// route decision's own commitment rule (decideAmongGen over the shared draws) with that floor.
+// L4 HOOK: epochChoiceOf is generic over priced options ({kind, key, members}); a route option (the
+// exit with the gift's route changed) joins the same comparison with kind 'route' — the decision and
+// the record already carry `kind`.
 //
 // NOT SIMULATED, named: the charger's host growing within the node (the live power held), an install's
 // clear of the charge inside the exit (the Bladeburner route never installs), and the hacking route
 // (its exit model is life-averaged — L1 decides per life at the install epoch, L2 prices the in-life
 // switch: none wins).
-import { layoutMults, chargeTrackOf, relayDiffOf, fragKeyOf, sameLayout, layoutKeyOf, layoutFits, layoutForGrid, fragmentById, canPlace, orientations, layoutValue, chargeFactor, coreBonus, threadsOf, bladeHostGbAt, TYPE, FRAGMENTS, BLADE_LAYOUTS, BLADE_PHASE_PRICED, BLADE_HOST, BLADE_WEIGHTS, LAYOUT_MULT_KEYS } from 'stanekplan.js'
+import { layoutMults, chargeTrackOf, relayDiffOf, fragKeyOf, sameLayout, layoutKeyOf, layoutFits, fragmentById, canPlace, orientations, layoutValue, chargeFactor, coreBonus, threadsOf, bladeHostGbAt, TYPE, FRAGMENTS, BLADE_LAYOUTS, BLADE_PHASE_PRICED, BLADE_HOST, BLADE_WEIGHTS, LAYOUT_MULT_KEYS } from 'stanekplan.js'
 import { bladeExitGen, bladeMemberOf, BLADE_ENSEMBLE } from 'bbplan.js'
 
 export const EPOCH_FILE = '/tel/stanekepoch.txt'
@@ -106,37 +101,21 @@ export function liveGiftOf(st) {
  * at the live charge} (bbplan.bladeExitGen s0.gift). The charger at H threads (the live power, held),
  * duty, round robin over the charged fragments placed (stanekplan.chargeTrackOf).
  */
-// install (L4, optional): {firstH, everyH} — the route's installs (bbplan s0.install): each one clears every
-// fragment's charge (prestigeAugmentation, StaneksGift.ts:226-228; the layout stays) and it regrows.
-export function giftPathOf({ placed, charges, masses, target = null, H, duty = BLADE_HOST.duty, nodePower = 1, lagS = EPOCH.lagS, step = 60, install = null }) {
+export function giftPathOf({ placed, charges, masses, target = null, H, duty = BLADE_HOST.duty, nodePower = 1, lagS = EPOCH.lagS, step = 60 }) {
   const track = chargeTrackOf({ thrAt: () => H, duty, step }).relay(placed, 0).seed(masses)
   const base = layoutMults(placed, charges, nodePower)
   const relay = Array.isArray(target) && !sameLayout(placed, target) ? target : null
   let relaid = false
   let now = placed
-  const firstS = install ? (fin(install.firstH) ? install.firstH : install.everyH) * 3600 : NaN
-  const everyS = install && fin(install.everyH) && install.everyH > 0 ? install.everyH * 3600 : Infinity
-  let nextClear = fin(firstS) && firstS >= 0 ? firstS : Infinity
-  let clears = 0
   const keys = LAYOUT_MULT_KEYS.filter((k) => k.startsWith('bladeburner_') || ['strength', 'strength_exp', 'defense', 'defense_exp', 'dexterity', 'dexterity_exp', 'agility', 'agility_exp', 'charisma', 'charisma_exp'].includes(k))
   return {
     target: relay,
     diff: relay ? relayDiffOf(placed, relay) : null,
     factorAt(tS) {
-      // the re-lay and the installs in time order (bounded: one re-lay + the installs up to tS)
-      for (let guard = 0; guard < 1e5; guard++) {
-        const rS = relay && !relaid ? lagS : Infinity
-        const e = Math.min(rS, nextClear)
-        if (!(e <= tS)) break
-        if (rS <= nextClear) {
-          track.relay(relay, lagS)
-          now = relay
-          relaid = true
-        } else {
-          track.clear(nextClear)
-          clears++
-          nextClear += everyS
-        }
+      if (relay && !relaid && tS >= lagS) {
+        track.relay(relay, lagS)
+        now = relay
+        relaid = true
       }
       const m = layoutMults(now, track.at(tS), nodePower)
       const out = {}
@@ -145,7 +124,6 @@ export function giftPathOf({ placed, charges, masses, target = null, H, duty = B
     },
     masses: () => track.masses(),
     placed: () => now,
-    clears: () => clears,
   }
 }
 
@@ -432,37 +410,3 @@ export function epochRecordOf({ prev, decision, due, resetInfo, now = Date.now()
   const history = fresh ? [{ at: decision.decidedAt, epoch: decision.epochKind, kind: decision.kind, from: decision.incumbentKey, to: decision.targetKey, d: decision.d, se: decision.se, ms: decision.cpu?.ms ?? null }, ...hist].slice(0, EPOCH.keep) : hist
   return { at: new Date(now).toISOString(), node: resetInfo?.currentNode ?? null, lastAugReset: resetInfo?.lastAugReset ?? null, lastNodeReset: resetInfo?.lastNodeReset ?? null, due: due ?? null, decision: decision ?? null, calibration: calibration ?? decision?.calibration ?? null, history, error, why }
 }
-
-// ---------------------------------------------------------------------------
-// L4: THE ROUTE WITH THE GIFT ACCEPTED (priced, never pinned)
-// ---------------------------------------------------------------------------
-/**
- * FIXED, stated: a route switch with the gift accepted must gain more than switchCostH — EPOCH.minGainH,
- * the floor the L3 replay set above bladeExit's own error (a gain the truth world never realised). It is
- * the switch cost decideAmongGen charges the option that is not the committed route.
- */
-export const ROUTE_GIFT = { switchCostH: EPOCH.minGainH }
-
-/**
- * THE BLADEBURNER ARM'S GIFT OPTIONS from the live gift: keep the placed layout (its live charge grows on),
- * and — where the placed layout is not the Bladeburner one (BN13's hacking layout; a hacking-route life) —
- * re-lay to it (stanekplan.layoutForGrid 'blade'): the changed fragments lose their charge and regrow
- * (giftPathOf), against the layout's benefit. Each: {src, key, target (null = keep)}.
- */
-export function bladeGiftOptionsOf({ live, width, height, nodePower = 1 }) {
-  const out = [{ src: 'keep the placed layout', key: layoutKeyOf(live.placed), target: null }]
-  const w = width ?? live.width
-  const h = height ?? live.height
-  if (fin(w) && fin(h)) {
-    const tab = layoutForGrid(w, h, nodePower, 'blade')
-    if (tab?.placed?.length && layoutFits(tab.placed, w, h) && !sameLayout(live.placed, tab.placed)) out.push({ src: `re-lay to the Bladeburner layout (${tab.source})`.slice(0, 160), key: layoutKeyOf(tab.placed), target: plain(tab.placed) })
-  }
-  return out
-}
-
-/**
- * A FRESH gift path per simulation (giftPathOf is stateful: its track advances with the exit's clock)
- * for the route's Bladeburner arm: the live gift, re-laid to `target` (null: kept), the charger at its live
- * power and the measured duty, and the route's own installs (`install`: bbplan s0.install) clearing it.
- */
-export const bladeGiftMakerOf = ({ live, target = null, duty = BLADE_HOST.duty, nodePower = 1, install = null, lagS = EPOCH.lagS }) => () => giftPathOf({ ...live, target, H: live.H, duty, nodePower, install, lagS })

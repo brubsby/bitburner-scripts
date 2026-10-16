@@ -238,7 +238,7 @@ export async function run() {
     const pr = SRC('progress.js')
     const pl = SRC('plan.js')
     const need = [
-      [pl, /const s = bladeStart \?\? bladeStartAt\([\s\S]{0,200}bladeExitGen\(bladeMemberOf\(make \? \{ \.\.\.s, gift: make\(\) \} : s, m, Q\)\)/, 'plan.decideBladeRouteGen: each draw on its member'],
+      [pl, /bladeExitGen\(bladeMemberOf\(bladeStart \?\? bladeStartAt\(/, 'plan.decideBladeRouteGen: each draw on its member'],
       [pl, /bladeExitMeanGen\(null, \{ Q, hoursOfMember: \(m\) => bladeH\(base\?\.cycleHours, m\) \}\)/, "plan.decideBladeRouteGen: the point is the members' mean"],
       [pr, /bladeExitGen\(bladeMemberOf\(bc\.startFor\(spec\), m, Q\)\)/, 'progress.bladeInstallCompareOf: each option on the members'],
       [pr, /fg: function\* \(inp, d\) \{ return yield\* hoursOf\(spec, memberOfDraw\(d\)\) \}/, 'progress.bladeInstallCompareOf: draw i on member i mod Q'],
