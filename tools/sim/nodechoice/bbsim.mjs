@@ -273,6 +273,9 @@ function gymStep(P, seconds, stat = null) {
  *        (StaneksGift.delete, StaneksGift.ts:112) and the new ones regrow from 0 (highestCharge
  *        back on the first call, numCharge +duty/k per second round robin). One phase = chargeAt
  *        exactly (SG13).
+ *        THE CLOSED LOOP (L3, o.stanek.decide({t, P, bb, placed, charges, goEff, goNodes}) -> layout|null,
+ *        with phases [{placed}]): called on every 60s gift step while no re-lay is pending; a layout it
+ *        returns lands lagS later, the charge per fragment as above (tools/sim/stanekepoch.mjs --replay).
  *      multsPhase: { mults: {key: factor}, from: when|null, to: when|null } — extra multipliers
  *        only while `from` has held and `to` has not (the phase weights' probe, stanekphase.mjs)
  * returns { hours, rank, blackOps, done, installs, why, trace }
@@ -318,12 +321,17 @@ export function runBladeburner(o) {
     let stTrack = null
     let stPhase = 0
     let stDue = null
+    let stPending = null
+    let stW = 0
+    let stH = 0
     const stSwitches = []
     const genesis = stC ? g.Augmentations[sp.GENESIS]?.mults : null
     if (stC) {
       if (!genesis) throw new Error(`bbsim o.stanek: no '${sp.GENESIS}' augmentation in the bundle`)
       const l13 = new Map(sf).get(13) ?? 0
       const { width, height } = sp.giftSize(mults.StaneksGiftExtraSize ?? 0, l13) // StaneksGift.ts:20-32
+      stW = width
+      stH = height
       for (const lay of stC.phases ? stC.phases.map((ph) => ph.placed) : [stC.placed]) {
         const placed = []
         for (const p of lay) {
@@ -372,6 +380,24 @@ export function runBladeburner(o) {
           stGift.placed = nx.placed
           stTrack.relay(nx.placed, t - stT0)
           stSwitches.push({ phase: stPhase, h: +(t / 3600).toFixed(3), ...phaseState(t) })
+        }
+        // THE CLOSED LOOP (o.stanek.decide, L3: tools/sim/stanekepoch.mjs): a controller reading this
+        // world's state every gift step; a layout it returns lands lagS later (stanek.js's pass)
+        if (stC.decide) {
+          if (stPending && t >= stPending.at) {
+            stGift.placed = stPending.placed
+            stTrack.relay(stPending.placed, t - stT0)
+            stSwitches.push({ phase: 'decide', h: +(t / 3600).toFixed(3), ...phaseState(t) })
+            stPending = null
+          }
+          if (!stPending) {
+            const nodes = goC ? (goC.perHour * (t - goT0)) / 3600 : 0
+            const next = stC.decide({ t, P, bb: P.bladeburner ?? null, placed: stGift.placed, charges: stTrack.at(t - stT0), goEff, goNodes: nodes })
+            if (Array.isArray(next) && !sp.sameLayout(stGift.placed.map((p) => ({ ...p, rotation: p.rot })), next)) {
+              for (const p of next) if (!sp.canPlace(next.filter((q) => q !== p), stW, stH, p.x, p.y, p.rot, sp.fragmentById(p.id))) throw new Error(`bbsim o.stanek.decide: fragment ${p.id} at ${p.x},${p.y} r${p.rot} not placeable`)
+              stPending = { placed: next, at: t + (stC.lagS ?? 300) }
+            }
+          }
         }
       }
       // an install clears every fragment's charge (CotMG/StaneksGift.ts:228-230 prestigeAugmentation): the charger restarts at stT0

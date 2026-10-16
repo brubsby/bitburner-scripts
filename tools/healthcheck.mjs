@@ -617,7 +617,9 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
 // thread anywhere in the fleet (the binding cause named), or the gift's own
 // charge mass did not grow while it ran, or a charge.js heartbeat (gathered
 // into /tel/charge.txt by stanek.js) reports an error, STANEK STALE /
-// UNREPORTED when stanek.js is not being run.
+// UNREPORTED when stanek.js is not being run; on the Bladeburner basis STANEK
+// EPOCH STALE (no L3 decision for 2 epochs, or it threw) / STANEK EPOCH SWITCH
+// NOT LANDED (a decided switch not placed 15 min on).
 {
   const sf = Array.isArray(state?.sourceFiles?.data) ? new Map(state.sourceFiles.data) : null;
   const churchHere = now.bitNode === 13 || (sf?.get(13) ?? 0) > 0;
@@ -629,6 +631,9 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
     if (early) note(`stanek: no /tel/stanek.txt of BitNode ${now.bitNode} yet (${(now.lifeMs / 60e3).toFixed(0)} min into the life)`);
     else {
       const probs = stanekHealthOf({ stanek: st, charge: readTel("charge.txt"), now: Date.now(), nodeStartMs: num(st?.lastNodeReset) ? st.lastNodeReset : null });
+      // L3: the epoch decision (stanekepoch.epochHealthOf) — read from progress.js's own record, not stanek.js's copy
+      const { epochHealthOf } = await import("../stanekepoch.js");
+      probs.push(...epochHealthOf({ epoch: readTel("stanekepoch.txt"), stanek: st, now: Date.now(), nodeStartMs: num(st?.lastNodeReset) ? st.lastNodeReset : null }));
       for (const p of probs) fail(`${p.problem}: ${p.detail}`, `stanek.txt ${st?.at ?? "absent"}: ${String(st?.why ?? "").slice(0, 160)}`);
       if (!probs.length && st) note(`stanek: ${String(st.why ?? st.health).slice(0, 160)}`);
     }

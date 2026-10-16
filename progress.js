@@ -182,7 +182,8 @@ import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
+import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE } from 'stanekepoch.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -3033,6 +3034,40 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
  * linear in its RAM. Never throws (planDecide records a throw).
  */
 const STANEK_REPRICE_MS = 15 * 60e3
+/**
+ * THE GIFT'S EPOCH DECISION ON THE BLADEBURNER ROUTE (L3, stanekepoch.js): at each epoch (epochDueOf:
+ * the node's first, an install, a black op, a landed switch, hourly) keep vs switch, each option the
+ * Bladeburner exit (bbplan.bladeExitGen) from the route decision's own live start (pc.bladeCtx.startFor
+ * on the committed install basis — one builder) with the gift's path from its live charge
+ * (giftPathOf), paired over the members; the choice with hysteresis (epochChoiceOf). Between epochs the
+ * decision is carried. Writes EPOCH_FILE every pass (the decision, its options, the calibration).
+ */
+async function stanekEpochOf(ns, info, pc, gift, st) {
+  const prevRec = readJson(ns, EPOCH_FILE)
+  const prev = prevRec && prevRec.lastNodeReset === (info.lastNodeReset ?? null) ? prevRec : null
+  const write = (rec) => {
+    ns.write(EPOCH_FILE, JSON.stringify(rec), 'w')
+    return rec
+  }
+  const live = gift.accepted && st?.lastAugReset === info.lastAugReset ? liveGiftOf(st) : null
+  if (!live) return write(epochRecordOf({ prev, decision: prev?.decision ?? null, resetInfo: info, why: gift.accepted ? 'no placed layout in /tel/stanek.txt this life: nothing to decide yet' : 'the gift is not accepted: no layout to decide' }))
+  const bc = pc.bladeCtx
+  if (!bc?.startFor) return write(epochRecordOf({ prev, decision: prev?.decision ?? null, resetInfo: info, why: 'no Bladeburner route start this pass (pc.bladeCtx): the epoch is not priced (STANEK EPOCH STALE if it persists)' }))
+  const tel = readJson(ns, '/tel/bladeburner.txt')
+  const blackOps = tel?.bitNode === info.currentNode ? tel?.blackOps?.done ?? null : null
+  const due = epochDueOf({ prev, lastAugReset: info.lastAugReset, lastNodeReset: info.lastNodeReset ?? null, blackOps, placedKey: st?.layout?.placedKey ?? null })
+  if (!due.due) return write(epochRecordOf({ prev, decision: prev.decision, due, resetInfo: info }))
+  const prevInst = pc.prev?.decisions?.install ?? null
+  const s0 = bc.startFor(prevInst?.route === 'blade' ? basisOf(prevInst, Date.now()) : null)
+  const nodeAgeH = Number.isFinite(info.lastNodeReset) ? (Date.now() - info.lastNodeReset) / 3.6e6 : 0
+  const calibration = calibrationOf({ live, prev, nodeAgeH, rank: tel?.bitNode === info.currentNode ? tel?.rank ?? null : null, lastAugReset: info.lastAugReset })
+  // the duty measured between epochs where no re-lay deleted charge in the window, else the model's
+  const dl = calibration.duty
+  const duty = dl && !dl.note && dl.live > 0.3 && dl.live <= 1 ? dl.live : BLADE_HOST.duty
+  const d = await paced(epochDecisionGen({ s0, live, width: st.layout?.width, height: st.layout?.height, nodePower: st.layout?.nodePower ?? 1, duty }), 'plan-stanek-epoch')
+  const decision = { ...d, decidedAt: new Date().toISOString(), epochKind: due.kind, epochWhy: due.why, blackOps, lastAugReset: info.lastAugReset, calibration, track: { ...d.track, relaid: d.kind === 'switch' } }
+  return write(epochRecordOf({ prev, decision, due, resetInfo: info, calibration }))
+}
 async function stanekDecisionOf(ns, info, inputsFn, route = null) {
   const pc = planCtxOf(ns, info)
   const gift = giftStateOf(info, canAccessCotMG(info), route)
@@ -3053,8 +3088,22 @@ async function stanekDecisionOf(ns, info, inputsFn, route = null) {
     const phase = plan
       ? { ...plan, current: st?.layout?.placedKey ?? null, state: lp?.state ?? null, next: lp?.state === 'late' ? 'none (switched)' : `${plan.lateKey} at ${plan.whenText}`, pricedGainH: plan.d, calibration: 'NOT CALIBRATED: no node has re-laid mid-node (bbsim both arms, fresh seeds; the charger BLADE_HOST mid)' }
       : { planned: false, current: st?.layout?.placedKey ?? null, why: `no phase plan priced to win for BN${gift.node} SF13.${gift.l13} SF7.${gift.l7} (stanekplan.BLADE_PHASE_PRICED, d + 2se < 0): one layout the whole node` }
+    // THE EPOCH DECISION (L3, stanekepoch.js): keep the placed layout vs switch to each candidate, every
+    // option simulated to the exit from the LIVE state (the route's own start, the live charge per
+    // fragment), at each epoch; published to EPOCH_FILE every pass, stanek.js acts on it.
+    let epoch = null
+    try {
+      epoch = await stanekEpochOf(ns, info, pc, gift, st)
+    } catch (e) {
+      epoch = { error: `stanekEpochOf threw: ${String(e?.stack ?? e).slice(0, 240)}` }
+      try {
+        ns.write(EPOCH_FILE, JSON.stringify(epochRecordOf({ prev: readJson(ns, EPOCH_FILE), decision: readJson(ns, EPOCH_FILE)?.decision ?? null, resetInfo: info, error: epoch.error })), 'w')
+      } catch {}
+    }
+    const ed = epoch?.decision ?? null
     pc.decisions.stanek = {
       phase,
+      epoch: epoch?.error ? { error: epoch.error } : ed ? { kind: ed.kind, epoch: ed.epochKind, decidedAt: ed.decidedAt, from: ed.incumbentKey, to: ed.targetKey, d: ed.d, se: ed.se, why: String(ed.why ?? '').slice(0, 300), due: epoch.due?.why ?? null, file: EPOCH_FILE } : { kind: null, why: epoch?.why ?? 'no epoch decision' },
       key: gift.accepted ? 'accepted' : gift.want ? 'accept' : gift.hold ? 'hold' : 'never',
       f: null,
       basis: 'blade',

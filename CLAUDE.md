@@ -326,6 +326,27 @@ off `/tel/bladeburner.txt`); health STANEK PHASE SWITCH LATE (due 15 min, not la
 (no node has re-laid); `stanekphase.mjs --calib` checks the charger live (numCharge 0.0%, highestCharge
 +33% vs a 9-core helios). L3 calls the same pricing (`chargeTrackOf` / `switchInputsOf`) at each epoch.
 Tests SG13-SG15.
+**The layout as a closed-loop decision** (L3, 2026-10-16, `stanekepoch.js`, pure): on the Bladeburner
+route progress.js re-plans at each EPOCH (`epochDueOf`: the node's first, an install, a black op, a landed
+switch, hourly) from the LIVE state: keep the placed layout vs switch to each candidate (`epochCandidatesOf`:
+the incumbent, BLADE_LAYOUTS, every BLADE_PHASE_PRICED layout; then a local search of removes/moves/swaps,
+ordered by the linear screen, the first 16 priced on one member, the best 2 on all Q), every option
+`bbplan.bladeExitGen` on the route decision's own start (`pc.bladeCtx.startFor`: one builder, its rank /
+success calibration) with `s0.gift = giftPathOf(option)` (bbplan `giftSync`: the gift's multipliers over the
+exit relative to the ones the player holds, `chargeTrackOf` seeded with each fragment's live mass, the live
+charger's threads x cores, the duty measured between epochs; a re-lay lands 300s later). Switch only where
+d <= -0.01h AND d + 2se < 0 over the paired members (`epochChoiceOf`, generic over `kind`: L4 adds route
+options there). Published every pass to `/tel/stanekepoch.txt` (decision, options with hours/d/se, why,
+history, calibration: charger ramp vs live, duty, the last epoch's mass and rank forecasts vs live);
+stanek.js acts on a fresh one (`epochTargetOf`: a switch only from the layout it was priced from, by diff;
+'keep' holds even past L2's condition; stale -> L2's phase step). Health STANEK EPOCH STALE (no decision for
+2 epochs, or it threw) / STANEK EPOCH SWITCH NOT LANDED (15 min). In-game on bladeExit, not a daemon helper on
+bbsim: bladeExit is live-calibrated and ~10-40ms/exit (an epoch ~1-2s, paced); bbsim cannot run in-game and
+would need a second builder. The replay `tools/sim/stanekepoch.mjs --replay` runs this controller in a bbsim
+truth world (live-start spec, measured charger), 160 paired seeds: L3 - L2 BN7.3 +0.012 +- 0.068h (leading runs +0.157 +- 0.072, lagging -0.132 +- 0.115), BN11.2 +0.004 +- 0.020h (a 0.05h minimum gain: +0.005 +- 0.024) —
+no measurable gain; NOT CALIBRATED live (no epoch switch has landed). Calibration fixed: the charger
+(BLADE_HOST.measured 256GB x 9 cores = 192; the ramp's 256 was +33%) and bbsim's rank lag (the grid spec's
+start: Go 21.6k/h vs 35.1k/h live, 5 infiltrators vs i1s3; `--calib`: -52% -> 0% at the live age). Tests SG16-SG20.
 **Outside BN13 the gift is the Bladeburner route's** (2026-10-15): `stanekplan.giftWantOf` wants it
 where progress.txt's route (this node and life, `routeOfProgress`) is 'blade' and the priced exit wins
 (`BLADE_GIFT_PRICED`: bbsim with vs without, `tools/sim/bbstanek.mjs --table`, NOT CALIBRATED); an unknown

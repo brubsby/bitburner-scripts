@@ -35,6 +35,10 @@
 // its charge (StaneksGift.delete), so unchanged fragments keep theirs; clearGift only if the diff fails.
 // Health STANEK PHASE SWITCH LATE when a priced switch came due 15 min ago and has not landed.
 //
+// THE EPOCH DECISION (L3, stanekepoch.js): where progress.js has a fresh keep-vs-switch decision on the
+// live state (/tel/stanekepoch.txt), it supersedes the phase plan: 'switch' re-lays (by diff) only from
+// the layout it was priced from, 'keep' holds the placed one. Health STANEK EPOCH STALE / SWITCH NOT LANDED.
+//
 // THE CHARGER: charge.js on ANY rooted host — chargeFragment charges from whatever
 // server the script runs on, at its threads x that server's core bonus (Stanek.ts;
 // the gift is global), so home has no claim beyond its cores (and BN13.1 opened on a
@@ -56,6 +60,7 @@
 // Publishes /tel/stanek.txt on every exit path (atExit): gift state, accept
 // outcome, layout, fragments with their charge, charger, allocation, health.
 import { giftStateOf, lifeTargetOf, planLayoutOf, planPhaseOf, bladePhaseStateOf, relayDiffOf, layoutKeyOf, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME, routeOfProgress, PROGRESS_FILE, bladeChargeFOf, BLADE_F_MAX } from 'stanekplan.js'
+import { epochTargetOf, EPOCH_FILE } from 'stanekepoch.js'
 import { reservesOf, heldOn, FREEABLE } from 'raiseplace.js'
 import { singularityRamMultiplier, canAccessCotMG } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -120,7 +125,10 @@ export async function main(ns) {
     // BLADE_PHASE_PRICED; its condition read off /tel/bladeburner.txt) or the hacking life's (planLayout.phase)
     const phase = gift.basis === 'blade' ? planPhaseOf(planText, info.lastAugReset, width, height) : null
     const phaseState = gift.basis === 'blade' ? bladePhaseStateOf(ns.read('/tel/bladeburner.txt'), info) : null
-    const target = lifeTargetOf({ basis: gift.basis, width, height, nodePower, active, plan: planLayout, prev: prevRec, lastAugReset: info.lastAugReset, lastNodeReset: info.lastNodeReset ?? null, phase, phaseState })
+    // THE EPOCH DECISION (L3, stanekepoch.epochTargetOf): progress.js's keep-vs-switch on the live state,
+    // fresh, this node and life; a switch re-lays only from the layout it was priced from
+    const epoch = gift.basis === 'blade' ? epochTargetOf(ns.read(EPOCH_FILE), info, active, width, height) : null
+    const target = lifeTargetOf({ basis: gift.basis, width, height, nodePower, active, plan: planLayout, prev: prevRec, lastAugReset: info.lastAugReset, lastNodeReset: info.lastNodeReset ?? null, phase, phaseState, epoch })
     rec.lifeLayout = target.record
     let placeFails = []
     if (!sameLayout(active, target.placed)) {

@@ -200,7 +200,7 @@ async function sg9() {
   // progress.js publishes the priced decision (static)
   const prog_ = fs.readFileSync(path.join(REPO, 'progress.js'), 'utf8')
   c.examined(2)
-  if (!/if \(gift\.basis === 'blade'\) \{[\s\S]{0,2000}withH: p\?\.withH[\s\S]{0,80}withoutH: p\?\.withoutH/.test(prog_)) c.fail("progress.js stanekDecisionOf must publish the Bladeburner route's priced decision (withH / withoutH)")
+  if (!/if \(gift\.basis === 'blade'\) \{[\s\S]{0,4000}withH: p\?\.withH[\s\S]{0,80}withoutH: p\?\.withoutH/.test(prog_)) c.fail("progress.js stanekDecisionOf must publish the Bladeburner route's priced decision (withH / withoutH)")
   if (!/giftNow\.accepted \|\| giftNow\.basis === 'blade'\) await stanekDecisionOf/.test(prog_)) c.fail('progress.js must price the decision on the Bladeburner basis before the accept too')
   return c
 }
@@ -1005,6 +1005,221 @@ async function sg15() {
   return c
 }
 
+
+// ===========================================================================
+// L3: THE EPOCH DECISION (stanekepoch.js)
+// ===========================================================================
+const ep = await import('../../stanekepoch.js')
+const bpl = await import('../../bbplan.js')
+const { drain: drainGen } = await import('../../coop.js')
+const BL5 = sp.BLADE_LAYOUTS['5x5|0.9']
+const liveOf = (placed, n = 3000, H = 192) => ep.liveGiftOf({ at: new Date().toISOString(), fragments: placed.map((p) => ({ ...p, highestCharge: sp.fragmentById(p.id).type === sp.TYPE.Booster ? 0 : H, numCharge: sp.fragmentById(p.id).type === sp.TYPE.Booster ? 0 : n })), charger: { H }, layout: { width: 5, height: 5, nodePower: 0.9 } })
+let S0 = null
+async function s0Of() {
+  if (!S0) {
+    const { modelStartOf, loadFx } = await import('../sim/bb14.mjs')
+    S0 = { ...modelStartOf(loadFx()), rankSdLn: 0.1, successSdLn: 0.04 }
+  }
+  return S0
+}
+
+// SG16 THE HYSTERESIS (epochChoiceOf): a switch wins only where it beats keeping by at least minGainH
+//      AND by more than z standard errors of the paired difference over the members; a gain under
+//      the minimum, a gain inside 2se, or an unpriced incumbent keeps. Generic over kind (L4: routes).
+function sg16() {
+  const c = new Check('SG16', 'the epoch choice: switch only past 2 s.e. and the minimum gain, else keep')
+  const inc = { kind: 'layout', src: 'incumbent', key: 'A', members: [10, 10.2, 9.9, 10.1, 10, 10.05] }
+  const opt = (key, ds, kind = 'layout') => ({ kind, src: key, key, members: inc.members.map((h, i) => h + ds[i]) })
+  const cases = [
+    ['a clear win (-0.05h, tight)', [inc, opt('B', [-0.05, -0.051, -0.049, -0.05, -0.052, -0.048])], 'switch', 'B'],
+    ['under the minimum gain (-0.005h, tight)', [inc, opt('B', [-0.005, -0.005, -0.005, -0.005, -0.005, -0.005])], 'keep', null],
+    ['inside 2 s.e. (-0.05h mean, +-0.2 spread)', [inc, opt('B', [-0.3, 0.2, -0.25, 0.15, -0.2, 0.1])], 'keep', null],
+    ['a loss', [inc, opt('B', [0.1, 0.1, 0.1, 0.1, 0.1, 0.1])], 'keep', null],
+    ['the best of two winners', [inc, opt('B', [-0.05, -0.05, -0.05, -0.05, -0.05, -0.051]), opt('C', [-0.09, -0.09, -0.091, -0.09, -0.09, -0.09])], 'switch', 'C'],
+    ['a route option (L4 hook)', [inc, opt('R', [-0.5, -0.5, -0.5, -0.5, -0.5, -0.49], 'route')], 'switch', 'R'],
+    ['the incumbent unpriced', [{ ...inc, members: [null, null, null, null, null, null] }, opt('B', [-1, -1, -1, -1, -1, -1])], 'keep', null],
+  ]
+  for (const [label, priced, kind, key] of cases) {
+    c.examined(1)
+    const r = ep.epochChoiceOf(priced)
+    if (r.kind !== kind || (key && r.best?.key !== key)) c.fail(`${label}: expected ${kind}${key ? ` ${key}` : ''}, got ${r.kind} ${r.best?.key ?? ''} (${r.why})`)
+  }
+  c.note(`minGainH ${ep.EPOCH.minGainH}h, z ${ep.EPOCH.z}; ${cases.length} cases`)
+  return c
+}
+
+// SG17 THE EPOCH IS PRICED BY SIMULATED EXITS FROM THE LIVE STATE: giftPathOf keeps the live charge
+//      (factor 1 at t 0, rising as it grows), a re-lay deletes the changed fragments' charge (their
+//      keys fall below 1 after lagS) and keeps the unchanged ones'; epochDecisionGen's options are the
+//      incumbent, the tabled and L2's layouts and the local search, every option's hours the mean of
+//      bladeExitGen over the SAME members with s0.gift = its path (recomputed here independently);
+//      removing a charged combat fragment prices SLOWER than keeping (the gift reaches the exit:
+//      bbplan's giftSync); the record carries the forecasts the next epoch calibrates against.
+async function sg17() {
+  const c = new Check('SG17', 'the epoch decision: every option a simulated exit from the live state, the charge lost and regrown per fragment')
+  const live = liveOf(BL5)
+  const keep = ep.giftPathOf({ ...live, target: null, nodePower: 0.9 })
+  const f0 = keep.factorAt(0)
+  const f1 = keep.factorAt(3 * 3600)
+  c.examined(2)
+  if (Object.values(f0).some((v) => Math.abs(v - 1) > 1e-9)) c.fail('keep: the factor at t 0 must be 1 (the live charge is what the player holds)', JSON.stringify(f0))
+  if (!(f1.agility > 1)) c.fail('keep: the charge must keep growing (agility factor > 1 after 3h)', JSON.stringify(f1))
+  const ag = BL5.find((p) => sp.fragmentById(p.id).type === sp.TYPE.Agility)
+  const noAg = BL5.filter((p) => p !== ag)
+  const rel = ep.giftPathOf({ ...live, target: noAg, nodePower: 0.9 })
+  const r0 = rel.factorAt(0)
+  const r1 = rel.factorAt(ep.EPOCH.lagS + 60)
+  c.examined(2)
+  if (Math.abs(r0.agility - 1) > 1e-9) c.fail("a re-lay lands lagS later: before it the factor is the incumbent's", JSON.stringify(r0))
+  if (!(r1.agility < 0.9) || !(r1.dexterity >= 1 - 1e-9)) c.fail("after the re-lay the removed Agility fragment's keys fall, the unchanged Dexterity keeps its charge", JSON.stringify(r1))
+  // the track itself re-laid: one mass per target fragment, the removed fragment's mass gone with it
+  const ms0 = live.masses.reduce((a, b) => a + b, 0)
+  const ms1 = rel.masses()
+  const agMass = live.masses[BL5.indexOf(ag)]
+  if (ms1.length !== noAg.length || !(ms1.reduce((a, b) => a + b, 0) < ms0 - 0.5 * agMass)) c.fail('the re-lay must re-key the charge track to the target (the removed fragment\'s mass deleted)', JSON.stringify({ ms1, ms0, agMass }))
+  const s0 = await s0Of()
+  const Q = 3
+  const t0 = Date.now()
+  const d = drainGen(ep.epochDecisionGen({ s0, live, width: 5, height: 5, nodePower: 0.9, Q, budget: { screenSims: 4, shortlist: 1 } }))
+  const ms = Date.now() - t0
+  const srcs = d.options.map((o) => o.src)
+  c.examined(3)
+  if (srcs[0] !== 'incumbent' || !srcs.some((x) => x === 'tabled' || /^L2 /.test(x))) c.fail('the options must start with the incumbent and include the table candidates', JSON.stringify(srcs))
+  if (!(d.search.screened > 0)) c.fail('the local search must screen neighbours', JSON.stringify(d.search))
+  // one option recomputed independently: the mean of bladeExit over the same members with its gift path
+  const o = d.options[1]
+  const placed = ep.epochCandidatesOf({ incumbent: BL5, width: 5, height: 5, nodePower: 0.9 }).find((x) => x.key === o.key)?.placed
+  if (placed) {
+    const hs = Array.from({ length: Q }, (_, m) => bpl.bladeExit(bpl.bladeMemberOf({ ...s0, gift: ep.giftPathOf({ ...live, target: placed, nodePower: 0.9 }), maxH: ep.EPOCH.maxH }, m, Q)).hours)
+    const mean = hs.reduce((a, b) => a + b, 0) / Q
+    if (Math.abs(mean - o.hours) > 2e-3) c.fail(`option ${o.src}: hours ${o.hours} is not the mean of bladeExit over the members with its gift path (${mean.toFixed(3)})`)
+  } else c.fail(`option ${o.src} is not a table candidate`)
+  // the gift reaches the exit: dropping the charged Agility fragment is slower than keeping
+  const kH = Array.from({ length: Q }, (_, m) => bpl.bladeExit(bpl.bladeMemberOf({ ...s0, gift: ep.giftPathOf({ ...live, target: null, nodePower: 0.9 }) }, m, Q)).hours)
+  const nH = Array.from({ length: Q }, (_, m) => bpl.bladeExit(bpl.bladeMemberOf({ ...s0, gift: ep.giftPathOf({ ...live, target: noAg, nodePower: 0.9 }) }, m, Q)).hours)
+  const dd = nH.reduce((a, b, i) => a + b - kH[i], 0) / Q
+  c.examined(2)
+  if (!(dd > 0.01)) c.fail(`removing the charged Agility fragment must price slower than keeping (d ${dd.toFixed(4)}h): the gift path does not reach the exit`)
+  if (!Array.isArray(d.track?.forecast?.mass) || !Array.isArray(d.rankPath) || !d.rankPath.length) c.fail('the record must carry the mass and rank forecasts', JSON.stringify({ track: d.track, rankPath: d.rankPath }))
+  c.note(`${d.options.length} options (${d.cpu.sims} sims, ${ms}ms, Q ${Q}): ${d.kind} — ${d.why}; drop Agility +${dd.toFixed(3)}h`)
+  return c
+}
+
+// SG18 THE EPOCHS (epochDueOf): the first decision of a node, an install, a black op completed, a landed
+//      switch / a layout nobody decided, and the periodic check are due; otherwise the decision is carried.
+function sg18() {
+  const c = new Check('SG18', 'the epochs: first, install, black op, landed, periodic — else carried')
+  const now = Date.now()
+  const dec = (over = {}) => ({ lastAugReset: 1000, lastNodeReset: 0, decision: { decidedAt: new Date(now - 10 * 60e3).toISOString(), blackOps: 4, incumbentKey: 'A', targetKey: 'A', kind: 'keep', epochKind: 'first', ...over } })
+  const base = { now, lastAugReset: 1000, lastNodeReset: 0, blackOps: 4, placedKey: 'A' }
+  const cases = [
+    ['no record', { ...base, prev: null }, 'first'],
+    ['another node', { ...base, prev: { ...dec(), lastNodeReset: -5 } }, 'first'],
+    ['an install', { ...base, prev: { ...dec(), lastAugReset: 900 } }, 'install'],
+    ['a black op', { ...base, blackOps: 5, prev: dec() }, 'blackop'],
+    ['a switch landed', { ...base, placedKey: 'B', prev: dec({ kind: 'switch', targetKey: 'B' }) }, 'landed'],
+    ['an undecided layout', { ...base, placedKey: 'Z', prev: dec() }, 'landed'],
+    ['the hour', { ...base, prev: dec({ decidedAt: new Date(now - 61 * 60e3).toISOString() }) }, 'periodic'],
+    ['carried', { ...base, prev: dec() }, null],
+  ]
+  for (const [label, arg, kind] of cases) {
+    c.examined(1)
+    const r = ep.epochDueOf(arg)
+    if (r.due !== (kind !== null) || r.kind !== kind) c.fail(`${label}: expected ${kind ?? 'carried'}, got ${r.due ? r.kind : 'carried'} (${r.why})`)
+  }
+  return c
+}
+
+// SG19 THE GAME ACTS ON THE DECISION (stanek.js, a mock BN11 Bladeburner node): a fresh 'switch' from the
+//      placed layout re-lays BY DIFF (no clearGift; unchanged fragments keep their charge) and records
+//      the epoch; a fresh 'keep' holds the placed layout even where L2's phase condition holds (L3
+//      supersedes the table); a switch priced from another layout is held; a stale decision (past
+//      2 epochs) falls back to L2's phase step.
+async function sg19() {
+  const c = new Check('SG19', 'stanek.js acts on the epoch decision: switch by diff from its incumbent, keep holds, stale falls back to L2')
+  const mk = () => mockGame({ node: 11, sf13: 1, installed: [NFG, GEN], progressRoute: 'blade', extraSf: [[7, 1], [6, 3]] })
+  const inc = sp.BLADE_LAYOUTS['6x5|1']
+  const target = inc.filter((p) => p.id !== 10)
+  const epochTxt = (kind, over = {}) => JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1000, lastNodeReset: 0, decision: { kind, decidedAt: new Date().toISOString(), epochKind: 'blackop', incumbentKey: sp.layoutKeyOf(inc), targetKey: sp.layoutKeyOf(kind === 'switch' ? target : inc), target: kind === 'switch' ? target : null, from: inc, d: -0.05, se: 0.01, why: 'test', ...over } })
+  const g = mk()
+  await g.run()
+  g.tick(400)
+  c.examined(1)
+  if (!sp.sameLayout(g.active(), inc)) c.fail('the node start must place the tabled layout', JSON.stringify(g.active()))
+  const charge0 = new Map(g.charge)
+  const clears = g.log.filter((e) => e.ev === 'clear').length
+  g.files[ep.EPOCH_FILE] = epochTxt('switch')
+  const r = await g.run()
+  c.examined(3)
+  if (!sp.sameLayout(g.active(), target)) c.fail("a fresh 'switch' from the placed layout must re-lay to its target", JSON.stringify(g.active()))
+  if (g.log.filter((e) => e.ev === 'clear').length !== clears) c.fail('the switch must be a diff, never clearGift')
+  for (const p of target) if (sp.fragmentById(p.id).type !== sp.TYPE.Booster && g.charge.get(`${p.x},${p.y}`)?.numCharge !== charge0.get(`${p.x},${p.y}`)?.numCharge) c.fail(`an unchanged fragment ${p.id} lost its charge`)
+  if (r?.lifeLayout?.epoch?.state !== 'switching' || !/epoch decision/.test(r?.lifeLayout?.source ?? '')) c.fail('the record must name the epoch decision (state switching)', JSON.stringify(r?.lifeLayout))
+  if (ep.epochHealthOf({ epoch: JSON.parse(g.files[ep.EPOCH_FILE]), stanek: r, now: Date.now() + 30 * 60e3 }).some((p) => p.problem === 'STANEK EPOCH SWITCH NOT LANDED')) c.fail('landed: no STANEK EPOCH SWITCH NOT LANDED')
+  // keep vs L2's phase plan whose condition holds
+  const k = mk()
+  await k.run()
+  const late = inc.filter((p) => p.id !== 14)
+  k.files['/tel/plan.txt'] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1000, decisions: { stanek: { phase: { planned: true, early: inc, late, when: { blackOps: 6 }, d: -0.1 } } } })
+  k.files['/tel/bladeburner.txt'] = JSON.stringify({ at: new Date().toISOString(), bitNode: 11, lastAugReset: 1000, rank: 50000, blackOps: { done: 8 } })
+  k.files[ep.EPOCH_FILE] = epochTxt('keep')
+  const rk = await k.run()
+  c.examined(1)
+  if (!sp.sameLayout(k.active(), inc) || rk?.lifeLayout?.epoch?.kind !== 'keep') c.fail("a fresh 'keep' must hold the placed layout though L2's condition holds (L3 supersedes the table)", JSON.stringify(rk?.lifeLayout))
+  // stale: L2 again
+  k.files[ep.EPOCH_FILE] = epochTxt('keep', { decidedAt: new Date(Date.now() - 4 * 3600e3).toISOString() })
+  await k.run()
+  c.examined(1)
+  if (!sp.sameLayout(k.active(), late)) c.fail("a stale epoch decision must fall back to L2's phase step", JSON.stringify(k.active()))
+  // a switch priced from another layout: held
+  const h = mk()
+  const other = inc.filter((p) => p.id !== 12)
+  for (const p of other) h.ns.stanek.placeFragment(p.x, p.y, p.rot, p.id)
+  h.files[ep.EPOCH_FILE] = epochTxt('switch')
+  const rh = await h.run()
+  c.examined(1)
+  if (!sp.sameLayout(h.active(), other) || rh?.lifeLayout?.epoch?.state !== 'held') c.fail('a switch priced from another layout must be held', JSON.stringify(rh?.lifeLayout))
+  c.note(`switch ${r?.lifeLayout?.relay ? JSON.stringify(r.lifeLayout.relay) : '?'}; keep over L2: ${String(rk?.lifeLayout?.why ?? '').slice(0, 80)}; held: ${String(rh?.lifeLayout?.epoch?.why ?? '').slice(0, 80)}`)
+  return c
+}
+
+// SG20 HEALTH (epochHealthOf, wired into tools/healthcheck.mjs) and the publisher (progress.js, static):
+//      STANEK EPOCH STALE past 2 epochs, on a decision that threw, or none this node past the grace;
+//      STANEK EPOCH SWITCH NOT LANDED 15+ min after a switch not placed; nothing off the Bladeburner
+//      basis. progress.js decides in the blade branch on pc.bladeCtx.startFor (one builder) with
+//      epochDecisionGen and writes EPOCH_FILE every pass.
+function sg20() {
+  const c = new Check('SG20', 'the epoch health (stale, switch not landed) and its publisher')
+  const now = Date.now()
+  const stanek = { lastNodeReset: 0, lastAugReset: 1000, gift: { accepted: true, basis: 'blade' }, fragments: [{ id: 16 }], layout: { placedKey: 'A' } }
+  const rec = (over = {}, top = {}) => ({ lastNodeReset: 0, lastAugReset: 1000, decision: { kind: 'keep', decidedAt: new Date(now - 30 * 60e3).toISOString(), incumbentKey: 'A', targetKey: 'A', ...over }, ...top })
+  const has = (r, p) => r.some((x) => x.problem === p)
+  const S = 'STANEK EPOCH STALE'
+  const N = 'STANEK EPOCH SWITCH NOT LANDED'
+  const cases = [
+    ['fresh keep', ep.epochHealthOf({ epoch: rec(), stanek, now }), []],
+    ['3h old', ep.epochHealthOf({ epoch: rec({ decidedAt: new Date(now - 3 * 3600e3).toISOString() }), stanek, now }), [S]],
+    ['threw', ep.epochHealthOf({ epoch: rec({}, { error: 'boom' }), stanek, now }), [S]],
+    ['absent 1h into the node', ep.epochHealthOf({ epoch: null, stanek, now, nodeStartMs: now - 3600e3 }), [S]],
+    ['absent 5 min into the node', ep.epochHealthOf({ epoch: null, stanek, now, nodeStartMs: now - 5 * 60e3 }), []],
+    ['switch 20 min, not placed', ep.epochHealthOf({ epoch: rec({ kind: 'switch', targetKey: 'B', decidedAt: new Date(now - 20 * 60e3).toISOString() }), stanek, now }), [N]],
+    ['switch 5 min, not placed', ep.epochHealthOf({ epoch: rec({ kind: 'switch', targetKey: 'B', decidedAt: new Date(now - 5 * 60e3).toISOString() }), stanek, now }), []],
+    ['switch landed', ep.epochHealthOf({ epoch: rec({ kind: 'switch', targetKey: 'A', decidedAt: new Date(now - 20 * 60e3).toISOString() }), stanek, now }), []],
+    ['hacking basis', ep.epochHealthOf({ epoch: null, stanek: { ...stanek, gift: { accepted: true, basis: 'hack' } }, now, nodeStartMs: now - 3600e3 }), []],
+  ]
+  for (const [label, got, want] of cases) {
+    c.examined(1)
+    if (want.length !== got.length || !want.every((p) => has(got, p))) c.fail(`${label}: expected [${want.join(', ')}], got [${got.map((x) => x.problem).join(', ')}]`)
+  }
+  const hc = fs.readFileSync(path.join(REPO, 'tools/healthcheck.mjs'), 'utf8')
+  const pr = fs.readFileSync(path.join(REPO, 'progress.js'), 'utf8')
+  c.examined(3)
+  if (!/probs\.push\(\.\.\.epochHealthOf\(\{ epoch: readTel\("stanekepoch\.txt"\)/.test(hc)) c.fail('tools/healthcheck.mjs must run epochHealthOf on /tel/stanekepoch.txt')
+  if (!/epoch = await stanekEpochOf\(ns, info, pc, gift, st\)/.test(pr)) c.fail("progress.js's blade branch must run the epoch decision (stanekEpochOf)")
+  if (!/const s0 = bc\.startFor\(/.test(pr) || !/epochDecisionGen\(\{ s0, live,/.test(pr) || !/ns\.write\(EPOCH_FILE, JSON\.stringify\(rec\), 'w'\)/.test(pr)) c.fail("progress.js must price the epoch on the route's own start (bladeCtx.startFor) with epochDecisionGen and write EPOCH_FILE")
+  return c
+}
+
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20()]
 }

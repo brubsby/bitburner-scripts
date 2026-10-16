@@ -1463,6 +1463,31 @@ export function* bladeExitGen(s0, pol = POLICY) {
     goE = e
     relevel()
   }
+  // STANEK'S GIFT OVER THE EXIT (s0.gift, L3: stanekepoch.giftPathOf): factorAt(tS) -> {key: ratio} —
+  // the gift's multipliers tS into the exit relative to the ones person.mults holds now (the placed
+  // layout at its live charge, as the game applied them), so a re-lay's deleted charge and its
+  // regrowth move the combat levels, the exp, the stamina and the success chance (env.augMult).
+  // Synced at each step's start, as the Go farm is. NOT SIMULATED, named: an install's clear of the
+  // charge (the route the gift is priced on never installs; an exit with installs keeps the path).
+  const gfC = s0.gift && typeof s0.gift.factorAt === 'function' ? s0.gift : null
+  let gfPrev = null
+  const giftSync = () => {
+    if (!gfC) return
+    const f = gfC.factorAt(Math.max(0, t))
+    if (!f) return
+    let moved = false
+    for (const [k, v] of Object.entries(f)) {
+      const p = gfPrev?.[k] ?? 1
+      if (!(v > 0) || Math.abs(v / p - 1) < 1e-9) continue
+      person.mults[k] = (person.mults[k] ?? 1) * (v / p)
+      moved = true
+    }
+    gfPrev = { ...(gfPrev ?? {}), ...f }
+    if (moved) {
+      env.augMult = augSuccess()
+      relevel()
+    }
+  }
   // THE RETRAIN AS THE POLICY RUNS IT (retrainOf): Infinity with no gym rate
   // (the caller refuses: a retrain it cannot price is not free).
   // THE RETRAIN'S MONEY AND TRAVEL (s0.retrainSecsOf(person, target, phase),
@@ -1798,6 +1823,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
   while (t < maxS && st.bo < BLACK_OPS.length) {
     if (steps.length) applySteps()
     goSync()
+    giftSync()
     if (++sinceYield >= 2) {
       sinceYield = 0
       yield

@@ -1017,7 +1017,7 @@ export function phaseHealthOf(stanek, now = Date.now(), { lateMin = 15 } = {}) {
  * (a node's start, the grid empty). Re-lays only when the target differs from the active set.
  * prev: the last /tel/stanek.txt (the life counter). Returns { placed, record }.
  */
-export function lifeTargetOf({ basis, width, height, nodePower, active, plan, prev, lastAugReset, lastNodeReset, now = Date.now(), phase = null, phaseState = null }) {
+export function lifeTargetOf({ basis, width, height, nodePower, active, plan, prev, lastAugReset, lastNodeReset, now = Date.now(), phase = null, phaseState = null, epoch = null }) {
   const sameNode = prev && prev.lastNodeReset === lastNodeReset && prev.node !== undefined
   const prevLife = sameNode ? prev.lifeLayout ?? null : null
   const lifeIndex = !prevLife?.lifeIndex ? (sameNode ? null : 1) : prevLife.lastAugReset === lastAugReset ? prevLife.lifeIndex : prevLife.lifeIndex + 1
@@ -1033,7 +1033,17 @@ export function lifeTargetOf({ basis, width, height, nodePower, active, plan, pr
   const ph = basis === 'blade' ? phase : plan?.phase ?? null
   const prevPhase = prevLife?.lastAugReset === lastAugReset ? prevLife?.phase ?? null : null
   const step = ph ? phaseStepOf({ phase: ph, active, state: basis === 'blade' ? (phaseState ? { tH: ageMin / 60, ...phaseState } : null) : { tH: ageMin / 60 }, prevPhase, lifeMin: ageMin, now }) : null
-  if (basis === 'blade' && step?.placed) {
+  // THE EPOCH DECISION (L3, stanekepoch.epochTargetOf: progress.js re-plans keep vs switch on the live
+  // state at each epoch): where a fresh one exists it supersedes L2's precomputed phase step
+  if (basis === 'blade' && epoch?.placed && layoutFits(epoch.placed, width, height)) {
+    placed = epoch.placed
+    source = `the epoch decision (L3 ${epoch.state}, ${epoch.decidedAt ?? '?'})`
+    why = epoch.why
+  } else if (basis === 'blade' && epoch && activePlaced.length && layoutFits(activePlaced, width, height)) {
+    placed = activePlaced
+    source = `the incumbent (placed): the epoch decision (L3 ${epoch.state}, ${epoch.decidedAt ?? '?'})`
+    why = epoch.why
+  } else if (basis === 'blade' && step?.placed) {
     placed = step.placed
     source = `the Bladeburner phase plan (${step.record.state}: stanekplan.BLADE_PHASE_PRICED)`
     why = step.record.why
@@ -1064,7 +1074,7 @@ export function lifeTargetOf({ basis, width, height, nodePower, active, plan, pr
     decided = false
     why = 'the grid is empty (a node start): the tabled layout until the plan decides this life'
   }
-  const record = { lastAugReset, lifeIndex, key: layoutKeyOf(placed), source, decided, ageMin: +ageMin.toFixed(1), weights: basis === 'blade' ? null : plan?.weights ?? null, why: String(why ?? '').slice(0, 400), at: new Date(now).toISOString(), phase: step?.record ?? null }
+  const record = { lastAugReset, lifeIndex, key: layoutKeyOf(placed), source, decided, ageMin: +ageMin.toFixed(1), weights: basis === 'blade' ? null : plan?.weights ?? null, why: String(why ?? '').slice(0, 400), at: new Date(now).toISOString(), phase: step?.record ?? null, epoch: epoch ? { kind: epoch.kind, state: epoch.state, key: epoch.key ?? null, decidedAt: epoch.decidedAt ?? null, why: String(epoch.why ?? '').slice(0, 300) } : null }
   return { placed, record }
 }
 
@@ -1105,7 +1115,14 @@ export function lifeLayoutHealthOf(stanek, now = Date.now(), { staleMin = 15, de
  *   ASSUMED: gbMax lo 256 / mid 512 / hi 4096; rampH 4; duty 0.9 (ALLOC_DUTY: restarts, exec gaps).
  *   NOT PRICED: the batcher's money on that host (bbsim's money is not binding on this route).
  */
-export const BLADE_HOST = { g0: 128, rampH: 4, gbMax: { lo: 256, mid: 512, hi: 4096 }, cores: 1, duty: 0.9 }
+//   MEASURED LIVE (L3, 2026-10-16, BN7.2 16.6h in, /tel/stanek.txt): the charger holds helios, 256GB at
+//     9 cores: 128 threads x coreBonus(9) 1.5 = highestCharge 192 (every fragment), against the ramp's
+//     mid 512GB x 1 core = 256 (+33%: the cores were assumed 1 and the GB doubled; ln(257)/ln(193) =
+//     the gift's increment ~5% too big). numCharge 8991 vs duty x age / k 8968 (-0.3%), duty 0.902.
+//     `measured` is that charger (bladeThrAt({gbMax: 256, cores: 9}) plateaus at 192); the L3 epoch
+//     decision charges at the LIVE threads x cores (stanekepoch.giftPathOf), never at the ramp; the L2
+//     tables below were priced on `mid` before the measurement (stated there).
+export const BLADE_HOST = { g0: 128, rampH: 4, gbMax: { lo: 256, mid: 512, hi: 4096 }, cores: 1, duty: 0.9, measured: { gb: 256, cores: 9, H: 192, duty: 0.902, at: 'BN7.2 2026-10-16T13:28Z helios' } }
 
 /** The charger's host GB at tH hours into the node (BLADE_HOST's log-linear ramp). */
 export function bladeHostGbAt(tH, { g0 = BLADE_HOST.g0, rampH = BLADE_HOST.rampH, gbMax } = {}) {
@@ -1197,6 +1214,14 @@ export function chargeTrackOf({ thrAt, duty = 1, step = 60 }) {
       for (const s of st) if (s) s.mass = 0
       return this
     },
+    /** L3: start from a LIVE charge state — masses[j] (highestCharge x numCharge of placed[j], 0 for a booster) at the track's current time. */
+    seed(masses) {
+      st.forEach((s, j) => {
+        if (s) s.mass = Math.max(0, Number(masses?.[j]) || 0)
+      })
+      return this
+    },
+    masses: () => st.map((s) => (s ? s.mass : 0)),
     at(tSec) {
       const i = idx(tSec)
       advance(i)
@@ -1388,7 +1413,10 @@ export const BLADE_GIFT_PRICED = {
  * keeps the unchanged fragments' charge; the rest regrow (chargeTrackOf). Listed only where d + 2se < 0
  * on the refining seeds (two standard errors below zero, stated: several candidates are tried per cell,
  * so one SE let noise through — BN7.2's optimised early layout read -0.26 +- 0.15h and the same layout
- * +0.47 +- 0.13h in BN7.3). NOT CALIBRATED: no node has re-laid.
+ * +0.47 +- 0.13h in BN7.3). NOT CALIBRATED: no node has re-laid. Priced on BLADE_HOST mid (highestCharge
+ * +33% vs the measured charger) and bbSpec's start (the Go farm at 21.6k/h vs 35.1k/h live, 5 infiltrators):
+ * L3 (stanekepoch.js) supersedes this table on the live state wherever a fresh epoch decision exists;
+ * the table is then a candidate source and the fallback.
  * Pure data so the decision costs no RAM.
  */
 export const BLADE_PHASE_PRICED = {
