@@ -1031,11 +1031,12 @@ function sg16() {
   const inc = { kind: 'layout', src: 'incumbent', key: 'A', members: [10, 10.2, 9.9, 10.1, 10, 10.05] }
   const opt = (key, ds, kind = 'layout') => ({ kind, src: key, key, members: inc.members.map((h, i) => h + ds[i]) })
   const cases = [
-    ['a clear win (-0.05h, tight)', [inc, opt('B', [-0.05, -0.051, -0.049, -0.05, -0.052, -0.048])], 'switch', 'B'],
+    ['a clear win (-0.25h, tight)', [inc, opt('B', [-0.25, -0.251, -0.249, -0.25, -0.252, -0.248])], 'switch', 'B'],
+    ['the replay\'s phantom gain (-0.15h, tight: under the model-error floor)', [inc, opt('B', [-0.15, -0.151, -0.149, -0.15, -0.152, -0.148])], 'keep', null],
     ['under the minimum gain (-0.005h, tight)', [inc, opt('B', [-0.005, -0.005, -0.005, -0.005, -0.005, -0.005])], 'keep', null],
     ['inside 2 s.e. (-0.05h mean, +-0.2 spread)', [inc, opt('B', [-0.3, 0.2, -0.25, 0.15, -0.2, 0.1])], 'keep', null],
     ['a loss', [inc, opt('B', [0.1, 0.1, 0.1, 0.1, 0.1, 0.1])], 'keep', null],
-    ['the best of two winners', [inc, opt('B', [-0.05, -0.05, -0.05, -0.05, -0.05, -0.051]), opt('C', [-0.09, -0.09, -0.091, -0.09, -0.09, -0.09])], 'switch', 'C'],
+    ['the best of two winners', [inc, opt('B', [-0.25, -0.25, -0.25, -0.25, -0.25, -0.251]), opt('C', [-0.29, -0.29, -0.291, -0.29, -0.29, -0.29])], 'switch', 'C'],
     ['a route option (L4 hook)', [inc, opt('R', [-0.5, -0.5, -0.5, -0.5, -0.5, -0.49], 'route')], 'switch', 'R'],
     ['the incumbent unpriced', [{ ...inc, members: [null, null, null, null, null, null] }, opt('B', [-1, -1, -1, -1, -1, -1])], 'keep', null],
   ]

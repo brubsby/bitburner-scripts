@@ -64,7 +64,11 @@ export const EPOCH_FILE = '/tel/stanekepoch.txt'
  * shortlist the local search's CPU bound (one-member sims, then full-Q); staleEpochs / graceMin /
  * landMin the health thresholds; keep the epoch history kept in the record.
  */
-export const EPOCH = { periodMin: 60, z: 2, minGainH: 0.01, lagS: 300, screenSims: 16, shortlist: 2, staleEpochs: 2, graceMin: 15, landMin: 15, keep: 12, maxH: 400 }
+// minGainH 0.2 (not L1/L2's 0.01): the L3 replay (stanekepoch.mjs --replay, 160 seeds/node) showed the
+// controller flip between two layouts, each switch claiming ~0.15h on bladeExit that bbsim never
+// realised (L3 - L2 = +0.012 +- 0.068h BN7.3). A gain must clear the exit model's own error before
+// it may spend charge on a re-lay.
+export const EPOCH = { periodMin: 60, z: 2, minGainH: 0.2, lagS: 300, screenSims: 16, shortlist: 2, staleEpochs: 2, graceMin: 15, landMin: 15, keep: 12, maxH: 400 }
 
 /** The fragment ids a Bladeburner layout searches over: the combat types, Bladeburner, Charisma, Hacking, and every booster. */
 export const BLADE_SEARCH_IDS = FRAGMENTS.filter((f) => [TYPE.Strength, TYPE.Defense, TYPE.Dexterity, TYPE.Agility, TYPE.Bladeburner, TYPE.Charisma, TYPE.Hacking, TYPE.Booster].includes(f.type)).map((f) => f.id)
