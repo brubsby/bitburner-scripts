@@ -109,8 +109,10 @@ export function routeReportOf(pin, d, giftState = null) {
 
 /** The gift beside the route (L4): accepted?, priced with it?, the arms' chosen options. Never a pin. */
 export function giftRecordOf(gift, d) {
-  if (!gift?.accepted) return { accepted: false, pinned: false, why: gift?.why ?? 'not accepted' }
   const g = d?.gift ?? null
+  // not accepted: the CHAIN's verdict (L4 — the route priced blade+gift, blade and hack as one decision;
+  // the accept follows the chosen arm, read by stanek.js / act.js through stanekplan.giftVerdictOfProgress)
+  if (!gift?.accepted) return { accepted: false, pinned: false, chain: g?.chain === true, accept: g?.chain === true && typeof g.accept === 'boolean' ? g.accept : null, pricedWithGift: g?.priced === true, why: g?.chain === true ? `the gift is acceptable: the route decision priced it with each arm — ${g.accept ? 'ACCEPT (the chosen arm is faster with it)' : 'not accepted (the chosen arm is faster without it)'}${g.why ? `; ${g.why}` : ''}` : gift?.why ?? 'not accepted' }
   return {
     accepted: true,
     node: gift.node ?? null,

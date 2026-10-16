@@ -164,7 +164,7 @@ export async function run() {
       [sl, /ns\.sleeve\.setToShockRecovery\(sleeve\.index\)/, 'sleeve.js: recover'],
       [sl, /ns\.sleeve\.setToGymWorkout\(sleeve\.index, POWERHOUSE, stat\)/, 'sleeve.js: train'],
       [sl, /ns\.sleeve\.setToBladeburnerAction\(sleeve\.index, SLEEVE_ACTION\.contracts, pick\.d\.name\)/, 'sleeve.js: the contract'],
-      [pr, /bladeStartOf\(\{ tel, person, sleeves, sleeveBodies: fl\.bodies,/, 'progress.js: the route priced on the bodies'],
+      [pr, /bladeStartOf\(\{ tel, person, sleeves: armSleeves\(\), sleeveBodies: fl\.bodies,/, 'progress.js: the route priced on the bodies'],
     ]
     for (const [src, re, what] of need) {
       c.examined(1)

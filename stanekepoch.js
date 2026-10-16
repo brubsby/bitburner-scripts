@@ -59,7 +59,7 @@
 // clear of the charge inside the exit (the Bladeburner route never installs), and the hacking route
 // (its exit model is life-averaged — L1 decides per life at the install epoch, L2 prices the in-life
 // switch: none wins).
-import { layoutMults, chargeTrackOf, relayDiffOf, fragKeyOf, sameLayout, layoutKeyOf, layoutFits, layoutForGrid, fragmentById, canPlace, orientations, layoutValue, chargeFactor, coreBonus, threadsOf, bladeHostGbAt, TYPE, FRAGMENTS, BLADE_LAYOUTS, BLADE_PHASE_PRICED, BLADE_HOST, BLADE_WEIGHTS, LAYOUT_MULT_KEYS } from 'stanekplan.js'
+import { PENALTY, giftSize, bladeThrAt, layoutMults, chargeTrackOf, relayDiffOf, fragKeyOf, sameLayout, layoutKeyOf, layoutFits, layoutForGrid, fragmentById, canPlace, orientations, layoutValue, chargeFactor, coreBonus, threadsOf, bladeHostGbAt, TYPE, FRAGMENTS, BLADE_LAYOUTS, BLADE_PHASE_PRICED, BLADE_HOST, BLADE_WEIGHTS, LAYOUT_MULT_KEYS } from 'stanekplan.js'
 import { bladeExitGen, bladeMemberOf, BLADE_ENSEMBLE } from 'bbplan.js'
 
 export const EPOCH_FILE = '/tel/stanekepoch.txt'
@@ -108,8 +108,9 @@ export function liveGiftOf(st) {
  */
 // install (L4, optional): {firstH, everyH} — the route's installs (bbplan s0.install): each one clears every
 // fragment's charge (prestigeAugmentation, StaneksGift.ts:226-228; the layout stays) and it regrows.
-export function giftPathOf({ placed, charges, masses, target = null, H, duty = BLADE_HOST.duty, nodePower = 1, lagS = EPOCH.lagS, step = 60, install = null }) {
-  const track = chargeTrackOf({ thrAt: () => H, duty, step }).relay(placed, 0).seed(masses)
+// thrAt (optional): the charger's threads over the exit (a node start's ramp, stanekplan.bladeThrAt) in place of the live H held.
+export function giftPathOf({ placed, charges, masses, target = null, H, duty = BLADE_HOST.duty, nodePower = 1, lagS = EPOCH.lagS, step = 60, install = null, thrAt = null }) {
+  const track = chargeTrackOf({ thrAt: typeof thrAt === 'function' ? thrAt : () => H, duty, step }).relay(placed, 0).seed(masses)
   const base = layoutMults(placed, charges, nodePower)
   const relay = Array.isArray(target) && !sameLayout(placed, target) ? target : null
   let relaid = false
@@ -465,4 +466,42 @@ export function bladeGiftOptionsOf({ live, width, height, nodePower = 1 }) {
  * for the route's Bladeburner arm: the live gift, re-laid to `target` (null: kept), the charger at its live
  * power and the measured duty, and the route's own installs (`install`: bbplan s0.install) clearing it.
  */
-export const bladeGiftMakerOf = ({ live, target = null, duty = BLADE_HOST.duty, nodePower = 1, install = null, lagS = EPOCH.lagS }) => () => giftPathOf({ ...live, target, H: live.H, duty, nodePower, install, lagS })
+// accept (the chain, the gift not yet accepted): Genesis applies at the accept, at once
+// (acceptGift -> applyAugmentation: x0.9 on every combat stat and its exp, Augmentations.ts:1593-1627;
+// the Bladeburner multipliers are untouched), so every factor carries it from t 0.
+export const GENESIS_BLADE_KEYS = ['strength', 'strength_exp', 'defense', 'defense_exp', 'dexterity', 'dexterity_exp', 'agility', 'agility_exp', 'charisma', 'charisma_exp']
+export const bladeGiftMakerOf = ({ live, target = null, duty = BLADE_HOST.duty, nodePower = 1, install = null, lagS = EPOCH.lagS, accept = false, thrAt = null }) => () => {
+  const p = giftPathOf({ ...live, target, H: live.H, duty, nodePower, install, lagS, thrAt })
+  if (!accept) return p
+  return {
+    ...p,
+    factorAt(tS) {
+      const f = { ...p.factorAt(tS) }
+      for (const k of GENESIS_BLADE_KEYS) f[k] = (f[k] ?? 1) * PENALTY[1]
+      return f
+    },
+  }
+}
+
+/**
+ * THE CHAIN's options (L4; progress.js routeGiftChainOf calls it, tools/sim/routegift.mjs too): see there.
+ */
+export function routeGiftChainOptionsOf({ gift: g, nodeMults: nm, base, install = null }) {
+  if (!g?.available || g.forfeited || g.accepted) return null
+  const gs = giftSize(nm?.StaneksGiftExtraSize ?? 0, g.l13 ?? 0)
+  const np = nm?.StaneksGiftPowerMultiplier ?? 1
+  const tab = layoutForGrid(gs.width, gs.height, np, 'blade')
+  const placed = (tab?.placed ?? []).map((p) => ({ id: p.id, x: p.x, y: p.y, rot: p.rot }))
+  const live = { placed, charges: placed.map(() => ({ highestCharge: 0, numCharge: 0 })), masses: placed.map(() => 0), H: 0, width: gs.width, height: gs.height, nodePower: np }
+  const thrAt = bladeThrAt({ gbMax: BLADE_HOST.gbMax.mid })
+  const bladeOptions = [{ src: 'without the gift', key: null, make: null }]
+  if (placed.length) bladeOptions.push({ src: `accept now + the Bladeburner layout ${layoutKeyOf(placed)} (Genesis x0.9 at once; the charger ramp BLADE_HOST mid)`, key: layoutKeyOf(placed), make: bladeGiftMakerOf({ live, target: null, duty: BLADE_HOST.duty, nodePower: np, install, accept: true, thrAt }) })
+  return {
+    chain: true,
+    hackOptions: [{ src: 'without the gift', key: null, inputs: base, withGift: false }],
+    bladeOptions,
+    switchCostH: ROUTE_GIFT.switchCostH,
+    notSimulated: 'hack + gift outside BitNode 13 (no charger fleet before an accept); the charger as the node-start ramp, not this fleet',
+    why: placed.length ? null : `no Bladeburner layout for the ${gs.width}x${gs.height} grid: blade + gift unpriced`,
+  }
+}

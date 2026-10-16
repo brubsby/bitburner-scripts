@@ -3147,6 +3147,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   const c0 = fin(base?.cycleHours) && base.cycleHours > 0 ? base.cycleHours : null
   // the Bladeburner arm's gift path (L4): a FRESH one per simulation (the path is stateful)
   let giftMake = null
+  let armTag = '-'
   function* bladeHWith(make, cyc, m, tag) {
     const k = bladeStart ? 0 : c0 && fin(cyc) && cyc > 0 ? Math.round(Math.log(cyc / c0) / 0.25) : 0
     const key = `${tag}|${k}|${m}`
@@ -3157,7 +3158,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     return memo.get(key)
   }
   function* bladeH(cyc, m) {
-    return yield* bladeHWith(giftMake, cyc, m, giftMake ? 'gift' : '-')
+    return yield* bladeHWith(giftMake, cyc, m, armTag)
   }
   // THE HACKING ARM SLICED (`trajGen`, trajectoryGenOf on the same basis):
   // through the synchronous `traj` its point and every draw were a whole
@@ -3183,7 +3184,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     const hackRows = []
     for (const o of gift.hackOptions ?? []) {
       if (!o?.inputs) continue
-      hackRows.push({ src: o.src, key: o.key ?? null, inputs: o.inputs, hours: yield* hoursOf(o.inputs) })
+      hackRows.push({ src: o.src, key: o.key ?? null, inputs: o.inputs, withGift: o.withGift !== false, hours: yield* hoursOf(o.inputs) })
       yield
     }
     const hb = hackRows.filter((r) => fin(r.hours)).reduce((b, r) => (!b || r.hours < b.hours ? r : b), null)
@@ -3193,25 +3194,29 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     }
     const bladeRows = []
     for (const [i, o] of (gift.bladeOptions ?? []).entries()) {
-      if (typeof o?.make !== 'function') continue
+      // make null: the arm WITHOUT the gift (the chain while the gift is unaccepted: the accept follows the choice)
+      if (!o || (o.make !== null && typeof o.make !== 'function')) continue
       const hs = []
       for (let m = 0; m < Q; m++) hs.push(yield* bladeHWith(o.make, base?.cycleHours, m, `g${i}`))
       const f = hs.filter(fin)
-      bladeRows.push({ src: o.src, key: o.key ?? null, make: o.make, members: hs, hours: f.length * 2 >= Q && f.length ? f.reduce((a, x) => a + x, 0) / f.length : null, tag: `g${i}` })
+      bladeRows.push({ src: o.src, key: o.key ?? null, make: o.make, withGift: o.make !== null, members: hs, hours: f.length * 2 >= Q && f.length ? f.reduce((a, x) => a + x, 0) / f.length : null, tag: `g${i}` })
     }
     const bb = bladeRows.filter((r) => fin(r.hours)).reduce((b, r) => (!b || r.hours < b.hours ? r : b), null)
     if (bb) {
+      // the chosen option's members ARE the arm's (its memo tag: no re-simulation)
       giftMake = bb.make
-      // the chosen option's members are the arm's: copied under the arm's key (no re-simulation)
-      for (const [key, v] of [...memo.entries()]) if (key.startsWith(`${bb.tag}|`)) memo.set(`gift|${key.slice(bb.tag.length + 1)}`, v)
+      armTag = bb.tag
     }
     const r3 = (x) => (fin(x) ? +x.toFixed(3) : null)
     giftRec = {
       // priced with the gift only where BOTH arms carry it (a one-sided gift measures the gift, not the route)
       priced: !!(hb && bb),
-      why: hb && bb ? null : `the gift is accepted but ${!hb ? 'the hacking arm' : ''}${!hb && !bb ? ' and ' : ''}${!bb ? 'the Bladeburner arm' : ''} could not be priced with it${gift.why ? `: ${gift.why}` : ''}`,
-      hack: { chosen: hb ? hb.src : null, options: hackRows.map((r) => ({ src: r.src, key: r.key, hours: r3(r.hours) })), why: hb ? null : 'no hacking option priced with the gift: the arm is the live inputs as measured (the gift as it is)' },
-      blade: { chosen: bb ? bb.src : null, options: bladeRows.map((r) => ({ src: r.src, key: r.key, hours: r3(r.hours), members: r.members.map(r3) })), why: bb ? null : 'no Bladeburner gift path priced: the arm holds the multipliers the player has now' },
+      chain: gift.chain === true,
+      hackWithGift: hb ? hb.withGift : null,
+      bladeWithGift: bb ? bb.withGift : null,
+      why: hb && bb ? null : `${gift.chain ? 'the gift is acceptable' : 'the gift is accepted'} but ${!hb ? 'the hacking arm' : ''}${!hb && !bb ? ' and ' : ''}${!bb ? 'the Bladeburner arm' : ''} could not be priced with it${gift.why ? `: ${gift.why}` : ''}`,
+      hack: { chosen: hb ? hb.src : null, options: hackRows.map((r) => ({ src: r.src, key: r.key, withGift: r.withGift, hours: r3(r.hours) })), why: hb ? null : 'no hacking option priced with the gift: the arm is the live inputs as measured (the gift as it is)' },
+      blade: { chosen: bb ? bb.src : null, options: bladeRows.map((r) => ({ src: r.src, key: r.key, withGift: r.withGift, hours: r3(r.hours), members: r.members.map(r3) })), why: bb ? null : 'no Bladeburner gift path priced: the arm holds the multipliers the player has now' },
       switchCostH: fin(gift.switchCostH) ? gift.switchCostH : null,
       notSimulated: gift.notSimulated ?? null,
     }
@@ -3232,6 +3237,8 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     ? yield* decideAmongGen({ options, prev: was, draws, redecide: redecide || !was, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade), switchCost })
     : { key: fin(pointBlade) && (!fin(pointHack) || pointBlade < pointHack) ? 'blade' : fin(pointHack) ? 'hack' : null, why: 'no posterior: the point comparison' }
   const d = unpricedHoldOf(d0, { pointHack, pointBlade, prev: was, hold, post })
+  // THE CHAIN (the gift unaccepted and acceptable): the accept follows the chosen arm's best option
+  if (giftRec) giftRec.accept = d.key === 'blade' ? giftRec.bladeWithGift === true : d.key === 'hack' ? giftRec.hackWithGift === true : null
   if (giftRec && typeof gift.boundInputsOf === 'function') {
     const bh = yield* hoursOf(gift.boundInputsOf(hackBase))
     const pointKey = (h) => (fin(pointBlade) && (!fin(h) || pointBlade < h) ? 'blade' : fin(h) ? 'hack' : null)

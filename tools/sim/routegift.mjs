@@ -129,6 +129,35 @@ function freshCase({ node, level, l13, inputsLo, inputsHi, placedBasis, label })
   return out
 }
 
+/**
+ * THE CHAIN AT A NODE START (L4 fix, live BN7.3 2026-10-16 16:17Z): the gift unaccepted and acceptable,
+ * combat 1, no division, n sleeves — the blade arm priced (a) with the hack route's assignments (0/0/0,
+ * the bug) and (b) with the chooser's fleet, each with the chain (blade+gift / blade / hack) as progress.js
+ * builds it (stanekepoch.routeGiftChainOptionsOf). Hours at the point.
+ */
+function chainCase({ node, level, l13, l7, inputs, n, label }) {
+  const pl = JSON.parse(fs.readFileSync(opt('player'), 'utf8'))
+  const sf = (pl.sourceFiles?.data ?? pl.sourceFiles).map(([k, l]) => (k === 7 ? [7, Math.max(l, l7)] : [k, l]))
+  const br = readTel('plan.txt')?.decisions?.bladeRoute
+  const nm = bitNodeMults(node, level)
+  const person = freshPerson(node, sf, pl.skills.intelligence)
+  // the person enters UNPENALISED (the gift is not accepted yet; the chain's blade+gift applies Genesis itself)
+  person.mults = lvMults({ ...HE.sfMults(sf) }, nm)
+  const startOf = (sleeves) => BB.bladeStartOf({ tel: null, person, sleeves, gymExpPerSec: br.start.gymExpPerSec, bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: null, rankScale: br.calibration.rank.applied, successScale: br.calibration.success.applied, goCombat: null })
+  const zero = { infiltrate: 0, support: 0, fa: 0 }
+  const pick = BB.chooseSleeveConfig(startOf(zero), n, undefined, { Q: 1 })
+  const gift = { available: true, accepted: false, forfeited: false, l13 }
+  const out = []
+  for (const [tag, sleeves] of [['the hack route\'s assignments (0/0/0: the bug)', zero], [`the chooser's fleet ${BB.sleeveConfigKey(pick.config)}`, pick.config]]) {
+    const s0 = startOf(sleeves)
+    const t0 = Date.now()
+    const g = se.routeGiftChainOptionsOf({ gift, nodeMults: nm, base: inputs, install: null })
+    const d = drain(P.decideBladeRouteGen({ base: inputs, traj: P.trajectoryOf(null, {}), trajGen: P.trajectoryGenOf(null, {}), basis: null, bladeStart: s0, draws: [], post: false, gift: g }))
+    out.push({ case: `${label}: blade arm on ${tag}`, key: d.key, hackH: d.hackH, bladeH: d.bladeH, accept: d.gift?.accept ?? null, without: { key: '-', hackH: d.hackH, bladeH: d.gift?.blade?.options?.find((o) => !o.withGift)?.hours ?? null }, gift: d.gift, ms: Date.now() - t0 })
+  }
+  return out
+}
+
 const which = opt('case', 'all')
 const results = []
 if (which === 'live' || which === 'all') results.push(liveCase())
@@ -150,6 +179,9 @@ if (which !== 'live') {
     const sf72 = sf.map(([n, l]) => (n === 7 ? [7, 1] : [n, l]))
     const [c72] = freshCase({ node: 7, level: 2, l13: 1, inputsLo: fresh(7, 2, 0.0405, sf72), inputsHi: null, placedBasis: 'blade', label: 'CALIBRATION: BN7.2 entry by the same fresh builder' })
     results.push({ ...c72, calibration: { freshBladeH: c72.bladeH, liveNodeH: realised ? +realised.toFixed(2) : null, errPct: realised ? +((c72.bladeH / realised - 1) * 100).toFixed(1) : null, why: 'the fresh-entry Bladeburner exit for BN7.2 vs BN7.2 as played (node age at the plan pass + the live blade arm left)' } })
+  }
+  if (which === 'chain' || which === 'all') {
+    for (const [g, lab] of [[0.0405, 'lo'], [0.1381, 'hi']]) results.push(...chainCase({ node: 7, level: 3, l13: 1, l7: 2, inputs: HE.freshInputs({ node: 7, level: 3, sf: sf73, g, profile: prof }), n: 6, label: `BN7.3 entry, gift unaccepted (economy ${lab})` }))
   }
   if (which === 'bn13' || which === 'all') {
     const fx = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'tools/test/fixture-bn13-lifelength-2103.json'), 'utf8'))
@@ -176,7 +208,7 @@ for (const r of results) {
     continue
   }
   console.log(`\n${r.case}`)
-  console.log(`  WITH THE GIFT  hack ${r.hackH}h  blade ${r.bladeH}h  -> '${r.key}'   (${r.ms} ms)`)
+  console.log(`  WITH THE GIFT  hack ${r.hackH}h  blade ${r.bladeH}h  -> '${r.key}'${r.accept != null ? `  accept ${r.accept}` : ''}   (${r.ms} ms)`)
   console.log(`  as-is (no gift options)  hack ${r.without.hackH}h  blade ${r.without.bladeH}h -> '${r.without.key}'`)
   for (const o of r.gift?.hack?.options ?? []) console.log(`    hack  ${o.src === r.gift.hack.chosen ? '*' : ' '} ${String(o.hours).padStart(9)}h  ${o.src}`)
   for (const o of r.gift?.blade?.options ?? []) console.log(`    blade ${o.src === r.gift.blade.chosen ? '*' : ' '} ${String(o.hours).padStart(9)}h  ${o.src}`)

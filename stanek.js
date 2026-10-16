@@ -59,7 +59,7 @@
 //
 // Publishes /tel/stanek.txt on every exit path (atExit): gift state, accept
 // outcome, layout, fragments with their charge, charger, allocation, health.
-import { giftStateOf, lifeTargetOf, planLayoutOf, planPhaseOf, bladePhaseStateOf, relayDiffOf, layoutKeyOf, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME, routeOfProgress, PROGRESS_FILE, bladeChargeFOf, BLADE_F_MAX } from 'stanekplan.js'
+import { giftStateOf, lifeTargetOf, planLayoutOf, planPhaseOf, bladePhaseStateOf, relayDiffOf, layoutKeyOf, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME, routeOfProgress, giftVerdictOfProgress, PROGRESS_FILE, bladeChargeFOf, BLADE_F_MAX } from 'stanekplan.js'
 import { epochTargetOf, EPOCH_FILE } from 'stanekepoch.js'
 import { reservesOf, heldOn, FREEABLE } from 'raiseplace.js'
 import { singularityRamMultiplier, canAccessCotMG } from 'sfgate.js'
@@ -85,8 +85,11 @@ export async function main(ns) {
   try {
     // the route this node plays (progress.js's record of this node and life): outside BN13 the gift is
     // wanted only on the Bladeburner route where its priced exit wins (stanekplan.giftWantOf)
-    const route = routeOfProgress(ns.read(PROGRESS_FILE), info)
-    let gift = giftStateOf(info, canAccessCotMG(info), route)
+    const progText = ns.read(PROGRESS_FILE)
+    const route = routeOfProgress(progText, info)
+    // the route decision's gift verdict (L4 chain: blade+gift / blade / hack priced as one decision)
+    const verdict = giftVerdictOfProgress(progText, info)
+    let gift = giftStateOf(info, canAccessCotMG(info), route, verdict)
     rec.gift = gift
     if (!gift.available) return publish({ health: 'n/a', why: gift.why })
     // ---- 1. THE ACCEPT ---------------------------------------------------
@@ -94,7 +97,7 @@ export async function main(ns) {
       rec.phase = 'accept'
       const returned = ns.stanek.acceptGift()
       info = ns.getResetInfo() // read back from the game, not from the call's return
-      gift = giftStateOf(info, canAccessCotMG(info), route)
+      gift = giftStateOf(info, canAccessCotMG(info), route, verdict)
       rec.gift = gift
       rec.accept = { at: new Date().toISOString(), returned, accepted: gift.accepted }
       if (!gift.accepted) {

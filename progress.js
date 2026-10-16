@@ -166,7 +166,7 @@ import { goExitInputsOf } from 'goplan.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, chooseSleeveConfigGen, sleeveConfigKey, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen, routeFullAtOf, hackHomeArmOf, waitingResidentsOf, fleetForUnlockOf } from 'homeplan.js'
 import { leanUntilOf, FULL_TIER, LEAN_PLACE_H, bladeSlotStallOf, LITE_FILE, BB_FILE } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -182,7 +182,7 @@ import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
-import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT } from 'stanekepoch.js'
+import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT, routeGiftChainOptionsOf } from 'stanekepoch.js'
 import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
@@ -2680,7 +2680,8 @@ const BLADE_TEL = '/tel/bladeburner.txt'
  */
 const HACK_LAYOUT_MEMO = new Map()
 function routeGiftOf(ns, info, base, s0) {
-  if (!giftStateOf(info, canAccessCotMG(info)).accepted) return null
+  const g0 = giftStateOf(info, canAccessCotMG(info))
+  if (!g0.accepted) return routeGiftChainOf(info, base, s0, g0)
   const st0 = readJson(ns, STANEK_FILE)
   const st = st0 && st0.node === info.currentNode && st0.lastNodeReset === (info.lastNodeReset ?? st0.lastNodeReset) ? st0 : null
   const sameLife = st?.lastAugReset === info.lastAugReset
@@ -2715,6 +2716,21 @@ function routeGiftOf(ns, info, base, s0) {
     why: `${live ? '' : `no placed layout of this life in ${STANEK_FILE}: the Bladeburner arm is unpriced with the gift; `}${hackOptions.length ? '' : `no layout and fleet of this node in ${STANEK_FILE}: the hacking arm is unpriced with the gift`}`.trim() || null,
   }
 }
+/**
+ * THE CHAIN (L4, the gift unaccepted and still acceptable): gift and route are ONE decision — the accept
+ * follows a route choice — so the route decision prices blade WITH the gift (accepted now: Genesis x0.9
+ * on the combat stats at once, stanekepoch.bladeGiftMakerOf accept; the Bladeburner layout from zero
+ * charge on the node-start charger ramp, stanekplan.bladeThrAt at BLADE_HOST mid — the model
+ * BLADE_GIFT_PRICED was built on), blade WITHOUT it, and hack without it; the min is the route, and its
+ * `accept` (published in progress.txt route.gift, stanekplan.giftVerdictOfProgress) is what stanek.js
+ * acts on. NOT PRICED, stated: hack + gift outside BN13 (no charger fleet is measured before an accept;
+ * BN13 accepts by policy, GIFT_NODES). null: no Church here, or the gift forfeited.
+ */
+function routeGiftChainOf(info, base, s0, g) {
+  return routeGiftChainOptionsOf({ gift: g, nodeMults: bitNodeMults(info), base, install: s0?.install ?? null })
+}
+/** The fleet the BLADEBURNER route would run is re-chosen at most this often (the chooser: every configuration, one exit each). */
+const ROUTE_FLEET_MS = 30 * 60e3
 async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0, pin = null } = {}) {
   const mults = bitNodeMults(info)
   if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
@@ -2732,6 +2748,16 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     // A record from before this life's install is no fleet (bladeFleetOf lifeStart: the install stopped every sleeve).
     const fl = bladeFleetOf(ours ? fleet : null, { lifeStart: info.lastAugReset })
     const sleeves = fl.sleeves
+    // THE BLADEBURNER ARM'S OWN FLEET (a route option is its own trajectory): where sleeve.js has no
+    // committed Bladeburner fleet (it chooses one only on the committed blade route), the arm is priced with
+    // the fleet the blade route WOULD run — bbplan.chooseSleeveConfigGen over every configuration (gym
+    // fleets included) for the live sleeve count — never the other route's assignments (live BN7.3 16:17Z:
+    // 0/0/0 on the hack route's CLASS/SYNCHRO priced blade 51.1h vs hack 35.8h, so blade never got a fleet).
+    const nSleeves = ours ? (Number.isInteger(fleet.sleeves) ? fleet.sleeves : Array.isArray(fleet.assigned) ? fleet.assigned.length : 0) : 0
+    const prevRF = pc.prevAny?.decisions?.bladeRoute?.routeFleet ?? null
+    const rfFresh = (r) => !!r?.config && r.lastAugReset === info.lastAugReset && r.n === nSleeves && r.joined === (tel?.joined === true) && Date.now() - Date.parse(r.at ?? '') < ROUTE_FLEET_MS
+    let routeFleet = fl.source === 'committed' || !(nSleeves > 0) ? null : rfFresh(prevRF) ? prevRF : null
+    const armSleeves = () => (fl.source === 'committed' || !routeFleet?.config ? sleeves : routeFleet.config)
     const person = levelledPerson(player, info)
     // The retrain's gym (bodyplan.retrainGymOf): never null for want of the
     // flight fare this minute — that made every arm with an install unpriced.
@@ -2772,7 +2798,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     // not measured yet is the previous life's (the plan record carries it).
     const prevGo = pc.prevAny?.decisions?.bladeRoute?.start?.goCombat ?? null
     const goCombat = bladeGoCombatOf(readJson(ns, '/tel/go.txt'), { node: info.currentNode, lastAugReset: info.lastAugReset, now: Date.now(), carried: prevGo && prevGo.perHour > 0 && typeof prevGo.rateSource === 'string' && !prevGo.rateSource.startsWith('prior') ? { perHour: prevGo.perHour, source: `${prevGo.rateSource} (the plan record of ${pc.prevAny?.at ?? '?'})` } : null })
-    const startFor = (spec) => bladeStartOf({ tel, person, sleeves, sleeveBodies: fl.bodies, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf, goCombat })
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves: armSleeves(), sleeveBodies: fl.bodies, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf, goCombat })
     pc.bladeCtx = { startFor, simOwned }
     // REAL STATE MOVES ARE EVENTS (bbplan.bladeStateOf / bladeEventsOf): the
     // fleet, a black op, a random event in the best city, a calibration
@@ -2793,6 +2819,14 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       const prevInst = pc.prev?.decisions?.install ?? null
       const bladeCommitted = prevInst?.route === 'blade'
       const bladeBasis = bladeCommitted ? basisOf(prevInst, Date.now()) : null
+      if (fl.source !== 'committed' && nSleeves > 0 && !routeFleet) {
+        try {
+          const pick = yield* chooseSleeveConfigGen(startFor(bladeBasis), nSleeves, undefined, { Q: 1 })
+          routeFleet = pick.config ? { config: pick.config, key: sleeveConfigKey(pick.config), hours: Number.isFinite(pick.hours) ? +pick.hours.toFixed(3) : null, n: nSleeves, joined: tel?.joined === true, lastAugReset: info.lastAugReset, at: new Date().toISOString(), source: 'chooser', why: `the fleet the Bladeburner route would run (bbplan.chooseSleeveConfigGen, ${pick.byConfig.length} configurations): ${sleeveConfigKey(pick.config)}` } : { config: null, n: nSleeves, why: 'no configuration reaches the 21st black op in the model: the arm runs the sleeves as assigned' }
+        } catch (e) {
+          routeFleet = { config: null, n: nSleeves, why: `the fleet chooser threw: ${String(e).slice(0, 120)}` }
+        }
+      }
       const basis = bladeCommitted ? null : basisOf(prevInst, Date.now())
       // The rank ledger (rankCalStep v3): the model's own path from THIS
       // pass's state as read (rankScale 1 — the formula with this pass's
@@ -2870,6 +2904,9 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         blackOps: tel?.blackOps?.done ?? null,
         sleeves,
         fleet: { source: fl.source, why: fl.why },
+        // the fleet the blade ARM was priced with (the committed one, or the chooser's: never the hack route's assignments)
+        armSleeves: armSleeves(),
+        routeFleet: routeFleet ?? { config: null, why: fl.source === 'committed' ? "sleeve.js's committed Bladeburner fleet" : 'no sleeves' },
         // Who acts for the division on this arm: bb-lite until untilH (null: the full daemon throughout); routeBuy: the route's own home purchase (homeplan.routeFullAtOf).
         lean: { untilH: leanUntilH === Infinity ? 'never' : Number.isFinite(leanUntilH) ? +leanUntilH.toFixed(3) : null, ...(leanRoute ? { routeBuy: { buyAtH: Number.isFinite(leanRoute.buyAtH) ? +leanRoute.buyAtH.toFixed(3) : null, cost: Number.isFinite(leanRoute.cost) ? Math.round(leanRoute.cost) : null, why: leanRoute.why } } : {}) },
         calibration: {
@@ -3141,9 +3178,9 @@ async function stanekEpochOf(ns, info, pc, gift, st) {
   const decision = { ...d, decidedAt: new Date().toISOString(), epochKind: due.kind, epochWhy: due.why, blackOps, lastAugReset: info.lastAugReset, calibration, track: { ...d.track, relaid: d.kind === 'switch' } }
   return write(epochRecordOf({ prev, decision, due, resetInfo: info, calibration }))
 }
-async function stanekDecisionOf(ns, info, inputsFn, route = null) {
+async function stanekDecisionOf(ns, info, inputsFn, route = null, verdict = null) {
   const pc = planCtxOf(ns, info)
-  const gift = giftStateOf(info, canAccessCotMG(info), route)
+  const gift = giftStateOf(info, canAccessCotMG(info), route, verdict)
   // THE BLADEBURNER ROUTE'S GIFT (stanekplan.giftWantOf, basis 'blade'): accepted at the node's
   // start iff the Bladeburner exit WITH it beats the exit WITHOUT it — both simulated by bbsim on
   // shared seeds (tools/sim/bbstanek.mjs -> stanekplan.BLADE_GIFT_PRICED: withH - withoutH,
@@ -7845,8 +7882,10 @@ async function act(ns, canJoin, info, note) {
   const fourSHold = fourSHoldOf(fourSDecision, fourSOwnedNow, info?.lastAugReset ?? null)
   // STANEK'S CHARGING ALLOCATION, on the same inputs (stanekDecisionOf): where the gift is accepted,
   // and on the Bladeburner route its accept decision (priced, basis 'blade') before and after the accept.
-  const giftNow = giftStateOf(info, canAccessCotMG(info), routeOut?.route ?? null)
-  if (giftNow.accepted || giftNow.basis === 'blade') await stanekDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), routeOut?.route ?? null)
+  // the route decision's gift verdict (the L4 chain), as stanek.js reads it from progress.txt
+  const giftVerdict = routeOut?.gift?.chain === true && typeof routeOut.gift.accept === 'boolean' ? { accept: routeOut.gift.accept, why: routeOut.gift.why ?? null } : null
+  const giftNow = giftStateOf(info, canAccessCotMG(info), routeOut?.route ?? null, giftVerdict)
+  if (giftNow.accepted || giftNow.basis === 'blade') await stanekDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), routeOut?.route ?? null, giftVerdict)
   if (fourSHold.why && !fourSHold.hold) todo.push(fourSHold.why)
   if (canBuyAug) graftCarry = carriedGraftsOf(planCtxOf(ns, info), new Set(installedCount.keys()), work, player.skills?.intelligence ?? 0)
   const graftStep = (() => {

@@ -571,19 +571,19 @@ function sg5() {
   const act = rd('act.js')
   const ra = act.indexOf('async function runActor(')
   const raBody = act.slice(ra, act.indexOf('\n}\n', ra))
-  const gi = raBody.indexOf('const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri), routeOfProgress(readHomeFile(ns, PROGRESS_FILE), ri)), { kind, args })')
+  const gi = raBody.indexOf('const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri), routeOfProgress(readHomeFile(ns, PROGRESS_FILE), ri), giftVerdictOfProgress(readHomeFile(ns, PROGRESS_FILE), ri)), { kind, args })')
   const fresh = raBody.indexOf('const ri = ns.getResetInfo()')
   const gr = raBody.search(/if \(!gate\.allow\) return \{ ran: false, ok: false/)
   const ex = raBody.indexOf('ns.exec(actor')
   c.examined(1)
   if (!(fresh > 0 && gi > fresh && gr > gi && ex > gr)) c.fail("act.js runActor must gate buyaug/graft/install (giftOrderGate on a FRESH getResetInfo) and RETURN on a refusal before its exec", `gate at ${gi}, return at ${gr}, exec at ${ex}`)
   if (!/if \(kind === 'buyaug' \|\| kind === 'graft' \|\| kind === 'install'\)/.test(raBody)) c.fail('act.js runActor gate must cover buyaug, graft and install')
-  const loopGate = act.indexOf("const ri = ns.getResetInfo()\n            const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri), routeOfProgress(readHomeFile(ns, PROGRESS_FILE), ri)), o)")
+  const loopGate = act.indexOf("const ri = ns.getResetInfo()\n            const gate = giftOrderGate(giftStateOf(ri, canAccessCotMG(ri), routeOfProgress(readHomeFile(ns, PROGRESS_FILE), ri), giftVerdictOfProgress(readHomeFile(ns, PROGRESS_FILE), ri)), o)")
   const installBranch = act.indexOf("if (o.kind === 'install') {\n            // THE MANUAL HOLD")
   if (!(loopGate > 0 && installBranch > loopGate)) c.fail("act.js's order loop must gate before the install branch", `${loopGate} / ${installBranch}`)
   // ...and act on it there: runActor's own gate would refuse the install only AFTER the
   // liquidation and the home spend-down this branch runs first.
-  const loopAct = act.slice(loopGate, loopGate + 480)
+  const loopAct = act.slice(loopGate, loopGate + 600)
   if (!/\n\s*if \(!gate\.allow\) \{\n\s*results\.push\(\{[^\n]*skipped: gate\.why[^\n]*\n\s*if \(CHAIN\.has\(o\.kind\)\) chainFailed[^\n]*\n\s*if \(o\.kind === 'install'\) break\n\s*continue/.test(loopAct)) c.fail("act.js's order-loop gate must skip the order, break the chain and stop the batch at an install — before the liquidation and spend-down")
   const actors = new Set(['act-buyaug.js', 'act-install.js', 'act-graft.js'])
   const callers = []
@@ -1378,6 +1378,77 @@ async function sg21() {
   return c
 }
 
+// SG22 THE ROUTE'S OWN FLEET AND THE GIFT CHAIN AT A NODE START (live BN7.3 2026-10-16 16:17Z: combat 1, no
+// division, the sleeves on the hack route's CLASS/SYNCHRO -> the blade arm priced 0/0/0 at 51.1h vs hack
+// 35.8h, the gift "not accepted: priced without it" and held — circular: sleeve.js picks a Bladeburner fleet
+// only on the committed blade route). The blade arm is priced with the chooser's fleet; blade+gift, blade and
+// hack are one chained decision and the accept follows the chosen arm (stanek.js / act.js read the verdict).
+async function sg22() {
+  const c = new Check('SG22', "a node start: the blade arm runs the chooser's fleet, never the hack route's; blade+gift / blade / hack chained, the accept follows")
+  const P = await import('../../plan.js')
+  const BB = await import('../../bbplan.js')
+  const se = await import('../../stanekepoch.js')
+  const { bitNodeMults } = await import('../../bitNodeMultipliers.js')
+  const { drain } = await import('../../coop.js')
+  const rd = (f) => fs.readFileSync(path.join(REPO, f), 'utf8')
+  const nm = bitNodeMults(7, 3)
+  const ones = { strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1, hacking: 1, intelligence: 149 }
+  const m = { strength: 1.3, defense: 1.3, dexterity: 1.3, agility: 1.3, charisma: 1.3, strength_exp: 1.3, defense_exp: 1.3, dexterity_exp: 1.3, agility_exp: 1.3, charisma_exp: 1.3, bladeburner_success_chance: 1.1, bladeburner_max_stamina: 1, bladeburner_stamina_gain: 1 }
+  const person = { skills: ones, exp: {}, mults: m, city: 'Sector-12', money: 1262 }
+  const startOf = (sleeves) => BB.bladeStartOf({ tel: null, person, sleeves, gymExpPerSec: 16.8, bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: null, rankScale: 1.3, successScale: 1, maxH: 200 })
+  const zero = { infiltrate: 0, support: 0, fa: 0 }
+  // 1. the premise and the fix: the chooser's fleet for 7 sleeves is not empty and prices blade sooner than 0/0/0
+  const pick = BB.chooseSleeveConfig(startOf(zero), 7, undefined, { Q: 1 })
+  const z = drain(BB.bladeExitGen(startOf(zero)))
+  c.examined(2)
+  if (!pick.config || (pick.config.infiltrate ?? 0) + (pick.config.support ?? 0) + (pick.config.fa ?? 0) + (pick.config.gym ?? 0) + (pick.config.contracts ?? 0) === 0) c.fail("the chooser's fleet for 7 sleeves at a node start must put sleeves on the route", JSON.stringify(pick.config))
+  if (!(pick.hours < z.hours)) c.fail(`the chooser's fleet must price the blade arm sooner than the empty fleet (${pick.hours}h vs ${z.hours}h)`)
+  const pr = rd('progress.js')
+  c.examined(3)
+  if (!/const startFor = \(spec\) => bladeStartOf\(\{ tel, person, sleeves: armSleeves\(\),/.test(pr)) c.fail("progress.js: every Bladeburner start must carry the arm's own fleet (armSleeves), not the sleeves as assigned")
+  if (!/const armSleeves = \(\) => \(fl\.source === 'committed' \|\| !routeFleet\?\.config \? sleeves : routeFleet\.config\)/.test(pr)) c.fail('progress.js: with no committed Bladeburner fleet the arm must use the chooser pick')
+  if (!/if \(fl\.source !== 'committed' && nSleeves > 0 && !routeFleet\) \{[\s\S]{0,200}chooseSleeveConfigGen\(startFor\(bladeBasis\), nSleeves/.test(pr)) c.fail('progress.js: the route decision must run the fleet chooser where sleeve.js has no committed Bladeburner fleet')
+  // 2. the chain: the gift enters the blade arm, the accept follows the chosen arm
+  const g = se.routeGiftChainOptionsOf({ gift: { available: true, accepted: false, forfeited: false, l13: 1 }, nodeMults: nm, base: { fakeH: 60, cycleHours: 2 }, install: null })
+  c.examined(2)
+  if (!g?.chain || !g.bladeOptions.some((o) => typeof o.make === 'function') || !g.bladeOptions.some((o) => o.make === null)) c.fail('the chain must price blade WITH the gift and blade WITHOUT it', JSON.stringify(g?.bladeOptions?.map((o) => o.src)))
+  if (se.routeGiftChainOptionsOf({ gift: { available: true, accepted: false, forfeited: true, l13: 1 }, nodeMults: nm, base: {} }) !== null) c.fail('a forfeited gift has no chain')
+  const trajGen = function* (x) {
+    return x.fakeH
+  }
+  const dec = (hackH) => drain(P.decideBladeRouteGen({ base: { fakeH: hackH, cycleHours: 2 }, traj: (x) => x.fakeH, trajGen, bladeStart: startOf(pick.config), draws: [], post: false, gift: { ...g, hackOptions: [{ src: 'without the gift', inputs: { fakeH: hackH, cycleHours: 2 }, withGift: false }] } }))
+  const slowHack = dec(500)
+  const fastHack = dec(1)
+  const wo = slowHack.gift?.blade?.options?.find((o) => !o.withGift)?.hours
+  const wi = slowHack.gift?.blade?.options?.find((o) => o.withGift)?.hours
+  c.examined(3)
+  if (slowHack.key !== 'blade' || slowHack.gift?.chain !== true || slowHack.gift?.accept !== (wi < wo)) c.fail(`blade chosen: the accept must follow its faster option (with ${wi}h, without ${wo}h)`, JSON.stringify({ key: slowHack.key, accept: slowHack.gift?.accept }))
+  if (!(wi < wo)) c.fail(`at a BN7.3 start the gift must shorten the blade arm (${wi}h with vs ${wo}h without; BLADE_GIFT_PRICED 7|1|2: -1.7h)`)
+  if (fastHack.key !== 'hack' || fastHack.gift?.accept !== false) c.fail('hack chosen (outside BN13): the gift is not accepted', JSON.stringify({ key: fastHack.key, accept: fastHack.gift?.accept }))
+  // Genesis applies at the accept, on the combat stats, not on the Bladeburner multipliers
+  const f0 = g.bladeOptions.find((o) => o.make)?.make().factorAt(0)
+  c.examined(1)
+  if (!(Math.abs((f0?.agility ?? 0) - 0.9) < 1e-9) || Math.abs((f0?.bladeburner_success_chance ?? 1) - 1) > 1e-9) c.fail('the accepted gift applies Genesis x0.9 to the combat stats at once (and not to the Bladeburner multipliers)', JSON.stringify(f0))
+  // 3. the verdict reaches the accept (stanek.js / act.js): blade+gift -> want, blade without -> never, no hold
+  const ri = { currentNode: 7, lastAugReset: 1000, lastNodeReset: 0, ownedSF: new Map([[13, 1], [7, 2]]), ownedAugs: new Map() }
+  const yes = sp.giftStateOf(ri, true, 'blade', { accept: true, why: 'x' })
+  const no = sp.giftStateOf(ri, true, 'blade', { accept: false, why: 'x' })
+  const hk = sp.giftStateOf(ri, true, 'hack', { accept: false, why: 'x' })
+  const prog = (gift) => JSON.stringify({ at: new Date().toISOString(), route: { route: 'blade', node: 7, lastAugReset: 1000, gift } })
+  c.examined(4)
+  if (!yes.want || yes.basis !== 'blade') c.fail('the chain verdict accept on the blade route: wanted, basis blade', JSON.stringify(yes))
+  if (no.want || no.hold) c.fail('the chain verdict no: not wanted and not held (the route decided without it)', JSON.stringify(no))
+  if (hk.want || hk.hold) c.fail('the chain verdict on the hack route outside BN13: not wanted, not held', JSON.stringify(hk))
+  if (sp.giftVerdictOfProgress(prog({ chain: true, accept: true }), ri)?.accept !== true || sp.giftVerdictOfProgress(prog({ chain: false, accept: null }), ri) !== null) c.fail('giftVerdictOfProgress must read the chain verdict of this node and life only')
+  const sj = rd('stanek.js')
+  const aj = rd('act.js')
+  c.examined(2)
+  if ((sj.match(/giftStateOf\(info, canAccessCotMG\(info\), route, verdict\)/g) ?? []).length !== 2) c.fail("stanek.js must accept on the route decision's gift verdict (both reads)")
+  if (!/if \(!g0\.accepted\) return routeGiftChainOf\(info, base, s0, g0\)/.test(pr)) c.fail('progress.js: an unaccepted, acceptable gift must enter the route decision as the chain (routeGiftChainOf)')
+  if ((aj.match(/giftVerdictOfProgress\(readHomeFile\(ns, PROGRESS_FILE\), ri\)/g) ?? []).length !== 2) c.fail("act.js's purchase gate must read the same verdict (both call sites)")
+  return c
+}
+
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22()]
 }

@@ -377,6 +377,18 @@ the committed one, else the gift's basis (`progress.js routeHoldOf`), else none 
 failed as ROUTE ARM UNPRICED; a thrown route decision holds too. endgame.js, ready and refused its raise,
 publishes `raiseplace.ENDGAME_RESERVE` (/tel/reserve-endgame.txt, fresh 10 min) and batch.js keeps that block
 free on home, so the next 2-min run raises. Test SG21.
+**A route option is its own trajectory** (2026-10-16, live BN7.3 16:17Z): sleeve.js picks a Bladeburner fleet only
+on the committed blade route, so on the hack route the blade arm was priced with the sleeves as the HACK route
+assigned them (0/0/0, 51.1h vs hack 35.8h) and blade could never win — circular. With no committed Bladeburner
+fleet, progress.js prices the arm with the fleet the blade route WOULD run (`bbplan.chooseSleeveConfigGen` for
+the live sleeve count, gym fleets included; `routeFleet`, re-chosen every 30 min; every Bladeburner start of the
+pass carries it, `armSleeves`). **The gift and the route are one chained decision while the gift is unaccepted
+and acceptable** (`stanekepoch.routeGiftChainOptionsOf`): blade WITH the gift (Genesis x0.9 at once, the
+Bladeburner layout from zero on the BLADE_HOST mid ramp), blade without, hack without (hack + gift outside BN13
+NOT PRICED: no charger fleet before an accept); the min is the route, and `route.gift.accept` in progress.txt
+(`giftVerdictOfProgress`) is what stanek.js accepts on and act.js gates on. Live BN7.3 16:27Z re-priced offline
+(the published arms reproduced to 0.01% / 0.3%): fleet i1s3c2t100, blade + gift 25.3h, blade 30.4h, hack 54.7h ->
+blade, accept. Test SG22.
 
 **Early-game Singularity: act.js.** progress.js refuses to run until home spares
 its whole acting block (1,305GB at SF4.1). `act.js` (~6GB, anywhere) decides with

@@ -1452,6 +1452,24 @@ export function routeOfProgress(text, resetInfo, now = Date.now(), maxAgeMin = 3
 }
 
 /**
+ * THE ROUTE DECISION'S GIFT VERDICT (L4 chain): /tel/progress.txt route.gift.accept of this node and life,
+ * fresh — {accept, why} — or null (none published: the table decides, giftWantOf).
+ */
+export function giftVerdictOfProgress(text, resetInfo, now = Date.now(), maxAgeMin = 30) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return null
+  }
+  const r = rec?.route
+  if (!r || r.node !== resetInfo?.currentNode || r.lastAugReset !== resetInfo?.lastAugReset) return null
+  if (!(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
+  const g = r.gift
+  return g && g.chain === true && typeof g.accept === 'boolean' ? { accept: g.accept, why: g.why ?? null } : null
+}
+
+/**
  * WHETHER THE STACK WANTS THE GIFT HERE (the per-node decision, at its start):
  *   BitNode 13 (GIFT_NODES)        the hacking route + gift (the gameplan's 'stanek' route) — basis 'hack'
  *   the Bladeburner route (route)  BLADE_GIFT_PRICED: accept iff withH < withoutH — basis 'blade'
@@ -1460,12 +1478,18 @@ export function routeOfProgress(text, resetInfo, now = Date.now(), maxAgeMin = 3
  *   otherwise                      no (the hacking route's gift outside BN13 is not priced in-game)
  * Returns { want, pending, basis, priced: {withoutH, withH, d} | null, why }.
  */
-export function giftWantOf({ node, l13, l7, route }) {
+export function giftWantOf({ node, l13, l7, route, verdict = null }) {
   if (GIFT_NODES.has(node)) return { want: true, pending: false, basis: 'hack', priced: null, why: `BitNode ${node}: the stack accepts the gift (GIFT_NODES, the hacking route + gift)` }
   const e = BLADE_GIFT_PRICED[`${node}|${l13}|${Math.max(1, Math.min(3, l7 ?? 1))}`] ?? null
   const priced = e ? { withoutH: e[0], withH: e[1], d: +(e[1] - e[0]).toFixed(4) } : null
   const wins = !!priced && priced.d < 0
   const txt = priced ? `the Bladeburner exit ${priced.withoutH}h without the gift vs ${priced.withH}h with it (bbsim, shared seeds, NOT CALIBRATED; stanekplan.BLADE_GIFT_PRICED)` : 'the Bladeburner route with the gift is not priced for this node/SF13/SF7'
+  // THE CHAIN (L4, the route decision prices blade+gift, blade without and hack as one decision): where
+  // progress.js's route record of this node and life carries its verdict, the accept follows the chosen arm
+  if (verdict && (route === 'blade' || route === 'hack') && typeof verdict.accept === 'boolean') {
+    const vw = `the route decision priced the gift with the route (${String(verdict.why ?? '').slice(0, 200)})`
+    return { want: verdict.accept, pending: false, basis: verdict.accept ? route : null, priced, chained: true, why: verdict.accept ? `the '${route}' route with the gift: accept — ${vw}` : `the '${route}' route without the gift: never — ${vw}` }
+  }
   if (route === 'blade') return { want: wins, pending: false, basis: 'blade', priced, why: wins ? `the Bladeburner route: accept — ${txt}` : `the Bladeburner route: never — ${txt}` }
   if (route == null && wins) return { want: false, pending: true, basis: 'blade', priced, why: `route unknown (no fresh /tel/progress.txt route of this node and life): HELD open, not accepted — on the Bladeburner route ${txt}` }
   return { want: false, pending: false, basis: null, priced, why: route === 'hack' ? `the hacking route outside BitNode 13: the gift is not priced in-game there (GIFT_NODES ${[...GIFT_NODES].join(', ')})` : `not wanted: ${txt}` }
@@ -1486,7 +1510,7 @@ const namesOf = (owned) => (owned == null ? [] : typeof owned.keys === 'function
  *              blocks it too — invisible here (getResetInfo has no queue); stanek.js reads
  *              it from acceptGift's refusal.
  */
-export function giftStateOf(resetInfo, available, route = null) {
+export function giftStateOf(resetInfo, available, route = null, verdict = null) {
   // The capability rule lives in sfgate.js (canAccessCotMG); the caller passes it. A
   // missing answer throws: "could not tell" must never read as "no Church here".
   if (typeof available !== 'boolean') throw new Error('giftStateOf(resetInfo, available, route): pass sfgate.canAccessCotMG(resetInfo)')
@@ -1495,14 +1519,14 @@ export function giftStateOf(resetInfo, available, route = null) {
   const accepted = names.includes(GENESIS)
   const blocking = accepted ? [] : names.filter((n) => n !== NFG)
   const sf = (n) => (typeof resetInfo?.ownedSF?.get === 'function' ? resetInfo.ownedSF.get(n) ?? 0 : 0)
-  const w = available ? giftWantOf({ node, l13: sf(13), l7: sf(7), route }) : { want: false, pending: false, basis: null, priced: null, why: null }
+  const w = available ? giftWantOf({ node, l13: sf(13), l7: sf(7), route, verdict }) : { want: false, pending: false, basis: null, priced: null, why: null }
   const want = available && w.want
   const hold = available && !accepted && !want && (w.pending || GIFT_HOLD_NODES.has(node))
   // the basis the gift serves. ACCEPTED: the route the stack acts on (L4, 2026-10-16: the gift is an input
   // to the priced route decision, never a pin — so a route switch moves the layout decision with it:
   // 'blade' -> the L3 epoch, 'hack' -> L1's per-life layout and the f allocation); no route known yet:
   // BN13's is the hacking route's, anywhere else only the Bladeburner route accepts.
-  const basis = !available ? null : accepted && (route === 'hack' || route === 'blade') ? route : GIFT_NODES.has(node) ? 'hack' : accepted || want || hold ? 'blade' : null
+  const basis = !available ? null : (accepted || (want && w.chained)) && (route === 'hack' || route === 'blade') ? route : GIFT_NODES.has(node) ? 'hack' : accepted || want || hold ? 'blade' : null
   return {
     node,
     l13: sf(13),
