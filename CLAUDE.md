@@ -294,8 +294,8 @@ publishes `/tel/stanek.txt` (+ every host's heartbeat gathered into
 the gift is unaccepted (`stanekplan.giftOrderGate`, fresh getResetInfo).
 progress.js prices f by the exit (`decisions.stanek`, basis `fleet`,
 `chargeInputsOf` per option on stanek.js's measured fleet; DEFAULT_F labelled
-UNPRICED until then) and the accepted gift pins the hacking route
-(`routepin.giftPinOf`). Charges clear at every install and regrow, so the
+UNPRICED until then); the accepted gift is an INPUT to the route decision, never a pin (L4,
+below). Charges clear at every install and regrow, so the
 life length decision prices each option L at the gift's life-average over L
 (`giftLifeInputsOf`, carried as `inputs.giftLife` from the committed length;
 lifeInputsOf and lifeTableGen; tests GL1-GL5). batch.js keeps the charger's shortfall free per host
@@ -335,8 +335,8 @@ ordered by the linear screen, the first 16 priced on one member, the best 2 on a
 success calibration) with `s0.gift = giftPathOf(option)` (bbplan `giftSync`: the gift's multipliers over the
 exit relative to the ones the player holds, `chargeTrackOf` seeded with each fragment's live mass, the live
 charger's threads x cores, the duty measured between epochs; a re-lay lands 300s later). Switch only where
-d <= -0.01h AND d + 2se < 0 over the paired members (`epochChoiceOf`, generic over `kind`: L4 adds route
-options there). Published every pass to `/tel/stanekepoch.txt` (decision, options with hours/d/se, why,
+d <= -0.2h AND d + 2se < 0 over the paired members (`epochChoiceOf`, generic over `kind`; L4 prices the route
+in the route decision instead: its hacking arm has no members to pair). Published every pass to `/tel/stanekepoch.txt` (decision, options with hours/d/se, why,
 history, calibration: charger ramp vs live, duty, the last epoch's mass and rank forecasts vs live);
 stanek.js acts on a fresh one (`epochTargetOf`: a switch only from the layout it was priced from, by diff;
 'keep' holds even past L2's condition; stale -> L2's phase step). Health STANEK EPOCH STALE (no decision for
@@ -352,7 +352,31 @@ where progress.txt's route (this node and life, `routeOfProgress`) is 'blade' an
 (`BLADE_GIFT_PRICED`: bbsim with vs without, `tools/sim/bbstanek.mjs --table`, NOT CALIBRATED); an unknown
 route HOLDS the option (gate refuses, nothing accepted). stanek.js then places `BLADE_LAYOUTS` (combat:
 agility/dexterity/Bladeburner + boosters, weights = bbsim elasticities) and charges on the biggest host
-(`bladeChargeFOf`); the accepted gift pins 'blade'. The gameplan prices it as route 'bladeStanek'.
+(`bladeChargeFOf`). The gameplan prices it as route 'bladeStanek'.
+**The route with the gift accepted is priced, not pinned** (L4, 2026-10-16). `routepin.giftPinOf` is gone
+(it pinned 'blade' outside BN13 and 'hack' in BN13; misapplied 2026-10-15 it cost BN11.1 ~1.2h of the wrong
+route and a charge wipe). `progress.js routeGiftOf` hands `plan.decideBladeRouteGen` a `gift`: the hacking
+arm's options (`stanekplan.hackGiftInputsOf`: the placed and the hacking layout, each at the hacking
+charger's f, the life-average from zero since every install clears the charge) and the Bladeburner arm's
+(`stanekepoch.bladeGiftOptionsOf` / `bladeGiftMakerOf`: keep the placed layout's live charge, or re-lay to
+the Bladeburner layout, the charge lost and regrown; the route's installs clear it — `giftPathOf install`);
+the best of each is the arm, both from the same live state (Genesis's x0.9 is in the live multipliers;
+Awakening is published as a bound on the hacking arm, `awakeningBoundInputsOf`, never folded in). A route
+switch pays `ROUTE_GIFT.switchCostH` (0.2h = `EPOCH.minGainH`) in decideAmongGen's commitment rule. The
+accepted gift's basis follows the ACTED route (`giftStateOf`), so a route switch moves the layout decision
+(blade -> L3's epoch, hack -> L1 + f). Only `/route-pin.txt` pins, and it still wins. Published:
+`decisions.bladeRoute.gift`, `/tel/progress.txt` route.gift (`routepin.giftRecordOf`). Health
+(`routepin.routeHealthOf`): ROUTE NOT THE PRICED ONE (acted != priced with no file pin, or a non-file pin) /
+ROUTE NOT PRICED WITH THE GIFT / STANEK LAYOUT OFF ROUTE. Offline: `tools/sim/routegift.mjs` (live, BN7.3
+entry, a BN13.2-like case, and the fresh builder's calibration vs BN7.2 as played: +53%). Test SG7.
+**The exit ready is 0h, priced** (2026-10-16, after L4 failed live at BN7.2's exit): with all 21 black ops
+done bladeExit returns exactly 0, and plan `simInto` read every 0h draw as unpriced, so 'blade' went
+infeasible and the route flipped to 'hack' (a graft, a 13-aug install planned; the gift pin had masked it).
+0h is now a duration. An arm that IS unpriced never loses by default (`plan.unpricedHoldOf`): the route holds
+the committed one, else the gift's basis (`progress.js routeHoldOf`), else none — published `unpriced` and
+failed as ROUTE ARM UNPRICED; a thrown route decision holds too. endgame.js, ready and refused its raise,
+publishes `raiseplace.ENDGAME_RESERVE` (/tel/reserve-endgame.txt, fresh 10 min) and batch.js keeps that block
+free on home, so the next 2-min run raises. Test SG21.
 
 **Early-game Singularity: act.js.** progress.js refuses to run until home spares
 its whole acting block (1,305GB at SF4.1). `act.js` (~6GB, anywhere) decides with

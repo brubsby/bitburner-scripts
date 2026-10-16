@@ -533,4 +533,19 @@ export function reservesOf(read, info, hostNames = [], now = Date.now()) {
   }
   return out
 }
+/**
+ * THE EXIT'S RESERVATION (endgame.js): once the exit is READY and the raise to destroy the world daemon
+ * is refused for want of home RAM (live BN7.2 2026-10-16 15:55Z: all 21 black ops done, 37.2GB wanted on
+ * a 128GB home 102GB used — the node sat at its exit while the route degraded), endgame.js publishes
+ * {host: 'home', gb: the raise's figure} here and batch.js keeps that much of home free of NEW workers;
+ * the running h/g/w finish within a batch cycle and endgame.js's next run (every 2 minutes once the exit
+ * is near, watchdog.js) gets the block. Fresh for freshMs (several endgame cadences), this life only.
+ */
+export const ENDGAME_RESERVE = { file: '/tel/reserve-endgame.txt', freshMs: 10 * 60e3 }
+export function endgameReserveOf(rec, info, hostNames = [], now = Date.now()) {
+  if (!rec || rec.script !== 'endgame.js') return null
+  const at = Date.parse(rec.at ?? '')
+  if (!(Number.isFinite(at) && now - at <= ENDGAME_RESERVE.freshMs)) return null
+  return reserveOf({ ...rec, at: new Date(now).toISOString() }, info, hostNames, now)
+}
 export const heldOn = (list, host) => (list ?? []).reduce((a, r) => a + (r.host === host ? r.gb : 0), 0)

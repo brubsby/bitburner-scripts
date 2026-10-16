@@ -73,7 +73,7 @@ import { reporter, describe, record } from 'status.js'
 // Pure arithmetic over getResetInfo's output; no ns surface of its own.
 import { singularityRamMultiplier, canJoinBladeburner } from 'sfgate.js'
 import { liteReserveOf } from 'bbliteplan.js'
-import { reservesOf, heldOn } from 'raiseplace.js'
+import { reservesOf, heldOn, endgameReserveOf, ENDGAME_RESERVE } from 'raiseplace.js'
 import { stanekHoldsOf, STANEK_FILE } from 'stanekplan.js'
 // Pure: whether a hacknet SERVER's RAM may be used (hacknet.js's ramPolicy).
 import { hacknetHostAllowed, isHacknetServerHost } from 'hacknetplan.js'
@@ -1341,6 +1341,8 @@ export async function main(ns) {
   let fullRes = []
   // Stanek's charger's blocks per host this tick (stanekplan.stanekHoldsOf — published as `stanekReserve`).
   let stanekRes = []
+  // The exit's block on home once endgame.js is ready and short of RAM (raiseplace.endgameReserveOf).
+  let endRes = null
 
   const flags = ns.flags([
     ['hosts', ''],
@@ -1740,8 +1742,17 @@ export async function main(ns) {
           return []
         }
       })()
+      // THE EXIT'S BLOCK (raiseplace.ENDGAME_RESERVE): endgame.js ready and refused its raise — keep it free.
+      endRes = (() => {
+        try {
+          return endgameReserveOf(JSON.parse(ns.read(ENDGAME_RESERVE.file) || 'null'), resetInfo, hosts)
+        } catch {
+          return null
+        }
+      })()
       const reserveFor = (h) =>
         (h === self ? SETTINGS.selfReserve : 0) +
+        (endRes && h === endRes.host ? endRes.gb : 0) +
         (h === 'home' ? homeReserveGb : 0) +
         heldOn(stanekRes, h) +
         (h === shareHost ? shareGb : 0) +

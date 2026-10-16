@@ -108,6 +108,7 @@ import { canUseSingularity, singularityRamMultiplier, sfLevel, canJoinBladeburne
 import { COVENANT_MANDATE, covenantMandated, covenantTarget, sleevesFromCovenant } from 'sleeveplan.js'
 import { reporter } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
+import { ENDGAME_RESERVE } from 'raiseplace.js'
 import { ROUTE_PIN, routePinOf } from 'routepin.js'
 
 /**
@@ -368,8 +369,17 @@ async function leave(ns, flags, report, reset, note, level, need) {
   // and returns rather than calling into a budget we do not hold.
   const want = RAISE_CEILING(singularityRamMultiplier(reset))
   if (!(await raiseRam(ns, want, STATUS, 'endgame.js destroying the world daemon'))) {
+    // RESERVE THE BLOCK (raiseplace.ENDGAME_RESERVE): batch.js keeps `want` free on home from its next
+    // tick, the running workers drain, and the next run (2 min) raises. Not killing workers here: ns.kill
+    // would bill this 3.2GB-floor script for a call it makes once a node, and the reservation also stops
+    // the batcher refilling the block between two runs.
+    try {
+      ns.write(ENDGAME_RESERVE.file, JSON.stringify({ at: new Date().toISOString(), lastAugReset: reset?.lastAugReset ?? null, script: 'endgame.js', action: 'reserve', host: 'home', gb: want, why: `the exit is ready: destroyW0r1dD43m0n needs ${want.toFixed(2)}GB on home` }), 'w')
+    } catch {
+      /* the report below still says blocked */
+    }
     report.result = 'blocked'
-    report.detail = `requirements met but could not raise to ${want.toFixed(2)}GB to call destroyW0r1dD43m0n`
+    report.detail = `requirements met but could not raise to ${want.toFixed(2)}GB to call destroyW0r1dD43m0n — reserved on home for batch.js (${ENDGAME_RESERVE.file}); retried next run`
     note('ok', report)
     return true
   }
