@@ -1498,8 +1498,11 @@ export function giftStateOf(resetInfo, available, route = null) {
   const w = available ? giftWantOf({ node, l13: sf(13), l7: sf(7), route }) : { want: false, pending: false, basis: null, priced: null, why: null }
   const want = available && w.want
   const hold = available && !accepted && !want && (w.pending || GIFT_HOLD_NODES.has(node))
-  // the basis the gift serves: BN13's is the hacking route's; anywhere else only the Bladeburner route accepts
-  const basis = !available ? null : GIFT_NODES.has(node) ? 'hack' : accepted || want || hold ? 'blade' : null
+  // the basis the gift serves. ACCEPTED: the route the stack acts on (L4, 2026-10-16: the gift is an input
+  // to the priced route decision, never a pin — so a route switch moves the layout decision with it:
+  // 'blade' -> the L3 epoch, 'hack' -> L1's per-life layout and the f allocation); no route known yet:
+  // BN13's is the hacking route's, anywhere else only the Bladeburner route accepts.
+  const basis = !available ? null : accepted && (route === 'hack' || route === 'blade') ? route : GIFT_NODES.has(node) ? 'hack' : accepted || want || hold ? 'blade' : null
   return {
     node,
     l13: sf(13),
@@ -1880,6 +1883,43 @@ export function giftLifeInputsOf(base, L) {
   const ctx = base?.giftLife
   if (!ctx || !(L > 0) || !(ctx.refL > 0) || L === ctx.refL) return base
   return scaleByGift(base, giftLifeLnOf(ctx, L), giftLifeLnOf(ctx, ctx.refL))
+}
+
+/**
+ * L4: THE HACKING ROUTE PRICED WITH THE GIFT ACCEPTED (the route decision's hacking arm). `base`: the live
+ * exit inputs, measured under the gift as it is (Genesis's x0.9 is in the player's multipliers; the placed
+ * layout at the charger's live fraction fNow of the fleet). The hacking route installs, and every install
+ * clears the charge (Prestige.ts:125 -> StaneksGift.ts:226-228), so each life holds `layout` at f from zero:
+ * the inputs move from the placed layout at fNow to `layout`'s life-average at f over the life
+ * (layoutInputsOf; the regrowth is that average), and carry giftLife for the life length decision.
+ * Returns {inputs, why} — inputs null where /tel/stanek.txt holds no layout and fleet of this node.
+ */
+export function hackGiftInputsOf(base, st, { node, layout, f = DEFAULT_F, sameLife = true } = {}) {
+  if (!st || st.node !== node || !Array.isArray(st.layout?.placed) || !st.layout.placed.length) return { inputs: null, why: `${STANEK_FILE} has no placed layout of this node` }
+  const fleetGB = st.fleet?.gb
+  const hosts = Array.isArray(st.fleet?.hosts) ? st.fleet.hosts : null
+  const cycleH = base?.cycleHours
+  if (!(fleetGB > 0) || !hosts?.length) return { inputs: null, why: `${STANEK_FILE} has no fleet: the hacking charger is unpriced` }
+  if (!(cycleH > 0)) return { inputs: null, why: 'cycleHours unknown in the exit inputs: the life the charge regrows over is unpriced' }
+  const fNow = sameLife && st.charger?.gb > 0 ? Math.min(1, st.charger.gb / fleetGB) : 0
+  const ctx = { layout: st.layout.placed, nodePower: st.layout.nodePower, fleetGB, hosts, fNow, cycleH }
+  const L = Array.isArray(layout) && layout.length ? layout : st.layout.placed
+  return { inputs: { ...layoutInputsOf(base, ctx, f, L), giftLife: { layout: L, nodePower: st.layout.nodePower, fleetGB, hosts, f, refL: cycleH } }, why: `${layoutKeyOf(L)} at f ${f} of the fleet, from the placed ${layoutKeyOf(st.layout.placed)} at fNow ${fNow.toFixed(3)}` }
+}
+
+/**
+ * THE AWAKENING BOUND (published, never folded in): Awakening (1e6 Church rep x AugmentationRepCost) lifts
+ * the penalty x0.9 -> x0.95 (Augmentations.ts:1631-1660) only at an INSTALL — so the hacking route can
+ * reach it and the Bladeburner route (no install) cannot. The inputs as if it were installed from the
+ * start: every hacking channel moved by ln(0.95/0.9) per multiplier in it (income: speed, hacking, money/
+ * grow; exp: exp, speed; rep: faction_rep, hacking; hacking) — an UPPER bound on what it is worth.
+ */
+export const awakeningBoundInputsOf = (base) => penaltyStepInputsOf(base, PENALTY[1], PENALTY[2])
+/** The hacking channels of `base` moved from the gift penalty `from` to `to` (PENALTY levels; the offline fresh-entry cases apply Genesis with 1 -> 0.9). */
+export function penaltyStepInputsOf(base, from, to) {
+  const d = Math.log(to / from)
+  const z = { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
+  return scaleByGift(base, { lnIncome: 3 * d, lnExp: 2 * d, lnRep: 2 * d, lnHack: d }, z)
 }
 
 /**

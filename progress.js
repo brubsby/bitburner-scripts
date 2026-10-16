@@ -181,9 +181,9 @@ import { enter, leave, pageBoot } from 'trace.js'
 import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
-import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
-import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE } from 'stanekepoch.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST } from 'stanekplan.js'
+import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
+import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT } from 'stanekepoch.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2666,6 +2666,55 @@ function fourSHoldOf(d, owned, lastAugReset, now = Date.now()) {
  * trajectory of this pass is priced from (one builder).
  */
 const BLADE_TEL = '/tel/bladeburner.txt'
+/**
+ * THE ROUTE DECISION'S GIFT (L4, plan.decideBladeRouteGen `gift`): where the gift is accepted, both arms
+ * are priced conditioned on it from the same live state — never pinned. Genesis's x0.9 is in the live
+ * multipliers both arms start from (acceptGift installs it at once; Awakening/Serenity need an install:
+ * the hacking arm's Awakening is published as a bound). Hacking arm: stanekplan.hackGiftInputsOf on the
+ * live exit inputs — the placed layout and the hacking layout (layoutForGrid 'hack'), each at the
+ * hacking charger's f (the plan's priced fleet-basis f of this node, else DEFAULT_F), every install
+ * clearing the charge. Bladeburner arm: stanekepoch.bladeGiftOptionsOf — keep the placed layout's live
+ * charge, or re-lay to the Bladeburner layout (charge lost and regrown) — on the route's own start `s0`
+ * (its installs clear the charge), the charger's live power and the epoch's measured duty. A switch pays
+ * ROUTE_GIFT.switchCostH. null: the gift is not accepted.
+ */
+const HACK_LAYOUT_MEMO = new Map()
+function routeGiftOf(ns, info, base, s0) {
+  if (!giftStateOf(info, canAccessCotMG(info)).accepted) return null
+  const st0 = readJson(ns, STANEK_FILE)
+  const st = st0 && st0.node === info.currentNode && st0.lastNodeReset === (info.lastNodeReset ?? st0.lastNodeReset) ? st0 : null
+  const sameLife = st?.lastAugReset === info.lastAugReset
+  const live = st && sameLife ? liveGiftOf(st) : null
+  const w = st?.layout?.width
+  const h = st?.layout?.height
+  const np = st?.layout?.nodePower ?? 1
+  const prevS = planCtx?.prevAny?.decisions?.stanek
+  const fH = prevS?.basis === ALLOC_BASIS && typeof prevS.f === 'number' && prevS.f > 0 ? prevS.f : DEFAULT_F
+  const hackOptions = []
+  if (st && Array.isArray(st.layout?.placed) && st.layout.placed.length) {
+    const gk = `${w}x${h}|${np}`
+    if (typeof w === 'number' && !HACK_LAYOUT_MEMO.has(gk)) HACK_LAYOUT_MEMO.set(gk, layoutForGrid(w, h, np, 'hack'))
+    const tab = HACK_LAYOUT_MEMO.get(gk) ?? null
+    const layouts = [['the placed layout', st.layout.placed]]
+    if (tab?.placed?.length && !sameLayout(st.layout.placed.map((p) => ({ ...p, rotation: p.rot })), tab.placed)) layouts.push([`the hacking layout (${tab.source})`, tab.placed])
+    for (const [src, L] of layouts) {
+      const r = hackGiftInputsOf(base, st, { node: info.currentNode, layout: L, f: fH, sameLife })
+      if (r.inputs) hackOptions.push({ src: `${src} at f ${fH}`.slice(0, 160), key: layoutKeyOf(L), inputs: r.inputs })
+    }
+  }
+  const ep = readJson(ns, EPOCH_FILE)
+  const dutyM = ep?.lastAugReset === info.lastAugReset ? ep?.decision?.track?.duty : null
+  const duty = typeof dutyM === 'number' && dutyM > 0.3 && dutyM <= 1 ? dutyM : BLADE_HOST.duty
+  const bladeOptions = live ? bladeGiftOptionsOf({ live, width: w, height: h, nodePower: np }).map((o) => ({ src: o.src, key: o.key, make: bladeGiftMakerOf({ live, target: o.target, duty, nodePower: np, install: s0?.install ?? null }) })) : []
+  return {
+    hackOptions,
+    bladeOptions,
+    switchCostH: ROUTE_GIFT.switchCostH,
+    boundInputsOf: awakeningBoundInputsOf,
+    notSimulated: "Awakening/Serenity (an install's; the hacking arm's bound is published), the charger's host growing within the node, the hacking route's first life on the placed layout (each life priced at the life-average from zero)",
+    why: `${live ? '' : `no placed layout of this life in ${STANEK_FILE}: the Bladeburner arm is unpriced with the gift; `}${hackOptions.length ? '' : `no layout and fleet of this node in ${STANEK_FILE}: the hacking arm is unpriced with the gift`}`.trim() || null,
+  }
+}
 async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0, pin = null } = {}) {
   const mults = bitNodeMults(info)
   if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
@@ -2767,7 +2816,15 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         rankCal = { ...rankCal, error: `rank calibration threw: ${String(e).slice(0, 120)}` }
       }
       const rankPost = rankRatePosterior(rankCal.samples)
-      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: startFor(bladeBasis), bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post })
+      // STANEK'S GIFT (L4): an input to both arms, never a pin (routeGiftOf)
+      const bladeS0 = startFor(bladeBasis)
+      let gift = null
+      try {
+        gift = routeGiftOf(ns, info, base, bladeS0)
+      } catch (e) {
+        gift = { hackOptions: [], bladeOptions: [], switchCostH: ROUTE_GIFT.switchCostH, why: `routeGiftOf threw: ${String(e).slice(0, 160)}` }
+      }
+      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post, gift })
       let simulacrum = null
       if (d?.key === 'blade' && typeof d.bladeH === 'number') {
         try {
@@ -7628,9 +7685,8 @@ async function act(ns, canJoin, info, note) {
   // (ns.read is 0GB), published every pass in /tel/progress.txt `route`.
   const routePin = (() => {
     try {
-      // STANEK'S GIFT ACCEPTED pins the route it was accepted for (routepin.giftPinOf):
-      // BN13's is the hacking route + gift, anywhere else the Bladeburner route's ('bladeStanek').
-      return giftPinOf(routePinOf(ns.read(ROUTE_PIN), info?.currentNode ?? null), giftStateOf(info, canAccessCotMG(info)))
+      // Only the file pins. STANEK'S GIFT is an input to the route decision (bladeRouteOf, L4), never a pin.
+      return routePinOf(ns.read(ROUTE_PIN), info?.currentNode ?? null)
     } catch (e) {
       return { pinned: false, file: ROUTE_PIN, warn: `the route pin could not be read: ${String(e).slice(0, 120)}`, why: 'pin unread' }
     }
@@ -7650,7 +7706,7 @@ async function act(ns, canJoin, info, note) {
   const bladeOn = bladeRoute?.key === 'blade'
   // Published with the route it produced: acted, priced, pinned, forgone hours.
   // node + life on the route record: stanekplan.routeOfProgress acts on it only for this node and life
-  const routeOut = { ...routeReportOf(routePin, bladeRoute), node: info?.currentNode ?? null, lastAugReset: info?.lastAugReset ?? null }
+  const routeOut = { ...routeReportOf(routePin, bladeRoute, giftStateOf(info, canAccessCotMG(info))), node: info?.currentNode ?? null, lastAugReset: info?.lastAugReset ?? null }
   if (routePin.pinned) did.push(`ROUTE PINNED to '${routeOut.route}' by ${ROUTE_PIN} (priced '${routeOut.priced ?? 'none'}', ${typeof routeOut.forgoneH === 'number' ? routeOut.forgoneH.toFixed(1) + 'h forgone' : 'forgone hours unpriced'}) — ${routePin.why}`.slice(0, 500))
   if (routePin.warn) todo.push(`ROUTE PIN: ${routePin.warn}`)
   // THE BLADE'S SIMULACRUM (bladeRouteOf's verdict, priced on the black-op

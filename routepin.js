@@ -24,6 +24,12 @@
 // decision's commitment rule keeps running on the UNPINNED record
 // (unpinnedOf), so deleting the file restores the priced route next pass.
 //
+// STANEK'S GIFT NEVER PINS (L4, 2026-10-16). Accepting the gift changes the INPUTS to the route
+// decision, not the decision: progress.js prices both routes conditioned on it (plan.decideBladeRouteGen
+// `gift`) and acts on the priced one. The gift's automatic pin (giftPinOf: 'blade' outside BN13, 'hack'
+// in BN13) is gone — on 2026-10-15 it was misapplied and cost BN11.1 ~1.2h of the wrong route and a
+// charge wipe. Only this file pins; the gift is reported beside the route (routeReportOf `gift`).
+//
 // WHAT IT NEVER DOES. The exit itself stays endgame.js's (the only
 // destroyW0r1dD43m0n caller, after its /endgame-hold.txt read); act.js refuses
 // a w0r1d_d43m0n backdoor. Nothing here acts on the world daemon.
@@ -59,15 +65,8 @@ export function pinnedRouteOf(d, pin) {
   if (!pin?.pinned || !d || typeof d !== 'object') return d
   const pricedKey = d.key ?? null
   const fin = (x) => typeof x === 'number' && isFinite(x)
-  // A pin to 'blade' (Stanek's Gift accepted for the Bladeburner route, giftPinOf) pins THAT
-  // route — never the hacking one. 2026-10-15 BN11.1: every pin was read as 'hack', so the
-  // gift's blade pin forced the hacking route (136h forgone) and an install wiped the charge.
-  if (pin.route === 'blade') {
-    const forgone = pricedKey === 'hack' && fin(d.hackH) && fin(d.bladeH) ? +(d.bladeH - d.hackH).toFixed(3) : pricedKey === 'blade' ? 0 : null
-    const bnote = { file: pin.file ?? ROUTE_PIN, text: pin.text ?? null, pricedKey, forgoneH: forgone }
-    if (pricedKey === 'blade' || !fin(d.bladeH)) return { ...d, pin: bnote }
-    return { ...d, key: 'blade', pin: bnote, why: `PINNED to 'blade' by ${bnote.file}: the priced route is '${pricedKey}' — ${String(d.why ?? '').slice(0, 200)}` }
-  }
+  // Only /route-pin.txt pins, and only 'hack' (routePinOf): a pin of anything else is not acted on.
+  if (pin.route !== 'hack' || pin.file !== ROUTE_PIN) return { ...d, pin: { file: pin.file ?? null, text: pin.text ?? null, pricedKey, forgoneH: 0, ignored: `not ${ROUTE_PIN}'s 'hack' pin: the priced route is acted on` } }
   const forgoneH = pricedKey === 'blade' && fin(d.hackH) && fin(d.bladeH) ? +(d.hackH - d.bladeH).toFixed(3) : pricedKey === 'hack' ? 0 : null
   const note = { file: pin.file ?? ROUTE_PIN, text: pin.text ?? null, pricedKey, forgoneH }
   if (pricedKey !== 'blade') return { ...d, pin: note }
@@ -86,46 +85,68 @@ export function unpinnedOf(prev) {
   return { ...rest, key: pin.pricedKey ?? null }
 }
 
-/** What /tel/progress.txt publishes as `route`: acted, priced, pinned, forgone. */
-export function routeReportOf(pin, d) {
+/**
+ * What /tel/progress.txt publishes as `route`: acted, priced, pinned (the FILE pin only), forgone, and
+ * `gift` — a record, never a pin: whether the gift is accepted and whether the route was priced with it
+ * (d.gift from plan.decideBladeRouteGen).
+ */
+export function routeReportOf(pin, d, giftState = null) {
   const acted = d ? d.key ?? null : 'hack'
   const priced = d ? (d.pin ? d.pin.pricedKey ?? null : d.key ?? null) : null
   return {
     route: acted ?? 'hack',
     priced,
-    pinned: pin?.pinned === true,
+    pinned: pin?.pinned === true && pin?.file === ROUTE_PIN,
     forgoneH: d?.pin ? d.pin.forgoneH ?? null : pin?.pinned ? (d ? 0 : null) : null,
     pin: { file: pin?.file ?? ROUTE_PIN, text: pin?.text ?? null, node: pin?.node ?? null, warn: pin?.warn ?? null, why: pin?.why ?? null },
+    gift: giftRecordOf(giftState, d),
     why: d ? null : 'no Bladeburner route in this node (no division): the hacking route is the only one',
   }
 }
 
-/**
- * STANEK'S GIFT PINS THE ROUTE IT WAS ACCEPTED FOR. BN13's is the gameplan's
- * 'stanek' route (the hacking route + gift, layout for the hacking channels);
- * elsewhere the stack accepts only for the Bladeburner route ('bladeStanek',
- * stanekplan.giftWantOf, the combat layout BLADE_LAYOUTS) and pins 'blade'. So where the gift is accepted
- * (stanekplan.giftStateOf(resetInfo, sfgate.canAccessCotMG(resetInfo)).accepted) and no file pins anything, the
- * route acted on is 'hack' — through pinnedRouteOf like the file pin, so the
- * priced route and the hours forgone are published beside it. A file pin, or a
- * file pin's warning, is kept as it is.
- */
-export function giftPinOf(pin, gift) {
-  if (pin?.pinned || !gift?.accepted) return pin
-  // the basis the gift was accepted for (stanekplan.giftStateOf): BN13's is the hacking route's,
-  // anywhere else only the Bladeburner route accepts (stanekplan.giftWantOf) — its layout is combat
-  const route = gift.basis === 'blade' ? 'blade' : 'hack'
+/** The gift beside the route (L4): accepted?, priced with it?, the arms' chosen options. Never a pin. */
+export function giftRecordOf(gift, d) {
+  if (!gift?.accepted) return { accepted: false, pinned: false, why: gift?.why ?? 'not accepted' }
+  const g = d?.gift ?? null
   return {
-    ...(pin ?? {}),
-    pinned: true,
-    route,
+    accepted: true,
     node: gift.node ?? null,
-    file: '/tel/stanek.txt',
-    text: "Stanek's Gift accepted",
-    warn: pin?.warn ?? null,
-    why:
-      route === 'hack'
-        ? `Stanek's Gift is accepted in BitNode ${gift.node}: the gameplan's 'stanek' route is the hacking route + gift — pinned to 'hack'`
-        : `Stanek's Gift is accepted in BitNode ${gift.node} for the Bladeburner route (the gameplan's 'bladeStanek', combat layout) — pinned to 'blade'`,
+    pinned: false,
+    pricedWithGift: g?.priced === true,
+    hackArm: g?.['hack']?.chosen ?? null, // never `.hack` / `hack:` here: the RAM calculator bills the name (ns.hack, 0.1GB)
+    bladeArm: g?.blade?.chosen ?? null,
+    awakeningBound: g?.awakeningBound ?? null,
+    why: g?.priced === true ? "Stanek's Gift accepted: both routes priced with it (Genesis's x0.9 in the live multipliers, the placed layout's charge, the re-lay each route needs, its installs) — an input, not a pin" : `Stanek's Gift accepted but the route was NOT priced with it: ${g?.why ?? (d ? 'the decision carries no gift record' : 'no route decision')}`,
   }
 }
+
+/**
+ * ROUTE HEALTH (tools/healthcheck.mjs): /tel/progress.txt `route` of this node. Fails —
+ *   ROUTE NOT THE PRICED ONE   the route acted on differs from the priced one with no /route-pin.txt pin
+ *                              (an automatic pin came back), or a pin from anything but /route-pin.txt
+ *   ROUTE NOT PRICED WITH THE GIFT  the gift is accepted and the priced route did not carry it
+ *   STANEK LAYOUT OFF ROUTE    the gift is accepted and /tel/stanek.txt's basis is not the acted route
+ *                              (stanekplan.giftStateOf: the layout decision follows the route)
+ * Returns [{key, problem, detail}].
+ */
+export function routeHealthOf({ route, stanek = null, node = null }) {
+  if (!route || (node !== null && route.node !== node)) return []
+  const out = []
+  const R = 'ROUTE NOT THE PRICED ONE'
+  const filePin = route.pinned === true && (route.pin?.file ?? ROUTE_PIN) === ROUTE_PIN
+  if (route.pinned === true && !filePin) out.push({ key: R, problem: R, detail: `the route is pinned by ${route.pin?.file} — only ${ROUTE_PIN} may pin (the gift's pin is gone: L4)` })
+  else if (!filePin && route.priced != null && route.route !== route.priced) out.push({ key: R, problem: R, detail: `the stack acts on '${route.route}' while the priced route is '${route.priced}', and no ${ROUTE_PIN} pins it` })
+  if (route.gift?.accepted === true && route.priced != null && route.gift.pricedWithGift !== true) {
+    const G = 'ROUTE NOT PRICED WITH THE GIFT'
+    out.push({ key: G, problem: G, detail: String(route.gift.why ?? 'the gift is accepted and the route decision did not price it').slice(0, 300) })
+  }
+  const sb = stanek?.gift?.accepted === true && stanek.node === route.node && stanek.lastAugReset === route.lastAugReset ? stanek.gift.basis : null
+  // only where stanek.js read THIS route (gift.route: what it read from /tel/progress.txt) — a switch it has
+  // not read yet is one stanek.js pass away (STANEK STALE covers a stanek.js that stopped reading)
+  if (sb && (route.route === 'hack' || route.route === 'blade') && sb !== route.route && stanek.gift.route === route.route) {
+    const S = 'STANEK LAYOUT OFF ROUTE'
+    out.push({ key: S, problem: S, detail: `the route is '${route.route}' and stanek.js lays the gift for '${sb}' (${STANEK_NOTE})` })
+  }
+  return out
+}
+const STANEK_NOTE = 'stanekplan.giftStateOf: an accepted gift serves the acted route; stanek.js reads it from /tel/progress.txt'
