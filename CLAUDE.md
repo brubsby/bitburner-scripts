@@ -310,6 +310,22 @@ trajectories, `liveLayoutChoiceOf`) and stanek.js re-lays to it within `LIFE_LAY
 STANEK LAYOUT STALE (placed != decided 15 min in; no decision 60 min in). The gameplan's node
 model prices the per-life sequence (`lifePolicyOf`, `tools/sim/stanekperlife.mjs`, NOT
 CALIBRATED; not in the route's hours). Tests: SG1-SG12.
+**Phase re-lays within a life** (L2, 2026-10-16): the game deletes a fragment WITH its charge
+(StaneksGift.ts:112), so stanek.js re-lays by DIFF (`relayDiffOf` + `removeFragment`, never clearGift:
+unchanged fragments keep their charge; +0.15GB). Both simulators carry the charge per fragment
+(`chargeTrackOf` in bbsim's `o.stanek.phases`; `chargeLnSwitchOf` in the hacking exit model, priced as a
+difference on one quadrature): highestCharge back on the first call, numCharge regrowing at duty/k per
+second. The Bladeburner route (one life) publishes `decisions.stanek.phase` from `BLADE_PHASE_PRICED`
+(`tools/sim/stanekphase.mjs --blade` = phase weights measured on bbsim inside each phase -> layouts ->
+every (early, late, black-op count) priced as full trajectories; `--refine` re-prices the top plans on
+200 FRESH seeds; listed only where d + 2se < 0): BN7.3 -0.071 +- 0.019h at 6 black ops, BN11 SF7.1
+-0.022 +- 0.008h at 9. A hacking life prices "chosen layout until tsH, then another" (`HACK_PHASE_FRACS`)
+through the trajectory and keeps it only on a 0.01h win (none wins on BN13.2: +0.14h best). stanek.js
+steps the plan (`phaseStepOf`: the switch fires only from the early layout it was priced from, condition
+off `/tel/bladeburner.txt`); health STANEK PHASE SWITCH LATE (due 15 min, not landed). NOT CALIBRATED
+(no node has re-laid); `stanekphase.mjs --calib` checks the charger live (numCharge 0.0%, highestCharge
++33% vs a 9-core helios). L3 calls the same pricing (`chargeTrackOf` / `switchInputsOf`) at each epoch.
+Tests SG13-SG15.
 **Outside BN13 the gift is the Bladeburner route's** (2026-10-15): `stanekplan.giftWantOf` wants it
 where progress.txt's route (this node and life, `routeOfProgress`) is 'blade' and the priced exit wins
 (`BLADE_GIFT_PRICED`: bbsim with vs without, `tools/sim/bbstanek.mjs --table`, NOT CALIBRATED); an unknown

@@ -813,8 +813,9 @@ export function lifePolicyOf(o, { width, height, sweeps = 2, budget = LAYOUT_FAL
 //   liveLayoutOptionsOf({...}, weights)   -> [{src, placed, key, inputs}]
 //   liveLayoutChoiceOf(priced, ...)       -> the decision record
 // The exit model has one life shape, so an option is priced as held for every later life; at the
-// install that opens the final life the remaining trajectory IS that life (exact there). L3 prices
-// the sequence; L2 adds the re-lay's lost charge (switchCostH, 0 at an install).
+// install that opens the final life the remaining trajectory IS that life (exact there). L2 (below:
+// chargeLnSwitchOf / switchInputsOf) prices an in-life re-lay with the charge it deletes and regrows;
+// L3 prices keep vs switch at every epoch on the same machinery.
 
 /** The channel shifts of a type's multipliers x e^d on the hacking route (chargeLnOf's channels, at mults 1). */
 export function typeChannelsOf(type, d, a = HACK_SHARE) {
@@ -916,7 +917,7 @@ export function layoutFits(placed, width, height) {
   return true
 }
 
-/** How young a life must be for the life's layout decision to re-lay (the charge it deletes is not priced in L1: L2). FIXED, stated. */
+/** How young a life must be for the life's layout decision (or a phase plan's early layout) to re-lay unpriced: the charge it deletes is ~0 this early. Later re-lays are only the priced phase switch (phaseStepOf). FIXED, stated. */
 export const LIFE_LAYOUT_WINDOW_MIN = 30
 /**
  * The plan's layout for THIS life (/tel/plan.txt decisions.stanek.layout, decided by progress.js on
@@ -934,7 +935,78 @@ export function planLayoutOf(text, lastAugReset, width, height, now = Date.now()
   if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
   if (!d || d.lifeKey !== lastAugReset || !Array.isArray(d.placed) || !d.placed.length) return null
   if (!layoutFits(d.placed, width, height)) return null
-  return { placed: d.placed, key: d.key, why: String(d.why ?? '').slice(0, 300), weights: d.weights ?? null, decidedAt: d.decidedAt ?? null, source: d.source ?? null }
+  const ph = d.phase && Array.isArray(d.phase.late) && layoutFits(d.phase.late, width, height) ? { early: d.placed, late: d.phase.late, when: d.phase.when, d: d.phase.d ?? null, priced: d.phase.priced ?? null } : null
+  return { placed: d.placed, key: d.key, why: String(d.why ?? '').slice(0, 300), weights: d.weights ?? null, decidedAt: d.decidedAt ?? null, source: d.source ?? null, phase: ph }
+}
+
+/**
+ * THE PHASE PLAN OF THIS LIFE published by progress.js (/tel/plan.txt decisions.stanek.phase — the
+ * Bladeburner route's, from BLADE_PHASE_PRICED), or null: fresh, this life, both layouts legal here.
+ */
+export function planPhaseOf(text, lastAugReset, width, height, now = Date.now(), maxAgeMin = 120) {
+  let rec = null
+  try {
+    rec = JSON.parse(text || 'null')
+  } catch {
+    return null
+  }
+  const p = rec?.decisions?.stanek?.phase
+  if (!rec || rec.lastAugReset !== lastAugReset || !(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
+  if (!p || !p.planned || !layoutFits(p.early, width, height) || !layoutFits(p.late, width, height)) return null
+  return { early: p.early, late: p.late, when: p.when, d: p.d ?? null, priced: p.priced ?? null }
+}
+
+/** The Bladeburner state a phase condition reads (/tel/bladeburner.txt, this node and life, fresh), or null. */
+export function bladePhaseStateOf(text, resetInfo, now = Date.now(), maxAgeMin = 15) {
+  let r = null
+  try {
+    r = JSON.parse(text || 'null')
+  } catch {
+    return null
+  }
+  if (!r || r.bitNode !== resetInfo?.currentNode || r.lastAugReset !== resetInfo?.lastAugReset || !(now - Date.parse(r.at ?? '') < maxAgeMin * 60e3)) return null
+  if (typeof r.rank !== 'number' || typeof r.blackOps?.done !== 'number') return null
+  return { rank: r.rank, blackOps: r.blackOps.done, at: r.at }
+}
+
+/**
+ * THE PHASE STEP (L2): which of a phase plan's layouts stanek.js places this pass. phase {early, late,
+ * when, d}: priced as early from the life's start, re-laid to late once `when` holds (state: {tH hours
+ * into the life — the node on the Bladeburner route, which never installs — blackOps, rank}; null = the
+ * condition unreadable). The switch is priced only from the trajectory it was priced on, so it fires
+ * only while the early layout is the one placed; the early layout is placed only on an empty grid or a
+ * young life (youngMin — later it would delete an unpriced charge). Returns { placed (null = no
+ * opinion: keep what is placed), record: { earlyKey, lateKey, when, met, metAt, switchPriced, state, why } }.
+ */
+export function phaseStepOf({ phase, active, state, prevPhase = null, lifeMin, youngMin = LIFE_LAYOUT_WINDOW_MIN, now = Date.now() }) {
+  const activePlaced = (active ?? []).map((f) => ({ id: f.id, x: f.x, y: f.y, rot: f.rotation ?? f.rot }))
+  const isE = sameLayout(active ?? [], phase.early)
+  const isL = sameLayout(active ?? [], phase.late)
+  const met = !!state && whenHolds(phase.when, state)
+  const earlyKey = layoutKeyOf(phase.early)
+  const lateKey = layoutKeyOf(phase.late)
+  const metAt = met ? (prevPhase?.met && prevPhase?.lateKey === lateKey && prevPhase?.metAt ? prevPhase.metAt : new Date(now).toISOString()) : null
+  const rec = (placed, st, switchPriced, why) => ({ placed, record: { earlyKey, lateKey, when: phase.when, whenText: whenText(phase.when), d: phase.d ?? null, met, metAt, switchPriced, state: st, condition: state ?? null, why: why.slice(0, 300) } })
+  const dTxt = typeof phase.d === 'number' ? ` (priced ${phase.d.toFixed(3)}h)` : ''
+  if (isL) return rec(phase.late, 'late', met, `switched: the late layout ${lateKey} is placed`)
+  if (met && isE) return rec(phase.late, 'switching', true, `${whenText(phase.when)}: re-lay ${earlyKey} -> ${lateKey}${dTxt}`)
+  if (met) return rec(null, 'held', false, `${whenText(phase.when)} but the placed layout ${layoutKeyOf(activePlaced)} is not the early ${earlyKey} the switch was priced from: kept`)
+  if (isE) return rec(phase.early, 'early', false, `early ${earlyKey} until ${whenText(phase.when)}${state ? '' : ' (the condition is unreadable: no fresh state)'}`)
+  if (!activePlaced.length || lifeMin <= youngMin) return rec(phase.early, 'early', false, `placing the early layout ${earlyKey} (${activePlaced.length ? `${lifeMin.toFixed(0)} min into the life` : 'the grid is empty'})`)
+  return rec(null, 'held', false, `the early layout ${earlyKey} arrived ${lifeMin.toFixed(0)} min into the life with ${layoutKeyOf(activePlaced)} charged: a re-lay now is not the priced plan, kept`)
+}
+
+/**
+ * STANEK PHASE SWITCH LATE: a priced switch whose condition passed `lateMin` ago (the first pass that
+ * saw it, record metAt) and the placed layout is still not the late one.
+ */
+export function phaseHealthOf(stanek, now = Date.now(), { lateMin = 15 } = {}) {
+  const ph = stanek?.lifeLayout?.phase
+  if (!ph || !ph.met || !ph.switchPriced || !ph.metAt) return []
+  const placedKey = stanek.layout?.placedKey ?? null
+  const age = (now - Date.parse(ph.metAt)) / 60e3
+  if (placedKey !== ph.lateKey && age >= lateMin) return [{ key: 'STANEK PHASE SWITCH LATE', problem: 'STANEK PHASE SWITCH LATE', detail: `the priced switch ${ph.earlyKey} -> ${ph.lateKey} (${ph.whenText}) came due ${age.toFixed(0)} min ago and the placed layout is ${placedKey ?? '(none)'}` }]
+  return []
 }
 
 /**
@@ -945,7 +1017,7 @@ export function planLayoutOf(text, lastAugReset, width, height, now = Date.now()
  * (a node's start, the grid empty). Re-lays only when the target differs from the active set.
  * prev: the last /tel/stanek.txt (the life counter). Returns { placed, record }.
  */
-export function lifeTargetOf({ basis, width, height, nodePower, active, plan, prev, lastAugReset, lastNodeReset, now = Date.now() }) {
+export function lifeTargetOf({ basis, width, height, nodePower, active, plan, prev, lastAugReset, lastNodeReset, now = Date.now(), phase = null, phaseState = null }) {
   const sameNode = prev && prev.lastNodeReset === lastNodeReset && prev.node !== undefined
   const prevLife = sameNode ? prev.lifeLayout ?? null : null
   const lifeIndex = !prevLife?.lifeIndex ? (sameNode ? null : 1) : prevLife.lastAugReset === lastAugReset ? prevLife.lifeIndex : prevLife.lifeIndex + 1
@@ -956,10 +1028,27 @@ export function lifeTargetOf({ basis, width, height, nodePower, active, plan, pr
   let source
   let why
   let decided = true
-  if (basis === 'blade') {
+  // THE PHASE PLAN (L2): the Bladeburner route's (`phase`: progress.js, from BLADE_PHASE_PRICED) or the
+  // hacking life's (plan.phase), stepped on the life's age and the condition's state (phaseStepOf)
+  const ph = basis === 'blade' ? phase : plan?.phase ?? null
+  const prevPhase = prevLife?.lastAugReset === lastAugReset ? prevLife?.phase ?? null : null
+  const step = ph ? phaseStepOf({ phase: ph, active, state: basis === 'blade' ? (phaseState ? { tH: ageMin / 60, ...phaseState } : null) : { tH: ageMin / 60 }, prevPhase, lifeMin: ageMin, now }) : null
+  if (basis === 'blade' && step?.placed) {
+    placed = step.placed
+    source = `the Bladeburner phase plan (${step.record.state}: stanekplan.BLADE_PHASE_PRICED)`
+    why = step.record.why
+  } else if (basis === 'blade' && step && activePlaced.length && layoutFits(activePlaced, width, height)) {
+    placed = activePlaced
+    source = 'the incumbent (placed): the phase plan holds it'
+    why = step.record.why
+  } else if (basis === 'blade') {
     placed = tab.placed
     source = tab.source
-    why = "the Bladeburner route's tabled layout (no install on this route: one layout per node)"
+    why = "the Bladeburner route's tabled layout (no install on this route; no phase plan priced to win here)"
+  } else if (plan && step?.placed && (sameLayout(active, plan.placed) || sameLayout(active, plan.phase.late))) {
+    placed = step.placed
+    source = `the plan's phase plan (${step.record.state}; ${plan.decidedAt ?? '?'}: the live exit model)`
+    why = step.record.why
   } else if (plan && (ageMin <= LIFE_LAYOUT_WINDOW_MIN || sameLayout(active, plan.placed))) {
     placed = plan.placed
     source = `the plan (${plan.decidedAt ?? '?'}: the live exit model)`
@@ -975,7 +1064,7 @@ export function lifeTargetOf({ basis, width, height, nodePower, active, plan, pr
     decided = false
     why = 'the grid is empty (a node start): the tabled layout until the plan decides this life'
   }
-  const record = { lastAugReset, lifeIndex, key: layoutKeyOf(placed), source, decided, ageMin: +ageMin.toFixed(1), weights: basis === 'blade' ? null : plan?.weights ?? null, why: String(why ?? '').slice(0, 400), at: new Date(now).toISOString() }
+  const record = { lastAugReset, lifeIndex, key: layoutKeyOf(placed), source, decided, ageMin: +ageMin.toFixed(1), weights: basis === 'blade' ? null : plan?.weights ?? null, why: String(why ?? '').slice(0, 400), at: new Date(now).toISOString(), phase: step?.record ?? null }
   return { placed, record }
 }
 
@@ -1045,6 +1134,138 @@ export function bladeChargeAt({ gbMax, k, g0 = BLADE_HOST.g0, rampH = BLADE_HOST
     return H > 0 && m > 0 ? { highestCharge: H, numCharge: m / H } : { highestCharge: 0, numCharge: 0 }
   }
 }
+/** The Bladeburner charger's threads (after the core bonus) at tSec: bladeChargeAt's host ramp, for chargeTrackOf. */
+export const bladeThrAt = ({ gbMax, g0 = BLADE_HOST.g0, rampH = BLADE_HOST.rampH, cores = BLADE_HOST.cores }) => (tS) => threadsOf(bladeHostGbAt(tS / 3600, { g0, rampH, gbMax }), cores)
+
+// ===========================================================================
+// L2: THE RE-LAY WITHIN A LIFE — what it deletes, how the charge regrows, its price
+// ===========================================================================
+// The game deletes a fragment WITH its charge (StaneksGift.delete, StaneksGift.ts:112: the
+// ActiveFragment is spliced out; clearGift drops every one) and a newly placed fragment starts at
+// highestCharge 0, numCharge 0. An UNCHANGED fragment (same id, root, rotation) keeps its charge
+// when only the others move, so stanek.js removes and places the difference (relayDiffOf), never
+// clearGift. After a re-lay a new fragment's effect (CotMG/formulas/effect.ts:3:
+// 1 + ln(h+1)/60 x ((n+1)/5)^0.07 x power x boost x nodePower) has its ln(h+1) back on the first
+// full-size charge call (h = that call's threads), and its numCharge regrows by threads/h per call,
+// one call per second (Stanek.ts:48-50), round robin over the k charged fragments (charge.js): about
+// duty/k per second each. The cost is the ^0.07 term regrowing (and the round robin's k changing for
+// every fragment), simulated in both simulators below, never assumed away.
+
+/** A fragment's identity across a re-lay (StaneksGift.delete is by root; same id+root+rotation keeps its charge). */
+export const fragKeyOf = (p) => `${p.id}@${p.x},${p.y},${p.rot ?? p.rotation}`
+/** The re-lay from `active` to `target`: {keep, remove, place} (unchanged fragments kept with their charge). */
+export function relayDiffOf(active, target) {
+  const a = (active ?? []).map((p) => ({ id: p.id, x: p.x, y: p.y, rot: p.rot ?? p.rotation }))
+  const t = target ?? []
+  const tk = new Set(t.map(fragKeyOf))
+  const ak = new Set(a.map(fragKeyOf))
+  return { keep: a.filter((p) => tk.has(fragKeyOf(p))), remove: a.filter((p) => !tk.has(fragKeyOf(p))), place: t.filter((p) => !ak.has(fragKeyOf(p))) }
+}
+
+/**
+ * THE PER-FRAGMENT CHARGE OVER A LAYOUT SCHEDULE (the simulators' charger): thrAt(tSec) threads (after
+ * the core bonus) at `duty`, round robin over the charged fragments placed now. Per fragment its mass
+ * (threads charged in total = highestCharge x numCharge, StaneksGift.charge's invariant), integrated in
+ * `step`-second steps. relay(placed, t): an unchanged fragment keeps its mass, a changed or new one
+ * starts at 0. clear(t): every mass 0 (an install). at(t): per placed fragment {highestCharge,
+ * numCharge} ({0,0} for boosters and for none charged yet) — layoutMults' charge array. One layout
+ * from t 0 is bladeChargeAt exactly (SG13).
+ */
+export function chargeTrackOf({ thrAt, duty = 1, step = 60 }) {
+  let placed = []
+  let st = []
+  let i0 = 0
+  const advance = (i) => {
+    while (i0 < i) {
+      const T = thrAt(i0 * step)
+      const k = st.reduce((n, s) => n + (s ? 1 : 0), 0)
+      if (k > 0 && T > 0) for (const s of st) if (s) s.mass += (duty * T * step) / k
+      i0++
+    }
+  }
+  const idx = (tSec) => Math.floor(Math.max(0, tSec) / step)
+  return {
+    relay(next, tSec) {
+      advance(idx(tSec))
+      const old = new Map(placed.map((p, j) => [fragKeyOf(p), st[j]]))
+      placed = next.slice()
+      st = placed.map((p) => (fragmentById(p.id)?.type === TYPE.Booster ? null : old.get(fragKeyOf(p)) ?? { mass: 0 }))
+      return this
+    },
+    clear(tSec) {
+      advance(idx(tSec))
+      for (const s of st) if (s) s.mass = 0
+      return this
+    },
+    at(tSec) {
+      const i = idx(tSec)
+      advance(i)
+      const H = thrAt(i * step)
+      return st.map((s) => (s && s.mass > 0 && H > 0 ? { highestCharge: H, numCharge: s.mass / H } : { highestCharge: 0, numCharge: 0 }))
+    },
+    placed: () => placed,
+  }
+}
+
+/** A phase boundary: {h} hours in (the node on the Bladeburner route, the life on the hacking route), {blackOps} done, {rank} reached. */
+export function whenHolds(w, { tH = 0, blackOps = 0, rank = 0 } = {}) {
+  if (!w) return false
+  if (typeof w.h === 'number') return tH >= w.h
+  if (typeof w.blackOps === 'number') return blackOps >= w.blackOps
+  if (typeof w.rank === 'number') return rank >= w.rank
+  return false
+}
+export const whenText = (w) => (!w ? 'never' : typeof w.h === 'number' ? `${w.h}h in` : typeof w.blackOps === 'number' ? `${w.blackOps} black ops done` : typeof w.rank === 'number' ? `rank ${w.rank}` : JSON.stringify(w))
+
+/**
+ * chargeLnOf with a RE-LAY tsH hours into the life (the hacking route's phase plan): `layout` from the
+ * life's start, `layoutB` from tsH — B's fragments unchanged from `layout` keep their charge, the others
+ * regrow from 0; the round robin over A's k, then B's. The switch is priced as a DIFFERENCE on one fine
+ * rule (8-point midpoint per segment): chargeLnOf(A held) + [fine(A -> B) - fine(A -> A)], so a re-lay
+ * that changes nothing is exactly chargeLnOf and the quadrature's own error cannot read as a price.
+ * No layoutB, or tsH >= cycleH: chargeLnOf.
+ */
+export function chargeLnSwitchOf(o) {
+  const { layout, layoutB, tsH, nodePower, homeGB, cores, fleetGB, hosts = null, f, cycleH, duty = ALLOC_DUTY, a = HACK_SHARE } = o
+  if (!Array.isArray(layoutB) || !(tsH < cycleH)) return chargeLnOf(o)
+  const held = chargeLnOf(o)
+  const ts = Math.max(0, tsH)
+  const ff = Math.max(0, f)
+  const place = Array.isArray(hosts) ? chargerPlaceOf(ff * fleetGB, hosts) : chargerPlaceOf(ff * homeGB, [{ host: 'home', cores, capGb: ff * homeGB }])
+  const rate = place.H > 0 ? place.power / place.H : 0
+  const kA = compileLayout(layout).k
+  const ch = (n) => ({ highestCharge: place.H, numCharge: n })
+  const quad = Array.from({ length: 8 }, (_, i) => (i + 0.5) / 8)
+  const tsS = ts * 3600 * duty
+  const fine = (B) => {
+    const kB = compileLayout(B).k
+    const kept = new Set(relayDiffOf(layout, B).keep.map(fragKeyOf))
+    const out = { inc: 0, exp: 0, rep: 0, lnH: 0, kept: kept.size, kB }
+    for (const [s, e, isB] of [[0, ts, false], [ts, cycleH, true]]) {
+      if (!(e > s)) continue
+      const wq = (e - s) / cycleH / quad.length
+      for (const q of quad) {
+        const t = (s + q * (e - s)) * 3600 * duty
+        const m = !isB ? layoutMults(layout, ch((rate * t) / kA), nodePower) : layoutMults(B, B.map((p) => ch(kept.has(fragKeyOf(p)) ? rate * (tsS / kA + (t - tsS) / kB) : (rate * (t - tsS)) / kB)), nodePower)
+        out.inc += wq * (Math.log(m.hacking_speed) + Math.log(m.hacking) - Math.log(a / m.hacking_money + (1 - a) / m.hacking_grow))
+        out.exp += wq * (Math.log(m.hacking_exp) + Math.log(m.hacking_speed))
+        out.rep += wq * (Math.log(m.faction_rep) + Math.log(m.hacking))
+        out.lnH += wq * Math.log(m.hacking)
+      }
+    }
+    return out
+  }
+  const sw = fine(layoutB)
+  const ref = fine(layout)
+  return { ...held, lnIncome: held.lnIncome + sw.inc - ref.inc, lnExp: held.lnExp + sw.exp - ref.exp, lnRep: held.lnRep + sw.rep - ref.rep, lnHack: held.lnHack + sw.lnH - ref.lnH, relay: { tsH: ts, kept: sw.kept, kA, kB: sw.kB } }
+}
+
+/** The exit inputs of the phase plan "layoutA (default the placed ctx.layout) until tsH into each life, then layoutB" at f, from inputs measured on ctx.layout at ctx.fNow. */
+export function switchInputsOf(base, ctx, f, layoutB, tsH, layoutA = ctx.layout) {
+  return scaleByGift(base, chargeLnSwitchOf({ ...ctx, layout: layoutA, f, layoutB, tsH }), chargeLnOf({ ...ctx, f: ctx.fNow ?? 0 }))
+}
+/** The hacking route's in-life switch points priced (fractions of the life). FIXED, stated. */
+export const HACK_PHASE_FRACS = [0.25, 0.5, 0.75]
 
 /**
  * THE BLADEBURNER LAYOUT'S WEIGHTS: w[type] = -d ln(Bladeburner exit hours) / d ln(the
@@ -1158,6 +1379,35 @@ export const BLADE_GIFT_PRICED = {
   '14|1|1': [18.99, 18.739], '14|1|2': [18.025, 17.222], '14|1|3': [16.244, 16.242], '14|2|1': [18.99, 17.673], '14|2|2': [18.025, 16.515], '14|2|3': [16.244, 15.255], '14|3|1': [18.99, 18.13], '14|3|2': [18.025, 16.394], '14|3|3': [16.244, 15.037],
 }
 
+/**
+ * THE BLADEBURNER ROUTE'S PHASE PLANS (L2), PRICED BY bbsim (tools/sim/stanekphase.mjs --blade, then
+ * --refine on fresh seeds): per node|SF13|SF7 cell (the levels HELD on entry), the early layout from
+ * the node's start, the late layout and the condition it is re-laid at, and the exit with the switch
+ * vs the exit on the early layout held (the incumbent BLADE_LAYOUTS: the same trajectory until the
+ * switch, so the pairing is tight) — mean paired d over `n` seeds and its standard error. The re-lay
+ * keeps the unchanged fragments' charge; the rest regrow (chargeTrackOf). Listed only where d + 2se < 0
+ * on the refining seeds (two standard errors below zero, stated: several candidates are tried per cell,
+ * so one SE let noise through — BN7.2's optimised early layout read -0.26 +- 0.15h and the same layout
+ * +0.47 +- 0.13h in BN7.3). NOT CALIBRATED: no node has re-laid.
+ * Pure data so the decision costs no RAM.
+ */
+export const BLADE_PHASE_PRICED = {
+  // 2026-10-16, 200 fresh seeds (101..300) each: the incumbent until the black op, then the late layout.
+  // 7|1|2 = BN7.3 (SF7.2 held); 11|1|3 = BN11.2 after BN7.3 (SF7.3 held); 11|1|1 = BN11 with SF7.1.
+  // BN7.2 (7|1|1): no plan won by 2se (best incumbent -> late at 9 black ops -0.021 +- 0.034h): not listed.
+  '11|1|3': { early: [{id: 16, x: 0, y: 0, rot: 1},{id: 10, x: 1, y: 0, rot: 0},{id: 14, x: 4, y: 0, rot: 3},{id: 100, x: 2, y: 1, rot: 0},{id: 12, x: 0, y: 2, rot: 1},{id: 30, x: 4, y: 2, rot: 1},{id: 103, x: 1, y: 3, rot: 2}], late: [{id: 101, x: 0, y: 0, rot: 0},{id: 14, x: 4, y: 0, rot: 3},{id: 16, x: 1, y: 1, rot: 1},{id: 105, x: 2, y: 1, rot: 3},{id: 30, x: 0, y: 2, rot: 1},{id: 101, x: 2, y: 3, rot: 2}], when: {blackOps: 6}, withoutH: 8.278, withH: 8.242, d: -0.036, se: 0.009, n: 200 },
+  '11|1|1': { early: [{id: 16, x: 0, y: 0, rot: 1},{id: 10, x: 1, y: 0, rot: 0},{id: 14, x: 4, y: 0, rot: 3},{id: 100, x: 2, y: 1, rot: 0},{id: 12, x: 0, y: 2, rot: 1},{id: 30, x: 4, y: 2, rot: 1},{id: 103, x: 1, y: 3, rot: 2}], late: [{id: 101, x: 0, y: 0, rot: 0},{id: 14, x: 4, y: 0, rot: 3},{id: 16, x: 1, y: 1, rot: 1},{id: 105, x: 2, y: 1, rot: 3},{id: 30, x: 0, y: 2, rot: 1},{id: 101, x: 2, y: 3, rot: 2}], when: {blackOps: 9}, withoutH: 9.807, withH: 9.784, d: -0.0225, se: 0.0084, n: 200 },
+  '7|1|2': { early: [{id: 16, x: 0, y: 0, rot: 1},{id: 14, x: 1, y: 0, rot: 3},{id: 10, x: 3, y: 0, rot: 1},{id: 12, x: 0, y: 2, rot: 1},{id: 30, x: 3, y: 2, rot: 1},{id: 1, x: 1, y: 3, rot: 0}], late: [{id: 105, x: 0, y: 0, rot: 2},{id: 16, x: 3, y: 0, rot: 1},{id: 100, x: 1, y: 1, rot: 1},{id: 14, x: 0, y: 3, rot: 2},{id: 101, x: 1, y: 3, rot: 2}], when: {blackOps: 6}, withoutH: 19.175, withH: 19.104, d: -0.0707, se: 0.0194, n: 200 },
+}
+/** The cell's phase plan where it is priced to win and legal on this grid, else null. */
+export function bladePhasePlanOf({ node, l13, l7, width, height }) {
+  const key = `${node}|${l13}|${Math.max(1, Math.min(3, l7 ?? 1))}`
+  const e = BLADE_PHASE_PRICED[key]
+  if (!e || !(e.d + 2 * (e.se ?? Infinity) < 0)) return null
+  if (typeof width === 'number' && (!layoutFits(e.early, width, height) || !layoutFits(e.late, width, height))) return null
+  return { planned: true, key, early: e.early, late: e.late, when: e.when, whenText: whenText(e.when), d: e.d, se: e.se, n: e.n, withH: e.withH, withoutH: e.withoutH, earlyKey: layoutKeyOf(e.early), lateKey: layoutKeyOf(e.late) }
+}
+
 /** Fresh enough to act on: /tel/progress.txt's route, this node and life (progress.js routeOut). */
 export const PROGRESS_FILE = '/tel/progress.txt'
 export function routeOfProgress(text, resetInfo, now = Date.now(), maxAgeMin = 30) {
@@ -1224,6 +1474,8 @@ export function giftStateOf(resetInfo, available, route = null) {
   const basis = !available ? null : GIFT_NODES.has(node) ? 'hack' : accepted || want || hold ? 'blade' : null
   return {
     node,
+    l13: sf(13),
+    l7: sf(7),
     available,
     want,
     hold,
@@ -1706,6 +1958,7 @@ export function stanekHoldsOf(rec, lastAugReset, now = Date.now(), maxAgeMs = 15
  *   STANEK LAYOUT STALE     the placed layout is not the life's decided one 15 min after the
  *                           install, or a hacking-route life has no decision after 60 min
  *                           (lifeLayoutHealthOf)
+ *   STANEK PHASE SWITCH LATE a priced phase switch came due 15 min ago and has not landed (phaseHealthOf)
  */
 export function stanekHealthOf({ stanek, charge, now = Date.now(), nodeStartMs = null, graceMin = 15, staleMin = 12, waitMin = 10 }) {
   const out = []
@@ -1735,5 +1988,6 @@ export function stanekHealthOf({ stanek, charge, now = Date.now(), nodeStartMs =
     } else if (errs.length) out.push({ key: NC, problem: NC, detail: `charge.js: ${errText}` })
   }
   out.push(...lifeLayoutHealthOf(stanek, now))
+  out.push(...phaseHealthOf(stanek, now))
   return out
 }

@@ -182,7 +182,7 @@ import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf, giftPinOf } from 'routepin.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -3043,7 +3043,18 @@ async function stanekDecisionOf(ns, info, inputsFn, route = null) {
   // biggest rooted host (stanek.js, stanekplan.bladeChargeFOf) — no fleet fraction to price here.
   if (gift.basis === 'blade') {
     const p = gift.priced
+    // THE PHASE PLAN (L2): the cell's early -> late re-lay at a black-op count, priced by bbsim from the
+    // node's start (stanekplan.BLADE_PHASE_PRICED: the exit with the switch vs the incumbent held, paired
+    // seeds, the charge lost and regrown per fragment); stanek.js steps it (phaseStepOf) and re-lays when
+    // the condition holds while the early layout is placed. The current layout from /tel/stanek.txt.
+    const st = readJson(ns, STANEK_FILE)
+    const plan = bladePhasePlanOf({ node: gift.node, l13: gift.l13, l7: gift.l7, width: st?.layout?.width, height: st?.layout?.height })
+    const lp = st?.lastAugReset === info.lastAugReset ? st?.lifeLayout?.phase ?? null : null
+    const phase = plan
+      ? { ...plan, current: st?.layout?.placedKey ?? null, state: lp?.state ?? null, next: lp?.state === 'late' ? 'none (switched)' : `${plan.lateKey} at ${plan.whenText}`, pricedGainH: plan.d, calibration: 'NOT CALIBRATED: no node has re-laid mid-node (bbsim both arms, fresh seeds; the charger BLADE_HOST mid)' }
+      : { planned: false, current: st?.layout?.placedKey ?? null, why: `no phase plan priced to win for BN${gift.node} SF13.${gift.l13} SF7.${gift.l7} (stanekplan.BLADE_PHASE_PRICED, d + 2se < 0): one layout the whole node` }
     pc.decisions.stanek = {
+      phase,
       key: gift.accepted ? 'accepted' : gift.want ? 'accept' : gift.hold ? 'hold' : 'never',
       f: null,
       basis: 'blade',
@@ -3116,6 +3127,28 @@ async function stanekDecisionOf(ns, info, inputsFn, route = null) {
         yield
       }
       layout = { ...liveLayoutChoiceOf(lp, { lifeKey: info.lastAugReset, weights, c: cL, f: fL, H0 }), lifeMin: +lifeMin.toFixed(1), decidedAt: new Date().toISOString() }
+      // THE LIFE'S PHASE PLAN (L2): the chosen layout until tsH into the life (HACK_PHASE_FRACS of it),
+      // then another option — its changed fragments regrow from 0, the unchanged keep their charge
+      // (stanekplan.switchInputsOf) — each priced as the trajectory against the chosen layout held;
+      // kept only where it wins by 0.01h. stanek.js re-lays at tsH (phaseStepOf); the next life decides anew.
+      const chosen = options.find((o) => o.key === layout.key)
+      const phaseOpts = []
+      if (chosen && typeof layout.hours === 'number')
+        for (const o of options) {
+          if (o.key === chosen.key) continue
+          for (const q of HACK_PHASE_FRACS) {
+            const tsH = q * cycleH
+            const h = yield* tg(switchInputsOf(base, ctx, fL, o.placed, tsH, chosen.placed))
+            phaseOpts.push({ src: o.src, key: o.key, late: o.placed, tsH, hours: typeof h === 'number' && isFinite(h) ? h : null })
+            yield
+          }
+        }
+      const bestP = phaseOpts.filter((x) => x.hours !== null).reduce((b, x) => (!b || x.hours < b.hours ? x : b), null)
+      const pricedP = phaseOpts.map((x) => ({ src: x.src, key: x.key, tsH: +x.tsH.toFixed(2), hours: x.hours === null ? null : +x.hours.toFixed(3) }))
+      layout.phase =
+        bestP && layout.hours - bestP.hours >= 0.01
+          ? { late: bestP.late, lateKey: bestP.key, when: { h: +bestP.tsH.toFixed(3) }, d: +(bestP.hours - layout.hours).toFixed(3), priced: pricedP }
+          : { late: null, why: bestP ? `no in-life switch wins: the best (${bestP.src} from ${bestP.tsH.toFixed(2)}h) ${(bestP.hours - layout.hours).toFixed(3)}h vs the chosen layout held` : 'no in-life switch priced', priced: pricedP }
     }
     const without = priced.find((p) => p.f === 0)?.hours ?? null
     return {

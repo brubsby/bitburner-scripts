@@ -200,7 +200,7 @@ async function sg9() {
   // progress.js publishes the priced decision (static)
   const prog_ = fs.readFileSync(path.join(REPO, 'progress.js'), 'utf8')
   c.examined(2)
-  if (!/if \(gift\.basis === 'blade'\) \{[\s\S]{0,400}withH: p\?\.withH[\s\S]{0,80}withoutH: p\?\.withoutH/.test(prog_)) c.fail("progress.js stanekDecisionOf must publish the Bladeburner route's priced decision (withH / withoutH)")
+  if (!/if \(gift\.basis === 'blade'\) \{[\s\S]{0,2000}withH: p\?\.withH[\s\S]{0,80}withoutH: p\?\.withoutH/.test(prog_)) c.fail("progress.js stanekDecisionOf must publish the Bladeburner route's priced decision (withH / withoutH)")
   if (!/giftNow\.accepted \|\| giftNow\.basis === 'blade'\) await stanekDecisionOf/.test(prog_)) c.fail('progress.js must price the decision on the Bladeburner basis before the accept too')
   return c
 }
@@ -261,6 +261,7 @@ function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 
       for (const p of g.procs.filter((q) => q.filename === 'charge.js'))
         for (const [x, y] of JSON.parse(p.args[0])) {
           const key = `${x},${y}`
+          if (!g.frags.some((f) => f.x === x && f.y === y)) continue // chargeFragment throws on an empty root
           const af = g.charge.get(key) ?? { highestCharge: 0, numCharge: 0 }
           g.charge.set(key, sp.chargeOnce(af, p.threads * sp.coreBonus(g.hosts.get(p.host).cores)))
         }
@@ -292,16 +293,29 @@ function mockGame({ node = 13, sf13 = 0, installed = [], queued = [], homeMax = 
       giftWidth: () => (need(), grid.width),
       giftHeight: () => (need(), grid.height),
       activeFragments: () => (need(), g.frags.map((p) => ({ id: p.id, x: p.x, y: p.y, rotation: p.rot, type: sp.fragmentById(p.id).type, highestCharge: g.charge.get(`${p.x},${p.y}`)?.highestCharge ?? 0, numCharge: g.charge.get(`${p.x},${p.y}`)?.numCharge ?? 0, chargedEffect: 1 }))),
+      // the game deletes a fragment WITH its charge (StaneksGift.delete / clear, StaneksGift.ts:112-124)
       clearGift() {
         need()
         g.frags = []
+        g.charge = new Map()
         g.event('clear')
+      },
+      removeFragment(x, y) {
+        need()
+        const i = g.frags.findIndex((p) => p.x === x && p.y === y)
+        if (i < 0) return false
+        g.frags.splice(i, 1)
+        g.charge.delete(`${x},${y}`)
+        g.event('remove')
+        return true
       },
       placeFragment(x, y, rot, id) {
         need()
         const f = sp.fragmentById(id)
         if (!sp.canPlace(g.frags, grid.width, grid.height, x, y, rot, f)) return false
         g.frags.push({ id, x, y, rot })
+        g.charge.delete(`${x},${y}`)
+        g.event('place')
         return true
       },
     },
@@ -664,8 +678,9 @@ async function sg10() {
   const alt = sp.LAYOUTS['6x5|2']
   const decision = { key: sp.layoutKeyOf(alt), placed: alt, lifeKey: g.lastAugReset, why: 'the live exit model (test)', weights: { Hacking: 1 }, decidedAt: new Date().toISOString(), source: 'live weights' }
   g.files['/tel/plan.txt'] = JSON.stringify({ at: new Date().toISOString(), lastAugReset: g.lastAugReset, decisions: { stanek: { f: 0.1, basis: 'fleet', why: 't', layout: decision } } })
-  const clears0 = g.log.filter((e) => e.ev === 'clear').length
   const r2 = await g.run()
+  const relays = () => g.log.filter((e) => e.ev === 'place' || e.ev === 'remove' || e.ev === 'clear').length
+  const relays0 = relays()
   c.examined(1)
   if (!sp.sameLayout(g.active(), alt)) c.fail("an install with the plan's decision of this life: stanek.js did not re-lay to it", JSON.stringify(g.active()))
   if (r2?.lifeLayout?.key !== decision.key || r2.lifeLayout.lifeIndex !== 2 || !r2.lifeLayout.decided || !r2.lifeLayout.relaid) c.fail('the life 2 record must carry the decided key, index 2, decided, relaid', JSON.stringify(r2?.lifeLayout))
@@ -674,12 +689,12 @@ async function sg10() {
   if (!g.procs.some((p) => p.filename === 'charge.js' && p.args[0] === roots)) c.fail("the charger must charge the re-laid layout's fragments", JSON.stringify(g.procs.map((p) => p.args[0])))
   if (sp.stanekHealthOf({ stanek: r2, charge: null, now: Date.now() }).some((p) => p.problem === 'STANEK LAYOUT STALE')) c.fail('placed = decided: no STANEK LAYOUT STALE')
   await g.run()
-  if (g.log.filter((e) => e.ev === 'clear').length !== clears0 + 1) c.fail('a second pass of the same life re-laid (it must place only when the layout differs)')
+  if (relays() !== relays0) c.fail('a second pass of the same life re-laid (it must place only when the layout differs)')
   // the next install, no decision of it yet: the incumbent stays (no clear)
   g.lastAugReset = t0 - 60e3
   const r3 = await g.run()
   c.examined(1)
-  if (!sp.sameLayout(g.active(), alt) || g.log.filter((e) => e.ev === 'clear').length !== clears0 + 1) c.fail('no decision of this life: the incumbent must be kept (no clear)')
+  if (!sp.sameLayout(g.active(), alt) || relays() !== relays0) c.fail('no decision of this life: the incumbent must be kept (no re-lay)')
   if (r3?.lifeLayout?.decided !== false || r3.lifeLayout.lifeIndex !== 3) c.fail('life 3 record: index 3, not decided', JSON.stringify(r3?.lifeLayout))
   // a decision arriving past the install window is not followed (the re-lay would delete the charge: L2)
   g.lastAugReset = t0 - (sp.LIFE_LAYOUT_WINDOW_MIN + 5) * 60e3
@@ -788,6 +803,208 @@ async function sg12() {
   return c
 }
 
+// SG13 THE RE-LAY'S CHARGE IN THE SIMULATORS (L2): stanekplan.chargeTrackOf with one layout IS
+//      bladeChargeAt (every step, 30h); a re-lay keeps an unchanged fragment's charge and starts a new
+//      one at 0 (highestCharge back on its first step, numCharge +duty/k per second); bbsim's phase
+//      plan with one phase equals its chargeAt path, and a two-phase plan re-lays once, when its
+//      condition holds, one pass later; the hacking exit model's chargeLnSwitchOf is chargeLnOf with
+//      no switch, and a re-lay that keeps the Hacking fragment keeps its charge (lnHack not below
+//      the layout held). RED: a tracker that restarts every fragment, a switch never priced.
+async function sg13() {
+  const c = new Check('SG13', "the re-lay's charge in the simulators: kept fragments keep it, the rest regrow; one phase = the old path")
+  const pl = sp.BLADE_LAYOUTS['6x5|1']
+  const k = sp.chargeRootsOf(pl).length
+  const thrAt = sp.bladeThrAt({ gbMax: 512 })
+  const old = sp.bladeChargeAt({ gbMax: 512, k })
+  const tr = sp.chargeTrackOf({ thrAt, duty: sp.BLADE_HOST.duty }).relay(pl, 0)
+  let md = 0
+  for (let t = 0; t < 30 * 3600; t += 97) {
+    const a = old(t)
+    const b = tr.at(t)
+    pl.forEach((p, i) => {
+      if (sp.fragmentById(p.id).type !== sp.TYPE.Booster) md = Math.max(md, Math.abs(a.numCharge - b[i].numCharge) + Math.abs(a.highestCharge - b[i].highestCharge))
+    })
+  }
+  c.examined(1)
+  if (md !== 0) c.fail(`chargeTrackOf with one layout must be bladeChargeAt exactly: max diff ${md}`)
+  // a re-lay at 5h: the Strength fragment (id 10) removed, one fragment re-rooted elsewhere is new
+  const t5 = 5 * 3600
+  const tr2 = sp.chargeTrackOf({ thrAt, duty: sp.BLADE_HOST.duty }).relay(pl, 0)
+  const before = tr2.at(t5)
+  const minus = pl.filter((p) => p.id !== 10)
+  tr2.relay(minus, t5)
+  const after = tr2.at(t5)
+  const after1 = tr2.at(t5 + 60)
+  c.examined(2)
+  minus.forEach((p, i) => {
+    const j = pl.findIndex((q) => sp.fragKeyOf(q) === sp.fragKeyOf(p))
+    if (sp.fragmentById(p.id).type === sp.TYPE.Booster) return
+    if (Math.abs(after[i].numCharge - before[j].numCharge) > 1e-9) c.fail(`an unchanged fragment (${p.id}) lost its charge at the re-lay`, JSON.stringify([before[j], after[i]]))
+    const k2 = sp.chargeRootsOf(minus).length
+    const want = before[j].numCharge * before[j].highestCharge + (sp.BLADE_HOST.duty * thrAt(t5) * 60) / k2
+    if (Math.abs(after1[i].numCharge * after1[i].highestCharge - want) > 1e-6) c.fail(`after the re-lay the round robin runs over the new k (${k2}): fragment ${p.id} mass ${after1[i].numCharge * after1[i].highestCharge} vs ${want}`)
+  })
+  const fresh = sp.chargeTrackOf({ thrAt, duty: 1 }).relay(pl, 0)
+  fresh.at(t5)
+  fresh.relay([...minus, { id: 10, x: 1, y: 0, rot: 0 }].filter((p, i, a) => a.findIndex((q) => sp.fragKeyOf(q) === sp.fragKeyOf(p)) === i), t5) // the same Strength back: kept
+  const back = fresh.at(t5)
+  const bi = fresh.placed().findIndex((p) => p.id === 10)
+  if (!(back[bi].numCharge > 1000)) c.fail('a fragment placed back with the same id, root and rotation must keep its charge (it is unchanged)', JSON.stringify(back[bi]))
+  const moved = sp.chargeTrackOf({ thrAt, duty: 1 }).relay(pl, 0)
+  moved.at(t5)
+  const mv = [...minus]
+  moved.relay(mv, t5)
+  moved.relay([...mv, { id: 10, x: 1, y: 0, rot: 0 }], t5 + 1)
+  const m1 = moved.at(t5 + 61)
+  const mi = moved.placed().findIndex((p) => p.id === 10)
+  c.examined(1)
+  if (!(m1[mi].highestCharge === thrAt(t5 + 60) && Math.abs(m1[mi].numCharge - 60 / sp.chargeRootsOf(moved.placed()).length) < 1e-9)) c.fail('a removed then re-placed fragment must start from 0: highestCharge = the threads on its first step, numCharge = duty x 60 / k', JSON.stringify(m1[mi]))
+  // bbsim: one phase == the chargeAt path; two phases re-lay once at the condition, a pass later
+  const { runBladeburner } = await import('../sim/nodechoice/bbsim.mjs')
+  const { specOf } = await import('../sim/bbstanek.mjs')
+  const spec = specOf({ node: 11, l6: 3, l7: 1, l13: 1, seed: 1 })
+  const a = runBladeburner({ ...spec, stanek: { placed: pl, chargeAt: sp.bladeChargeAt({ gbMax: 512, k }) } })
+  const b = runBladeburner({ ...spec, stanek: { phases: [{ placed: pl, when: null }], thrAt, duty: sp.BLADE_HOST.duty } })
+  // the late layout: only the Strength fragment and its boosters (agility/dexterity/Bladeburner removed: a real change)
+  const strOnly = pl.filter((p) => [sp.TYPE.Strength, sp.TYPE.Booster].includes(sp.fragmentById(p.id).type))
+  const two = runBladeburner({ ...spec, stanek: { phases: [{ placed: pl, when: null }, { placed: strOnly, when: { blackOps: 1 } }], thrAt, duty: sp.BLADE_HOST.duty, lagS: 300 } })
+  c.examined(2)
+  if (a.hours !== b.hours || JSON.stringify(a.stanek) !== JSON.stringify(b.stanek)) c.fail(`bbsim's one-phase plan must equal its chargeAt path: ${a.hours}h vs ${b.hours}h`)
+  const sw = two.stanekSwitches ?? []
+  if (sw.length !== 1 || !(sw[0].blackOps >= 1)) c.fail('a two-phase plan must re-lay exactly once, after its condition (1 black op)', JSON.stringify(sw))
+  if (!(two.hours > b.hours)) c.fail(`dropping agility/dexterity/Bladeburner at the first black op must slow the exit (the switch is not simulated): ${two.hours}h vs ${b.hours}h`)
+  // the hacking exit model
+  const A = sp.LAYOUTS['6x6|2']
+  const hosts = [{ host: 'home', cores: 4, capGb: 2 ** 14 }]
+  const ctx = { layout: A, nodePower: 2, fleetGB: 2 ** 15, hosts, f: 0.2, cycleH: 6 }
+  const held = sp.chargeLnOf(ctx)
+  const none = sp.chargeLnSwitchOf({ ...ctx, layoutB: A, tsH: 6 })
+  c.examined(3)
+  if (JSON.stringify(none) !== JSON.stringify(held)) c.fail('chargeLnSwitchOf with tsH >= the life must be chargeLnOf')
+  const self = sp.chargeLnSwitchOf({ ...ctx, layoutB: A, tsH: 3 })
+  if (!(Math.abs(self.lnHack - held.lnHack) < 1e-12 && Math.abs(self.lnIncome - held.lnIncome) < 1e-12 && self.relay?.kept === A.length)) c.fail(`a re-lay to the same layout keeps every charge: lnHack ${self.lnHack} vs held ${held.lnHack}`, JSON.stringify(self.relay))
+  const noGrow = A.filter((p) => sp.fragmentById(p.id).type !== sp.TYPE.HackingGrow)
+  const sw2 = sp.chargeLnSwitchOf({ ...ctx, layoutB: noGrow, tsH: 3 })
+  if (!(sw2.lnHack >= held.lnHack - 1e-9)) c.fail(`a re-lay that keeps the Hacking fragments (and drops HackingGrow: k smaller) must not lower lnHack: ${sw2.lnHack} < ${held.lnHack}`)
+  const allNew = sp.chargeLnSwitchOf({ ...ctx, layoutB: noGrow.map((p) => ({ ...p })).reverse(), tsH: 3 })
+  // a re-lay that drops the Hacking fragments must cost lnHack (the switch is priced, not ignored)
+  const noHack = A.filter((p) => sp.fragmentById(p.id).type !== sp.TYPE.Hacking)
+  const sw3 = sp.chargeLnSwitchOf({ ...ctx, layoutB: noHack, tsH: 3 })
+  c.examined(1)
+  if (!(sw3.lnHack < held.lnHack - 0.05)) c.fail(`dropping the Hacking fragments at mid-life must lower the life's lnHack: ${sw3.lnHack} vs held ${held.lnHack}`)
+  c.note(`one layout = bladeChargeAt (max diff ${md}); bbsim BN11 one phase ${b.hours?.toFixed(3)}h, re-laid at ${sw[0]?.h}h (${sw[0]?.blackOps} black ops) -> ${two.hours?.toFixed(3)}h; hacking 6x6|2 life 6h: lnHack held ${held.lnHack.toFixed(4)}, self-switch ${self.lnHack.toFixed(4)}, drop HGrow at 3h ${sw2.lnHack.toFixed(4)} (kept ${sw2.relay?.kept}/${allNew.relay?.kept})`)
+  return c
+}
+
+// SG14 THE PHASE PLAN IN THE GAME (stanek.js on the mock, the Bladeburner route): the plan's early
+//      layout on an empty grid; below the condition it stays; once /tel/bladeburner.txt shows it, the
+//      next pass re-lays to the late layout BY DIFF — unchanged fragments keep their charge, the
+//      removed one is gone, no clearGift — and charges it; the record names the step (switching,
+//      met, metAt); then 'late'. A condition read off a stale record is not met. A placed layout that
+//      is not the early one is held (the switch was not priced from it). Health STANEK PHASE SWITCH
+//      LATE when a priced switch came due 15+ min ago and has not landed.
+async function sg14() {
+  const c = new Check('SG14', 'the phase plan in the game: early, then re-laid by diff at the condition (charge kept), health on a late switch')
+  const g = mockGame({ node: 11, sf13: 1, installed: [NFG, GEN], progressRoute: 'blade', extraSf: [[7, 1], [6, 3]] })
+  const early = sp.BLADE_LAYOUTS['6x5|1']
+  const late = early.filter((p) => p.id !== 10)
+  const when = { blackOps: 6 }
+  const planTxt = () => JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1000, decisions: { stanek: { phase: { planned: true, early, late, when, d: -0.1 } } } })
+  const bbTxt = (done, at = new Date().toISOString()) => JSON.stringify({ at, bitNode: 11, lastAugReset: 1000, rank: 50000, blackOps: { done } })
+  g.files['/tel/plan.txt'] = planTxt()
+  g.files['/tel/bladeburner.txt'] = bbTxt(2)
+  const r1 = await g.run()
+  c.examined(1)
+  if (!sp.sameLayout(g.active(), early) || r1?.lifeLayout?.phase?.state !== 'early') c.fail('the phase plan must place its early layout on an empty grid', JSON.stringify(r1?.lifeLayout))
+  g.tick(500)
+  g.files['/tel/bladeburner.txt'] = bbTxt(5)
+  await g.run()
+  c.examined(1)
+  if (!sp.sameLayout(g.active(), early)) c.fail('below the condition (5 < 6 black ops) the early layout must stay')
+  g.tick(500)
+  const charge0 = new Map(g.charge)
+  g.files['/tel/bladeburner.txt'] = bbTxt(7, new Date(Date.now() - 60 * 60e3).toISOString()) // stale: unreadable
+  const rs = await g.run()
+  if (!sp.sameLayout(g.active(), early) || rs?.lifeLayout?.phase?.met) c.fail('a stale /tel/bladeburner.txt must not meet the condition')
+  g.files['/tel/bladeburner.txt'] = bbTxt(6)
+  const clears = g.log.filter((e) => e.ev === 'clear').length
+  const r2 = await g.run()
+  c.examined(3)
+  if (!sp.sameLayout(g.active(), late)) c.fail('at the condition (6 black ops) stanek.js must re-lay to the late layout', JSON.stringify(g.active()))
+  if (g.log.filter((e) => e.ev === 'clear').length !== clears) c.fail('the re-lay must be a diff, never clearGift (it deletes every charge)')
+  for (const p of late) {
+    if (sp.fragmentById(p.id).type === sp.TYPE.Booster) continue
+    const k = `${p.x},${p.y}`
+    if (!(g.charge.get(k)?.numCharge > 0) || g.charge.get(k)?.numCharge !== charge0.get(k)?.numCharge) c.fail(`an unchanged fragment (${p.id} at ${k}) lost its charge in the re-lay`, JSON.stringify([charge0.get(k), g.charge.get(k)]))
+  }
+  const st10 = early.find((p) => p.id === 10)
+  if (g.charge.has(`${st10.x},${st10.y}`)) c.fail('the removed fragment must be gone with its charge')
+  const ph = r2?.lifeLayout?.phase
+  if (ph?.state !== 'switching' || !ph.met || !ph.metAt || !ph.switchPriced || r2?.lifeLayout?.relay?.removed !== 1) c.fail('the record must name the switch (switching, met, metAt, switchPriced; relay removed 1)', JSON.stringify(r2?.lifeLayout))
+  if (r2?.charger?.roots !== sp.chargeRootsOf(late).length) c.fail("the charger must charge the late layout's fragments", JSON.stringify(r2?.charger))
+  if (sp.stanekHealthOf({ stanek: r2, charge: null, now: Date.now() }).some((p) => p.problem === 'STANEK PHASE SWITCH LATE')) c.fail('landed: no STANEK PHASE SWITCH LATE')
+  const r3 = await g.run()
+  c.examined(1)
+  if (r3?.lifeLayout?.phase?.state !== 'late' || !sp.sameLayout(g.active(), late)) c.fail("the next pass: 'late', nothing re-laid", JSON.stringify(r3?.lifeLayout?.phase))
+  // a placed layout that is not the early one: held at the condition (the switch is not priced from it)
+  const h = mockGame({ node: 11, sf13: 1, installed: [NFG, GEN], progressRoute: 'blade', extraSf: [[7, 1], [6, 3]] })
+  const other = early.filter((p) => p.id !== 14)
+  for (const p of other) h.ns.stanek.placeFragment(p.x, p.y, p.rot, p.id)
+  h.files['/tel/plan.txt'] = planTxt()
+  h.files['/tel/bladeburner.txt'] = bbTxt(9)
+  const rh = await h.run()
+  c.examined(1)
+  if (!sp.sameLayout(h.active(), other) || rh?.lifeLayout?.phase?.state !== 'held' || rh.lifeLayout.phase.switchPriced) c.fail('a placed layout that is not the early one must be held (not switched, not priced)', JSON.stringify(rh?.lifeLayout))
+  if (sp.stanekHealthOf({ stanek: rh, charge: null, now: Date.now() + 60 * 60e3 }).some((p) => p.problem === 'STANEK PHASE SWITCH LATE')) c.fail('a held (unpriced) switch must not fail the health check')
+  // health: a priced switch due 20 min ago that has not landed
+  const now = Date.now()
+  const stale = { ...r2, at: new Date(now).toISOString(), layout: { ...r2.layout, placedKey: sp.layoutKeyOf(early) }, lifeLayout: { ...r2.lifeLayout, phase: { ...ph, metAt: new Date(now - 20 * 60e3).toISOString() } } }
+  c.examined(2)
+  if (!sp.phaseHealthOf(stale, now).some((p) => p.problem === 'STANEK PHASE SWITCH LATE')) c.fail('a priced switch due 20 min ago, not landed: no STANEK PHASE SWITCH LATE')
+  if (!sp.stanekHealthOf({ stanek: stale, charge: null, now }).some((p) => p.problem === 'STANEK PHASE SWITCH LATE')) c.fail('the health check (stanekHealthOf, what tools/healthcheck.mjs runs) must carry STANEK PHASE SWITCH LATE')
+  if (sp.phaseHealthOf({ ...stale, lifeLayout: { ...stale.lifeLayout, phase: { ...ph, metAt: new Date(now - 5 * 60e3).toISOString() } } }, now).length) c.fail('due 5 min ago: inside the grace, must not fail yet')
+  c.note(`early ${sp.layoutKeyOf(early)} -> late ${sp.layoutKeyOf(late)} at ${sp.whenText(when)}: relay ${JSON.stringify(r2?.lifeLayout?.relay)}; held: ${rh?.lifeLayout?.phase?.why}`)
+  return c
+}
+
+// SG15 THE PHASE PLAN IS A PRICED COMPARISON OF EXITS: bladePhasePlanOf lists a cell iff its paired
+//      exit with the switch beats the incumbent held by more than two standard errors (d + 2se < 0;
+//      flipping the sign removes it); every shipped entry is legal on its node's grid and its d is
+//      withH - withoutH; progress.js publishes decisions.stanek.phase from it on the Bladeburner
+//      route, and on the hacking route prices each in-life switch through the trajectory simulator
+//      (switchInputsOf) and keeps it only where it wins by 0.01h (static).
+async function sg15() {
+  const c = new Check('SG15', 'the phase plan is priced: listed iff the switch exit wins (d + 2se < 0); progress.js publishes it')
+  const { nodeMults } = await import('../sim/nodechoice/hackexit.mjs')
+  for (const [key, e] of Object.entries(sp.BLADE_PHASE_PRICED)) {
+    const [n, l13, l7] = key.split('|').map(Number)
+    const m = nodeMults(n)
+    const gr = sp.giftSize(m.StaneksGiftExtraSize ?? 0, l13)
+    c.examined(1)
+    if (!sp.layoutFits(e.early, gr.width, gr.height) || !sp.layoutFits(e.late, gr.width, gr.height)) c.fail(`${key}: a layout is not legal on BN${n}'s ${gr.width}x${gr.height} grid`)
+    if (Math.abs(e.withH - e.withoutH - e.d) > 2e-3) c.fail(`${key}: d ${e.d} is not withH - withoutH (${e.withH} - ${e.withoutH})`)
+    const p = sp.bladePhasePlanOf({ node: n, l13, l7, width: gr.width, height: gr.height })
+    if (!!p !== e.d + 2 * e.se < 0) c.fail(`${key}: listed ${!!p} but d + 2se = ${(e.d + 2 * e.se).toFixed(4)}`)
+    const keep = { ...e }
+    sp.BLADE_PHASE_PRICED[key] = { ...e, d: -e.d, withH: e.withoutH, withoutH: e.withH }
+    if (sp.bladePhasePlanOf({ node: n, l13, l7, width: gr.width, height: gr.height })) c.fail(`${key}: flipped to a losing switch it is still listed (the gate is not the comparison)`)
+    sp.BLADE_PHASE_PRICED[key] = keep
+  }
+  sp.BLADE_PHASE_PRICED['99|1|1'] = { early: sp.BLADE_LAYOUTS['6x5|1'], late: sp.BLADE_LAYOUTS['6x5|1'].slice(1), when: { blackOps: 3 }, withoutH: 10, withH: 9.98, d: -0.02, se: 0.015, n: 40 }
+  c.examined(1)
+  if (sp.bladePhasePlanOf({ node: 99, l13: 1, l7: 1 })) c.fail('a switch within two standard errors of zero must not be listed')
+  delete sp.BLADE_PHASE_PRICED['99|1|1']
+  const pr = fs.readFileSync(path.join(REPO, 'progress.js'), 'utf8')
+  c.examined(3)
+  if (!/const plan = bladePhasePlanOf\(\{ node: gift\.node, l13: gift\.l13, l7: gift\.l7/.test(pr) || !/pc\.decisions\.stanek = \{\s*phase,/.test(pr)) c.fail('progress.js must publish decisions.stanek.phase from bladePhasePlanOf on the Bladeburner route')
+  if (!/const h = yield\* tg\(switchInputsOf\(base, ctx, fL, o\.placed, tsH, chosen\.placed\)\)/.test(pr)) c.fail('progress.js must price each in-life switch through the trajectory simulator (switchInputsOf in tg)')
+  if (!/bestP && layout\.hours - bestP\.hours >= 0\.01/.test(pr)) c.fail('progress.js must keep an in-life switch only where it beats the chosen layout held by 0.01h')
+  const stk = fs.readFileSync(path.join(REPO, 'stanek.js'), 'utf8')
+  if (!/relayDiffOf\(active, target\.placed\)/.test(stk) || !/planPhaseOf\(planText/.test(stk) || !/bladePhaseStateOf\(ns\.read\('\/tel\/bladeburner\.txt'\)/.test(stk)) c.fail('stanek.js must re-lay by diff and step the published phase plan on /tel/bladeburner.txt')
+  c.note(`${Object.keys(sp.BLADE_PHASE_PRICED).length} cells: ${Object.entries(sp.BLADE_PHASE_PRICED).map(([k, e]) => `${k} ${e.d.toFixed(3)}+-${e.se.toFixed(3)}h at ${sp.whenText(e.when)}`).join('; ')}`)
+  return c
+}
+
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15()]
 }

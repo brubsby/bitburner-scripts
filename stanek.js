@@ -27,6 +27,14 @@
 // when the active set differs, verified by re-reading; /tel/stanek.txt lifeLayout is
 // the decision record (STANEK LAYOUT STALE when the placed one is not it).
 //
+// THE PHASE PLAN WITHIN A LIFE (L2, stanekplan.phaseStepOf): the Bladeburner route's (progress.js
+// publishes decisions.stanek.phase from BLADE_PHASE_PRICED; the condition, a black-op count, read off
+// /tel/bladeburner.txt) or a hacking life's (the plan's layout.phase, at a life-hour). The early layout
+// until the condition, then the late one — only from the early layout the switch was priced on. Every
+// re-lay is a DIFF (stanekplan.relayDiffOf + removeFragment, 0.15GB): the game deletes a fragment with
+// its charge (StaneksGift.delete), so unchanged fragments keep theirs; clearGift only if the diff fails.
+// Health STANEK PHASE SWITCH LATE when a priced switch came due 15 min ago and has not landed.
+//
 // THE CHARGER: charge.js on ANY rooted host — chargeFragment charges from whatever
 // server the script runs on, at its threads x that server's core bonus (Stanek.ts;
 // the gift is global), so home has no claim beyond its cores (and BN13.1 opened on a
@@ -47,7 +55,7 @@
 //
 // Publishes /tel/stanek.txt on every exit path (atExit): gift state, accept
 // outcome, layout, fragments with their charge, charger, allocation, health.
-import { giftStateOf, lifeTargetOf, planLayoutOf, layoutKeyOf, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME, routeOfProgress, PROGRESS_FILE, bladeChargeFOf, BLADE_F_MAX } from 'stanekplan.js'
+import { giftStateOf, lifeTargetOf, planLayoutOf, planPhaseOf, bladePhaseStateOf, relayDiffOf, layoutKeyOf, sameLayout, chargeRootsOf, planAllocOf, DEFAULT_F, chargerFleetOf, chargerPlanOf, chargerActionsOf, chargerWhyOf, chargeProgressOf, coreBonus, progressBlockGb, STANEK_FILE, CHARGE_FILE, STANEK, TYPE, TYPE_NAME, routeOfProgress, PROGRESS_FILE, bladeChargeFOf, BLADE_F_MAX } from 'stanekplan.js'
 import { reservesOf, heldOn, FREEABLE } from 'raiseplace.js'
 import { singularityRamMultiplier, canAccessCotMG } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
@@ -106,16 +114,33 @@ export async function main(ns) {
     // live exit model, decided while the install's zero charge makes a re-lay free), else the
     // incumbent an install kept, else the tabled one; the Bladeburner route keeps its tabled layout.
     let active = ns.stanek.activeFragments()
-    const planLayout = gift.basis === 'blade' ? null : planLayoutOf(ns.read('/tel/plan.txt'), info.lastAugReset, width, height)
-    const target = lifeTargetOf({ basis: gift.basis, width, height, nodePower, active, plan: planLayout, prev: prevRec, lastAugReset: info.lastAugReset, lastNodeReset: info.lastNodeReset ?? null })
+    const planText = ns.read('/tel/plan.txt')
+    const planLayout = gift.basis === 'blade' ? null : planLayoutOf(planText, info.lastAugReset, width, height)
+    // THE PHASE PLAN (L2, stanekplan.phaseStepOf): the Bladeburner route's (progress.js publishes it from
+    // BLADE_PHASE_PRICED; its condition read off /tel/bladeburner.txt) or the hacking life's (planLayout.phase)
+    const phase = gift.basis === 'blade' ? planPhaseOf(planText, info.lastAugReset, width, height) : null
+    const phaseState = gift.basis === 'blade' ? bladePhaseStateOf(ns.read('/tel/bladeburner.txt'), info) : null
+    const target = lifeTargetOf({ basis: gift.basis, width, height, nodePower, active, plan: planLayout, prev: prevRec, lastAugReset: info.lastAugReset, lastNodeReset: info.lastNodeReset ?? null, phase, phaseState })
     rec.lifeLayout = target.record
     let placeFails = []
     if (!sameLayout(active, target.placed)) {
-      ns.stanek.clearGift()
-      for (const p of target.placed) if (!ns.stanek.placeFragment(p.x, p.y, p.rot, p.id)) placeFails.push(p)
+      // THE RE-LAY AS A DIFF (stanekplan.relayDiffOf): the game deletes a fragment with its charge
+      // (StaneksGift.delete), so only the removed/changed ones go; unchanged fragments keep their charge.
+      const diff = relayDiffOf(active, target.placed)
+      const removeFails = diff.remove.filter((p) => !ns.stanek.removeFragment(p.x, p.y))
+      for (const p of diff.place) if (!ns.stanek.placeFragment(p.x, p.y, p.rot, p.id)) placeFails.push(p)
+      let cleared = false
+      if (removeFails.length || placeFails.length) {
+        // the diff did not land (a legal target always places on an empty grid): clear and place all
+        ns.stanek.clearGift()
+        cleared = true
+        placeFails = []
+        for (const p of target.placed) if (!ns.stanek.placeFragment(p.x, p.y, p.rot, p.id)) placeFails.push(p)
+      }
       active = ns.stanek.activeFragments()
       rec.placedAt = new Date().toISOString()
       rec.lifeLayout.relaid = rec.placedAt
+      rec.lifeLayout.relay = { kept: diff.keep.length, removed: diff.remove.length, placed: diff.place.length, removeFails: removeFails.length, cleared }
     }
     const placedOk = sameLayout(active, target.placed)
     const activePlaced = active.map((f) => ({ id: f.id, x: f.x, y: f.y, rot: f.rotation }))

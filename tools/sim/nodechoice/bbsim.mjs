@@ -264,6 +264,17 @@ function gymStep(P, seconds, stat = null) {
  *        every 60s of sim time, merged multiplicatively as StaneksGift.updateMults does. The
  *        layout must be legal on the node's grid (stanekplan.giftSize/canPlace at the SF13 in
  *        o.sf: checked here). The charging POLICY is the caller's (chargeAt).
+ *        THE PHASE PLAN (L2, o.stanek.phases + o.stanek.thrAt/duty in place of chargeAt):
+ *        phases [{placed, when}] — phase 0 placed at t 0, phase j+1 re-laid when its `when`
+ *        holds (stanekplan.whenHolds on {tH node hours, blackOps done, rank}), seen on the 60s
+ *        gift step and landing o.stanek.lagS (default 300: stanek.js's 5-min watchdog pass)
+ *        later. The charge is PER FRAGMENT (stanekplan.chargeTrackOf): a fragment unchanged
+ *        across the re-lay keeps its charge, a removed or changed one loses it
+ *        (StaneksGift.delete, StaneksGift.ts:112) and the new ones regrow from 0 (highestCharge
+ *        back on the first call, numCharge +duty/k per second round robin). One phase = chargeAt
+ *        exactly (SG13).
+ *      multsPhase: { mults: {key: factor}, from: when|null, to: when|null } — extra multipliers
+ *        only while `from` has held and `to` has not (the phase weights' probe, stanekphase.mjs)
  * returns { hours, rank, blackOps, done, installs, why, trace }
  */
 export function runBladeburner(o) {
@@ -303,29 +314,68 @@ export function runBladeburner(o) {
     let stM = null
     let stNext = 0
     let stT0 = 0
+    // the phase plan (o.stanek.phases): per-fragment charge, the next phase, its landing time
+    let stTrack = null
+    let stPhase = 0
+    let stDue = null
+    const stSwitches = []
     const genesis = stC ? g.Augmentations[sp.GENESIS]?.mults : null
     if (stC) {
       if (!genesis) throw new Error(`bbsim o.stanek: no '${sp.GENESIS}' augmentation in the bundle`)
       const l13 = new Map(sf).get(13) ?? 0
       const { width, height } = sp.giftSize(mults.StaneksGiftExtraSize ?? 0, l13) // StaneksGift.ts:20-32
-      const placed = []
-      for (const p of stC.placed) {
-        if (!sp.canPlace(placed, width, height, p.x, p.y, p.rot, sp.fragmentById(p.id))) throw new Error(`bbsim o.stanek: fragment ${p.id} at ${p.x},${p.y} r${p.rot} not placeable on the ${width}x${height} grid (BN${node}, SF13.${l13})`)
-        placed.push(p)
+      for (const lay of stC.phases ? stC.phases.map((ph) => ph.placed) : [stC.placed]) {
+        const placed = []
+        for (const p of lay) {
+          if (!sp.canPlace(placed, width, height, p.x, p.y, p.rot, sp.fragmentById(p.id))) throw new Error(`bbsim o.stanek: fragment ${p.id} at ${p.x},${p.y} r${p.rot} not placeable on the ${width}x${height} grid (BN${node}, SF13.${l13})`)
+          placed.push(p)
+        }
       }
-      stGift = { placed, nodePower: mults.StaneksGiftPowerMultiplier ?? 1 }
+      stGift = { placed: stC.phases ? stC.phases[0].placed : stC.placed, nodePower: mults.StaneksGiftPowerMultiplier ?? 1 }
+      if (stC.phases) stTrack = sp.chargeTrackOf({ thrAt: stC.thrAt, duty: stC.duty ?? sp.BLADE_HOST.duty }).relay(stGift.placed, 0)
     }
     const applyGift = () => {
       // o.mults: constant extra multipliers from t 0 ({key: factor}) — the elasticity probe (tools/sim/bbstanek.mjs)
       if (o.mults) for (const [k, v] of Object.entries(o.mults)) if (typeof P.mults[k] === 'number') P.mults[k] *= v
       if (genesis) for (const [k, v] of Object.entries(genesis)) if (typeof P.mults[k] === 'number') P.mults[k] *= v
       if (stM) for (const [k, v] of Object.entries(stM)) if (typeof P.mults[k] === 'number') P.mults[k] *= v
+      if (exOn) for (const [k, v] of Object.entries(o.multsPhase.mults)) if (typeof P.mults[k] === 'number') P.mults[k] *= v
+    }
+    // o.multsPhase: the extra multipliers on while from has held and to has not (re-read on the 60s step)
+    let exOn = false
+    let exFrom = false
+    const phaseState = (t) => ({ tH: t / 3600, blackOps: P.bladeburner?.numBlackOpsComplete ?? 0, rank: P.bladeburner?.rank ?? 0 })
+    let exNext = 0
+    const multsPhaseStep = (t) => {
+      const mp = o.multsPhase
+      if (!mp || t < exNext) return
+      exNext = t + 60
+      const s = phaseState(t)
+      exFrom = exFrom || !mp.from || sp.whenHolds(mp.from, s)
+      const on = exFrom && !(mp.to && sp.whenHolds(mp.to, s))
+      if (on === exOn) return
+      for (const [k, v] of Object.entries(mp.mults)) if (typeof P.mults[k] === 'number') P.mults[k] *= on ? v : 1 / v
+      exOn = on
+      P.updateSkillLevels()
     }
     const stanekStep = (t) => {
+      multsPhaseStep(t)
       if (!stGift || t < stNext) return
       stNext = t + 60
+      // the phase plan: the next phase's condition seen now lands lagS later (stanek.js's pass)
+      if (stTrack) {
+        const nx = stC.phases[stPhase + 1]
+        if (nx && stDue === null && sp.whenHolds(nx.when, phaseState(t))) stDue = t + (stC.lagS ?? 300)
+        if (nx && stDue !== null && t >= stDue) {
+          stPhase++
+          stDue = null
+          stGift.placed = nx.placed
+          stTrack.relay(nx.placed, t - stT0)
+          stSwitches.push({ phase: stPhase, h: +(t / 3600).toFixed(3), ...phaseState(t) })
+        }
+      }
       // an install clears every fragment's charge (CotMG/StaneksGift.ts:228-230 prestigeAugmentation): the charger restarts at stT0
-      const nm = sp.layoutMults(stGift.placed, stC.chargeAt(t - stT0), stGift.nodePower)
+      const nm = sp.layoutMults(stGift.placed, stTrack ? stTrack.at(t - stT0) : stC.chargeAt(t - stT0), stGift.nodePower)
       for (const [k, v] of Object.entries(nm)) if (typeof P.mults[k] === 'number' && v !== (stM?.[k] ?? 1)) P.mults[k] *= v / (stM?.[k] ?? 1)
       stM = nm
       P.updateSkillLevels()
@@ -545,6 +595,7 @@ export function runBladeburner(o) {
       }
       if (stGift) {
         stM = null // the charge is cleared: the layout's multipliers restart from none (Genesis stays)
+        if (stTrack) stTrack.clear(t - stT0)
         stT0 = t
         stNext = t
       }
@@ -634,6 +685,7 @@ export function runBladeburner(o) {
       bbAugs: owned.size,
       augMult,
       goEffect: goC ? +goEff.toFixed(4) : null,
+      stanekSwitches: stTrack ? stSwitches : undefined,
       stanek: stM ? { strength: +(stM.strength * (genesis?.strength ?? 1)).toFixed(4), success: +stM.bladeburner_success_chance.toFixed(4), stamina: +stM.bladeburner_max_stamina.toFixed(4) } : null,
       skills: { ...bb.skills },
       stats: { ...P.skills },
