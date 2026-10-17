@@ -1239,7 +1239,9 @@ export async function main(ns) {
   /** The hidden opponent's rate: measured once W0_MEASURED_MIN games exist, else the prior. */
   const w0RateOf = () => {
     const r = w0Rec?.rate
-    if (r && r.n >= W0_MEASURED_MIN && r.value > 0) return { pph: r.value, ref: r.wins / r.n, source: `measured, ${r.n} games` }
+    // gph: the record's games over their hours (goplan.goExitInputsOf's games/h).
+    const t = w0Rec?.totals
+    if (r && r.n >= W0_MEASURED_MIN && r.value > 0) return { pph: r.value, ref: r.wins / r.n, source: `measured, ${r.n} games`, ...(t && t.hours > 0 && t.games > 0 ? { gph: t.games / t.hours } : {}) }
     return { pph: W0_PRIOR.powerPerHour, ref: W0_PRIOR.refP, source: 'prior (unmeasured)' }
   }
   /** { opponent: nodePower } for every priced opponent; 0 for one never played this life. */

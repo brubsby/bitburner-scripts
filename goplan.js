@@ -1569,7 +1569,16 @@ export function goExitInputsOf(o = {}) {
   const tel = o.goTel && typeof o.goTel === 'object' ? o.goTel : null
   const r = tel?.w0?.rate
   const measured = r && typeof r.source === 'string' && r.source.startsWith('measured') && num(r.pph) && r.pph > 0
-  const w0 = { powerPerH: measured ? r.pph : W0_HARNESS.powerPerHour, gamesPerH: W0_GAMES_PER_H, bonusPower: OPPONENTS.w0r1d_d43m0n.power, goPower, sf14, source: measured ? r.source : W0_HARNESS.source }
+  // Games an hour: the record's own (go.js w0RateOf gph: its games over their
+  // hours) where measured — 20.5/h live (14 games, 2026-10-13) against the
+  // prior's 11.4, which made each game's step in the bonus 1.8x too big and
+  // too late. The bonus banked THIS life (go.txt bonuses, the game's own
+  // bonusPercent = (CalculateEffect - 1) x 100, netscriptGoImplementation.ts:383,
+  // keyed by the enum value): exitplan prices a climb with The
+  // Red Pill already installed from it (W0).
+  const gph = measured && num(r.gph) && r.gph > 0 ? r.gph : W0_GAMES_PER_H
+  const pct = tel?.bonuses?.[OPPONENTS.w0r1d_d43m0n.game]
+  const w0 = { powerPerH: measured ? r.pph : W0_HARNESS.powerPerHour, gamesPerH: gph, bonusPower: OPPONENTS.w0r1d_d43m0n.power, goPower, sf14, ...(num(pct) && pct > 0 ? { W0: 1 + pct / 100 } : {}), source: measured ? `${r.source}${num(r.gph) ? `, ${r.gph.toFixed(1)} games/h` : ''}` : W0_HARNESS.source }
   const rep = { powerPerH: POWER_PER_HOUR.Daedalus, bonusPower: OPPONENTS.Daedalus.power, goPower, sf14 }
   let favorStream = null
   let favorWhy = 'no favor-stream builder passed'
@@ -1592,6 +1601,6 @@ export function goExitInputsOf(o = {}) {
     ramShare: fleetGB ? Math.min(1, GO_RAM_GB / fleetGB) : 0,
     embedded: { goPower: GO_EMBEDDED.goPower, sf14: GO_EMBEDDED.sf14, rateScale: GO_EMBEDDED.rateScale, ownShare: w },
   }
-  const why = `the farm on the hacking route at GoPower ${goPower}${sf14 >= 1 ? ' x2 (SF14)' : ''}: each life's best arm of ${GO_LIFE_ARMS.map((k) => `${k} ${POWER_PER_HOUR[k]}/h`).join(', ')} from its install (go.js ${GO_RAM_GB}GB ${fleetGB ? `of ${Math.round(fleetGB)}GB` : 'of an unmeasured fleet: RAM cost 0'}); g de-biased by ${GO_EMBEDDED.why} on the own lives' share ${w.toFixed(2)}; w0r1d_d43m0n on the climb at ${Math.round(w0.powerPerH)}/h (${w0.source}), ${W0_GAMES_PER_H} games/h; Daedalus in the final window at ${POWER_PER_HOUR.Daedalus}/h (faction_rep), favor ${favorStream ? `${Math.round(favorStream.repPerH)} rep-eq/h (${favorWhy})` : `none (${favorWhy})`}`
+  const why = `the farm on the hacking route at GoPower ${goPower}${sf14 >= 1 ? ' x2 (SF14)' : ''}: each life's best arm of ${GO_LIFE_ARMS.map((k) => `${k} ${POWER_PER_HOUR[k]}/h`).join(', ')} from its install (go.js ${GO_RAM_GB}GB ${fleetGB ? `of ${Math.round(fleetGB)}GB` : 'of an unmeasured fleet: RAM cost 0'}); g de-biased by ${GO_EMBEDDED.why} on the own lives' share ${w.toFixed(2)}; w0r1d_d43m0n on the climb at ${Math.round(w0.powerPerH)}/h (${w0.source}), ${w0.gamesPerH.toFixed(1)} games/h${w0.W0 ? `, x${w0.W0.toFixed(3)} banked this life` : ''}; Daedalus in the final window at ${POWER_PER_HOUR.Daedalus}/h (faction_rep), favor ${favorStream ? `${Math.round(favorStream.repPerH)} rep-eq/h (${favorWhy})` : `none (${favorWhy})`}`
   return { go: { w0, rep, favorStream, farm, why }, goCadenceMult: 1 }
 }

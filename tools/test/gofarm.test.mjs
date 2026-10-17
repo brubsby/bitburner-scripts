@@ -175,8 +175,10 @@ export async function run() {
   const ex = fs.readFileSync(path.join(REPO_ROOT, 'exitplan.js'), 'utf8')
   const pats = [
     [prog, /goExitInputsOf\(\{[^\n]*fleetGB: readJson\(ns, '\/tel\/batch\.txt'\)\?\.ram\?\.total/, "exitInputsBaseOf passes batch.txt's ram.total"],
-    [ex, /const cycleAt = \(i, t\) => gCyc \*/, 'the powered cycles carry the Go lift'],
-    [ex, /mult \*= gCyc \* liftBefore/, 'the walked cycles carry the Go lift'],
+    [ex, /const cycleAt = \(i, t\) => gAt\(i\) \*/, 'the powered cycles carry the Go lift'],
+    [ex, /mult \*= gAt\(i\) \* liftBefore/, 'the walked cycles carry the Go lift'],
+    // gAt: g x the farm, or after an early / installed Red Pill g x the farm with the hidden opponent's arm.
+    [ex, /const gAt = \(i\) => \(rpPostFrom !== null && i >= rpPostFrom \? gCycPost : gCyc\)/, 'every cycle reads its own life\'s farm (gAt)'],
     [ex, /const gCyc = multGainPerCycle \* goGain/, 'gCyc is g times the farm'],
   ]
   c8.examined(pats.length)

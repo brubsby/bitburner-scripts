@@ -162,7 +162,7 @@ import { installPointH, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { deriveWeights, exitWeights, pathGainWeight, augValue, bindingGate, TERMINAL_AUG, TERMINAL_LN, moneyLn, homeLn, ONEOFF_EFFECTS } from 'objective.js'
 // Pure (no ns surface): the Go opponent's channel weights, priced over the bonus's life.
 import { goWeightsGen, bladeGoWeightsGen } from 'goweights.js'
-import { goExitInputsOf } from 'goplan.js'
+import { goExitInputsOf, w0Eligible } from 'goplan.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
@@ -5706,6 +5706,12 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // — BitNode 8's FavorToDonateToFaction 0 — and ground elsewhere
     // (hoursToRep without a donation cost).
     terminalRep: rp ? rp.repReq ?? 0 : redPillRepReq ?? 0,
+    // THE RED PILL INSTALLED (getResetInfo().ownedAugs, the installed set —
+    // goplan.w0Eligible): exitplan prices the final window without the join,
+    // the reputation or another terminal install, the climb from this life's
+    // exp with the hidden opponent's bonus banked (exitplan rpHeld). It was
+    // priced as one more terminal install and a climb from exp 0.
+    redPillInstalled: w0Eligible(info).eligible === true,
     donationCost: typeof rp?.donationCost === 'number'
       ? rp.donationCost
       : !rp && redPillRepReq > 0 && favorToDonateOf(bitNodeMults(info)) === 0 && bitNodeMults(info)?.FactionWorkRepGain > 0
