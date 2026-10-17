@@ -70,7 +70,7 @@ before starting each subagent.
     a crime-conditioned prior for node entry.
 
 ## Tooling
-0. **Game socket auto-reconnect** (high priority for unattended play): the daemon is now the
+0. ~~**Game socket auto-reconnect**~~ DONE 2026-10-17: live test — `systemctl --user restart bitburner-daemon` at 13:05:20Z, rfalink reconnected in ~5s (reconnects 1), no hand reconnect. (high priority for unattended play): the daemon is now the
    systemd service `bitburner-daemon` (077a2ee), but after any service restart the game's RFA
    socket sits at "Reconnecting" until someone calls newRemoteFileApiConnection() from the page.
    Make the game reconnect itself (an in-game watcher, e.g. rfalink.js, retrying via the module).
