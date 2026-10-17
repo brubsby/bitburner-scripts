@@ -82,3 +82,12 @@ before starting each subagent.
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
+
+## autogtnh (postponed 2026-10-17 17:05 UTC, governor off; keep-working cron 71e65050 deleted, re-create it on step-up)
+1. **MA corridor-wall module**: waits on the user's site answer (Desk `ma-module-site`); then the steel/Black Steel/EV
+   circuit input prep (agent stopped at start), dev rehearsal, build (robot #1 best; #4/#5 lack geolyzer/Angel).
+2. **Steam black-start step B**: mint Drain Module + Shutter Module patterns, use 16x Silver/Blue Alloy cable, move the
+   dock charger 160,65,48 enable onto the AE-alive signal first (autogtnh STATUS top, 4c84105).
+3. **Own-infra Desk phase 2** (in-game OC desk screen); tailscale serve stays off (user: "Not yet").
+4. Agents still running at the cut may have left follow-ups: Empty Cell priority + press channel, rocket kit,
+   spawn-egg answer (relay to the Desk `spawner-souls`), base Fishing Port gate, cane soil swap. Read their reports.
