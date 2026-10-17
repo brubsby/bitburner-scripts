@@ -628,6 +628,11 @@ if (!has('--phase1') && FLEET !== 'five') {
       const iS = bn10IncomeOf(hackSfOf(lv0))
       console.log(`  CHECK the leg's income (CALIBRATED on one run, BN10.1): the MEASURED final window $${BN10_ANCHOR.measured.toExponential(2)}/s (rates.mjs, ${BN10_ANCHOR.key.slice(0, 10)}, level ${BN10_ANCHOR.level}) vs the rates model's line at BN10.1's entry SFs $${BN10_ANCHOR.model.toExponential(2)}/s: model error ${(100 * (BN10_ANCHOR.model / BN10_ANCHOR.measured - 1)).toFixed(0)}% — the leg is anchored on the measurement (x model SF ratio); cross-check, BN10.1's late lives (peak/length, a lower bound) $${COVENANT5.income.toExponential(2)}/s`)
       console.log(`    the leg from the plan start's SFs: $${iS.toExponential(2)}/s (SF ratio x${(iS / BN10_ANCHOR.measured).toFixed(2)}) -> ${covenantLegHours(iS).toFixed(1)}h; MEASURED in BN10.1: the 850 combat 457 -> 1441 inside one 2.4h life (fits inside the leg)`)
+      {
+        // THE STOCK TRADER beside the leg: NOT PRICED, bounded (sleeves.mjs COVENANT5_TRADER)
+        const { COVENANT5_TRADER: T, covenantTraderBoundH } = await import('./sleeves.mjs')
+        console.log(`    the stock trader beside the leg: NOT PRICED (immaterial, bounded): the market's capacity caps any trader at the perfect-foresight long+short $${T.pfCum[24].toExponential(1)} by a 24h-old market (${covenantTraderBoundH(iS, 24).toFixed(2)}h of the leg), $${T.pfCum[61].toExponential(1)} by 61h; the shipped 4S trader x${T.liveFactor} (live calibration) $${(T.shipCum[24] * T.liveFactor).toExponential(1)} by 24h. A trader-funded $1e17 needs >= ~100-200h of one market life (${T.source})`)
+      }
     } else console.log(`  the leg's income: NOT CALIBRATED (no measured BN10 final window in the rates fit) — the model's line alone`)
     {
       // the live game carries out ONE committed choice (sleeves.mjs COVENANT5_PLANNED -> sleeveplan.js

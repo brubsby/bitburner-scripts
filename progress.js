@@ -2858,7 +2858,14 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       } catch (e) {
         gift = { hackOptions: [], bladeOptions: [], switchCostH: ROUTE_GIFT.switchCostH, why: `routeGiftOf threw: ${String(e).slice(0, 160)}` }
       }
-      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post, gift, hold: routeHoldOf(info, pc) })
+      // THE COVENANT MANDATE (backlog 17b): where it binds, both arms are priced to exit HOLDING the sleeve
+      let mandate = null
+      try {
+        mandate = covenantMandateOf(ns, info, player, readFleet(ns, info))
+      } catch (e) {
+        mandate = { covenant: null, unpriced: true, why: `covenantMandateOf threw: ${String(e).slice(0, 160)}` }
+      }
+      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post, gift, hold: routeHoldOf(info, pc), mandate })
       let simulacrum = null
       if (d?.key === 'blade' && typeof d.bladeH === 'number') {
         try {
@@ -2870,7 +2877,8 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
           const rankPerH = fin1(tel?.rankPerHour) && tel.rankPerHour > 0 ? tel.rankPerHour : null
           simulacrum = yield* simulacrumVerdictGen({
             s0: startFor(bladeBasis),
-            withoutH: d.bladeH,
+            // the black-op exit (under the Covenant mandate d.bladeH also carries the hacking continuation)
+            withoutH: d.mandate?.priced ? d.mandate.bladeExitH : d.bladeH,
             cost: fin1(cost) ? cost : null,
             repReq: fin1(repReq) ? repReq : null,
             wealth,
@@ -4750,6 +4758,30 @@ function sleeveAugExitOf(ns, info, schedule, inputs, planFleet, replanAt, pendin
   } catch (e) {
     return out(`sleeve aug comparison failed: ${String(e).slice(0, 80)}`)
   }
+}
+
+/**
+ * THE COVENANT MANDATE AS A ROUTE INPUT (backlog 17b; plan.decideBladeRouteGen `mandate`): where
+ * sleeveplan.covenantMandated binds, the exitplan campaign every route arm is priced with — the
+ * next mandated sleeve's price, the $75b invite money, the combat legs to 850 with the fleet at the
+ * gym beside the player (sleeveplan.covenantCombatHours, the same legs covenantExitOf prices), and
+ * membership. Returns { covenant, why } when mandated, { covenant: null, why } when it does not bind,
+ * and { covenant: null, unpriced: true, why } when it binds but cannot be priced (the route decision
+ * then publishes it, never prices the arms as if it did not bind).
+ */
+function covenantMandateOf(ns, info, player, planFleet) {
+  if (info?.currentNode !== COVENANT_MANDATE.node) return { covenant: null, why: `no Covenant mandate outside BitNode ${COVENANT_MANDATE.node}` }
+  const n = Number.isInteger(planFleet?.sleeves) ? planFleet.sleeves : null
+  const from = n === null ? null : sleevesFromCovenant(n, sfLevel(info, 10), info?.currentNode)
+  if (from === null) return { covenant: null, unpriced: true, why: 'the Covenant mandate may bind but the fleet size is unreadable' }
+  if (!covenantMandated(info?.currentNode, from, sfLevel(info, 10))) return { covenant: null, why: `the Covenant mandate is met (${from} of ${covenantTarget(sfLevel(info, 10))} bought)` }
+  const cost = covenantSleeveCost(from)
+  const member = player.factions.includes(COVENANT.faction)
+  const legs = member ? null : covenantCombatHours(levelledPerson(player, info), planFleet?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
+  const combatH = member ? 0 : legs ? legs.hours : null
+  if (!isFinite(cost) || combatH === null) return { covenant: null, unpriced: true, why: `the Covenant mandate binds (sleeve #${from + 1} of ${covenantTarget(sfLevel(info, 10))}) but its ${combatH === null ? 'combat legs are' : 'price is'} unpriced` }
+  const perSleeveExp = planFleet?.expToPlayerHackingIfStudying && n > 0 ? planFleet.expToPlayerHackingIfStudying / n : 0
+  return { covenant: { cost, joinMoney: COVENANT.joinMoney, combatH, member, sleeveExpPerSec: perSleeveExp }, why: `MANDATED (${covenantTarget(sfLevel(info, 10)) > COVENANT_MANDATE.target ? COVENANT_MANDATE.decided5 : COVENANT_MANDATE.decided}): sleeve #${from + 1} of ${covenantTarget(sfLevel(info, 10))}, $${cost.toExponential(2)}${member ? '' : `, ${combatH.toFixed(1)}h of combat to join`} — every route priced to exit holding it` }
 }
 
 /**

@@ -292,7 +292,7 @@ async function sg7() {
   if (!(fi < fk) || !(fi < 1) || inst.clears() !== 2) c.fail("an install on the route must clear the gift's charge in the Bladeburner arm (the factor drops below the live one; one clear per install)", JSON.stringify({ fk, fi, clears: inst.clears() }))
   // the wiring: progress.js hands the gift to the route decision
   c.examined(2)
-  if (!/decideBladeRouteGen\(\{[^\n]*\bgift, hold: routeHoldOf\(info, pc\) \}\)/.test(pr) || !/gift = routeGiftOf\(ns, info, base, bladeS0\)/.test(pr)) c.fail('progress.js bladeRouteOf must price the route with the gift (routeGiftOf -> decideBladeRouteGen gift)')
+  if (!/decideBladeRouteGen\(\{[^\n]*\bgift, hold: routeHoldOf\(info, pc\), mandate \}\)/.test(pr) || !/gift = routeGiftOf\(ns, info, base, bladeS0\)/.test(pr)) c.fail('progress.js bladeRouteOf must price the route with the gift (routeGiftOf -> decideBladeRouteGen gift)')
   if (!/routeReportOf\(routePin, bladeRoute, giftStateOf\(info, canAccessCotMG\(info\)\)\)/.test(pr)) c.fail('progress.js must publish the gift beside the route (routeReportOf giftState)')
   // 6. health: acted != priced with no file pin; a non-file pin; accepted but not priced with the gift
   const base = { node: 7, lastAugReset: 1, route: 'blade', priced: 'blade', pinned: false, pin: { file: rp.ROUTE_PIN }, gift: { accepted: true, pricedWithGift: true } }
@@ -1353,8 +1353,8 @@ async function sg21() {
   const pl = rd('plan.js')
   const pr = rd('progress.js')
   c.examined(3)
-  if (!/const d = unpricedHoldOf\(d0, \{ pointHack, pointBlade, prev: was, hold, post \}\)/.test(pl)) c.fail('decideBladeRouteGen must pass its decision through unpricedHoldOf')
-  if (!/post: !!pc\.post, gift, hold: routeHoldOf\(info, pc\) \}\)/.test(pr)) c.fail('progress.js must hand the route decision the route to hold (routeHoldOf)')
+  if (!/const d = unpricedHoldOf\(d0, \{ pointHack: mUnp \? null : pointHack, pointBlade: mUnp \? null : pointBlade, prev: was, hold, post \}\)/.test(pl)) c.fail('decideBladeRouteGen must pass its decision through unpricedHoldOf')
+  if (!/post: !!pc\.post, gift, hold: routeHoldOf\(info, pc\), mandate \}\)/.test(pr)) c.fail('progress.js must hand the route decision the route to hold (routeHoldOf)')
   if (!/pc\.decisions\.bladeRoute = \{ key: held, held: !!held, unpriced: \['hack', 'blade'\], error: true/.test(pr)) c.fail('a thrown route decision must hold the committed route, not read key null (acted as hack)')
   // 3. published and failed loud
   const rep = rp.routeReportOf(rp.routePinOf('', 7), H(50, null, { key: 'blade' }, null), null)

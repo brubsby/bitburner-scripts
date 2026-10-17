@@ -3128,9 +3128,32 @@ export function unpricedHoldOf(d, { pointHack, pointBlade, prev = null, hold = n
  *                     with whether it would flip the point comparison (never folded into the decision)
  * The record carries `gift` (every option's hours, the chosen ones, the bound).
  *
+ * THE COVENANT MANDATE (`mandate`, backlog 17b, 2026-10-16): where sleeveplan.covenantMandated binds
+ * (BN10.3: the 5th Covenant sleeve, $1e17, membership — 20 installed augs, $75b, hacking and every
+ * combat stat 850), the node is not exited before the purchase (endgame.js holds), so BOTH arms are
+ * priced to "exit holding the sleeve":
+ *   mandate.covenant  the exitplan campaign ({cost, joinMoney, combatH, member, sleeveExpPerSec}) —
+ *                     the hacking arm's every input carries it (the $ leg and the combat legs in the
+ *                     final window, exitplan `covenant`; the trader's book compounds inside its money
+ *                     leg, traderw r(W));
+ *   the Bladeburner arm: the black-op exit, THEN the hacking route's mandated trajectory from the live
+ *                     state, per draw on the same draw (CRN). The blade route builds no economy
+ *                     (BN6.2/6.3 measured: peak $2e12, hacking 130-300) and the trader cannot fund it
+ *                     (tools/sim/stocks/capacity.mjs: the market's capacity is $6e12 at an install,
+ *                     ~$1.4e13 a day later; perfect foresight long+short earns $2.6e16 in 61h, the
+ *                     shipped 4S trader ~$1.4e15). That continuation re-prices the World Daemon climb
+ *                     the black-op exit makes unnecessary and credits nothing the blade route built:
+ *                     an UPPER estimate of the arm. Published beside it, never decided on: the LOWER
+ *                     one (the black-op exit + the mandate's marginal on the hacking arm, as if the
+ *                     blade route had the hacking route's economy) and whether it would flip the points.
+ * The record carries `mandate` (hackH without, hackCovH, bladeExitH, contH, lowerH, flips).
+ *
  * Returns the decideAmong record plus { hackH, bladeH } (the points).
  */
-export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now(), gift = null, hold = null } = {}) {
+export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now(), gift = null, hold = null, mandate = null } = {}) {
+  // THE MANDATE (above): every hacking input carries the campaign; absent, the inputs unchanged
+  const cov = mandate && mandate.covenant && typeof mandate.covenant === 'object' ? mandate.covenant : null
+  const withCov = (x) => (cov && x ? { ...x, covenant: cov } : x)
   // The cadence in steps of e^0.25 (28%) around the point's: the drawn
   // cadences collapse to a handful of simulations (~50-100ms each), however
   // wide the cadence posterior is.
@@ -3177,14 +3200,14 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     }
   }
   // THE GIFT (L4): each arm's options priced from the same live state; the best of each is the arm
-  let hackBase = base
+  let hackBase = withCov(base)
   let giftRec = null
   let pointHack = null
   if (gift) {
     const hackRows = []
     for (const o of gift.hackOptions ?? []) {
       if (!o?.inputs) continue
-      hackRows.push({ src: o.src, key: o.key ?? null, inputs: o.inputs, withGift: o.withGift !== false, hours: yield* hoursOf(o.inputs) })
+      hackRows.push({ src: o.src, key: o.key ?? null, inputs: withCov(o.inputs), withGift: o.withGift !== false, hours: yield* hoursOf(withCov(o.inputs)) })
       yield
     }
     const hb = hackRows.filter((r) => fin(r.hours)).reduce((b, r) => (!b || r.hours < b.hours ? r : b), null)
@@ -3224,19 +3247,57 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   if (pointHack === null) pointHack = yield* hoursOf(hackBase)
   yield
   const ens = yield* bladeExitMeanGen(null, { Q, hoursOfMember: (m) => bladeH(base?.cycleHours, m) })
-  const pointBlade = ens.hours
+  // THE MANDATE'S BLADEBURNER ARM (above): the black-op exit + the hacking arm's mandated trajectory
+  const bladeExitH = ens.hours
+  const pointBlade = cov ? (fin(bladeExitH) && fin(pointHack) ? bladeExitH + pointHack : null) : bladeExitH
   const memberOf = (d) => bladeMemberOfDraw(d, Q) ?? 0
+  // per draw, the hacking arm's hours once (the blade arm's continuation reads the same draw)
+  const hackMemo = new Map()
+  function* hackDrawH(d) {
+    if (!hackMemo.has(d)) hackMemo.set(d, yield* hackGen(applyDraw(hackBase, d), d))
+    return hackMemo.get(d)
+  }
+  function* bladeDrawH(d) {
+    const b = yield* bladeH(applyDraw(base, d)?.cycleHours, memberOf(d))
+    if (!cov) return b
+    const c = yield* hackDrawH(d)
+    return fin(b) && fin(c) ? b + c : null
+  }
   const options = [
-    { key: 'hack', noiseKey: noiseKeyOf(basis, hackBase), sim: (d) => traj(applyDraw(hackBase, d), d), simGen: (d) => hackGen(applyDraw(hackBase, d), d) },
-    { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeH(applyDraw(base, d)?.cycleHours, memberOf(d))), simGen: (d) => bladeH(applyDraw(base, d)?.cycleHours, memberOf(d)) },
+    { key: 'hack', noiseKey: noiseKeyOf(basis, hackBase), sim: (d) => (cov ? drain(hackDrawH(d)) : traj(applyDraw(hackBase, d), d)), simGen: (d) => (cov ? hackDrawH(d) : hackGen(applyDraw(hackBase, d), d)) },
+    { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeDrawH(d)), simGen: (d) => bladeDrawH(d) },
   ]
+  let mandateRec = null
+  if (cov) {
+    // the LOWER estimate, published only: the hacking arm's point WITHOUT the campaign (the same inputs, the gift's choice)
+    const { covenant: _c, ...noCov } = hackBase
+    const hackNoCovH = yield* hoursOf(noCov)
+    const r3 = (x) => (fin(x) ? +x.toFixed(3) : null)
+    const lowerH = fin(bladeExitH) && fin(pointHack) && fin(hackNoCovH) ? bladeExitH + (pointHack - hackNoCovH) : null
+    const pk = (b, h) => (fin(b) && (!fin(h) || b < h) ? 'blade' : fin(h) ? 'hack' : null)
+    mandateRec = {
+      priced: fin(pointHack) && fin(pointBlade),
+      why: mandate.why ?? null,
+      cost: fin(cov.cost) ? cov.cost : null,
+      hackH: r3(hackNoCovH),
+      hackCovH: r3(pointHack),
+      bladeExitH: r3(bladeExitH),
+      contH: r3(pointHack),
+      bladeH: r3(pointBlade),
+      lowerH: r3(lowerH),
+      flips: fin(lowerH) ? pk(lowerH, pointHack) !== pk(pointBlade, pointHack) : null,
+      notSimulated: 'the economy the Bladeburner route builds before its continuation (credited nothing: the upper estimate); the World Daemon climb the black-op exit makes unnecessary (re-priced in the continuation); the trader alone as the money leg (capacity.mjs: >= ~100h past an install even with perfect foresight)',
+    }
+  }
   const was = prev?.key === 'hack' || prev?.key === 'blade' ? prev : null
   // the route switch's floor with the gift (L4): the option that is not the committed route pays it
   const switchCost = giftRec && fin(giftRec.switchCostH) ? { hack: giftRec.switchCostH, blade: giftRec.switchCostH } : {}
   const d0 = post
     ? yield* decideAmongGen({ options, prev: was, draws, redecide: redecide || !was, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade), switchCost })
     : { key: fin(pointBlade) && (!fin(pointHack) || pointBlade < pointHack) ? 'blade' : fin(pointHack) ? 'hack' : null, why: 'no posterior: the point comparison' }
-  const d = unpricedHoldOf(d0, { pointHack, pointBlade, prev: was, hold, post })
+  // a mandate that binds but cannot be priced leaves BOTH arms unpriced (never priced as if it did not bind)
+  const mUnp = mandate?.unpriced === true
+  const d = unpricedHoldOf(d0, { pointHack: mUnp ? null : pointHack, pointBlade: mUnp ? null : pointBlade, prev: was, hold, post })
   // THE CHAIN (the gift unaccepted and acceptable): the accept follows the chosen arm's best option
   if (giftRec) giftRec.accept = d.key === 'blade' ? giftRec.bladeWithGift === true : d.key === 'hack' ? giftRec.hackWithGift === true : null
   if (giftRec && typeof gift.boundInputsOf === 'function') {
@@ -3244,5 +3305,5 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     const pointKey = (h) => (fin(pointBlade) && (!fin(h) || pointBlade < h) ? 'blade' : fin(h) ? 'hack' : null)
     giftRec.awakeningBound = { hackH: fin(bh) ? +bh.toFixed(3) : null, flips: fin(bh) ? pointKey(bh) !== pointKey(pointHack) : null, why: 'the hacking arm with Awakening (x0.95) from its start: an upper bound, published, never in the decision' }
   }
-  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size, gift: giftRec ?? { priced: false, why: 'the gift is not accepted: both routes priced without it' } }
+  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size, gift: giftRec ?? { priced: false, why: 'the gift is not accepted: both routes priced without it' }, mandate: mandateRec ?? { priced: false, ...(mUnp ? { unpriced: true } : {}), why: mandate?.why ?? 'no Covenant mandate binds here: both routes priced to their own exits' } }
 }

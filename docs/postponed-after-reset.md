@@ -42,7 +42,17 @@ before starting each subagent.
 16. **Stanek layout for Bladeburner routes** (fragments are all hacking; no combat layout).
 17. **Sleeve throw-fallback** is only source-checked (cec58da) — add an executed test.
 
-17b. **BN10.3 live route must know about the Covenant purchase** (1247ba4/5858261): gameplan plays the
+17b. DONE 2026-10-16 (route part): `plan.decideBladeRouteGen` takes `mandate` (progress.js
+    `covenantMandateOf`): the hacking arm carries exitplan `covenant`, the Bladeburner arm is the black-op
+    exit + the mandated hacking trajectory per draw (upper estimate; the lower one and whether it flips are
+    published as `decisions.bladeRoute.mandate`); an unpriced mandate leaves both arms unpriced. Tests MC1-MC5
+    (tools/test/covenantroute.test.mjs). Still open below: the banked-money and per-sleeve items.
+    The stock trader cannot fund the $1e17 (tools/sim/stocks/capacity.mjs): the market's capacity is $6e12 at
+    an install; perfect foresight long+short earns $2.6e16 by a 61h-old market, $1.9e17 by 200h; the shipped
+    4S trader $1.35e15 by 61h (live calibration: the sim is -62%/bin low at books >= $1e12, BN9.3's aged market).
+    Item 9's trader error is the opposite sign at large books: traderw's RW_PRIOR is fitted on 5h fresh
+    markets (W* = $1e12), and an aged market's capacity is 2-60x that — r(W) needs market age as an input.
+17b-orig. **BN10.3 live route must know about the Covenant purchase** (1247ba4/5858261): gameplan plays the
     buying BN10.3 as a ~48h hacking+Stanek clear; the live route pricer doesn't know about the $1e17 mandate,
     so if it picks Bladeburner there, endgame.js holds the exit until the money arrives, possibly for a long time.
     Also: the leg ignores the final window's banked money (~1h long); the per-sleeve base value re-derives

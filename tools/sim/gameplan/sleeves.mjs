@@ -220,6 +220,35 @@ export const COVENANT5 = { cost: 1e17, income: 1.24e12, hours: 22.4 }
  * itself banks before the exit (<= the post-TRP climb, 0.3-1.3h — the leg is that much long),
  * and a Bladeburner exit run alongside an economy (the work slot cannot serve both).
  */
+/**
+ * THE STOCK TRADER AS THE LEG'S MONEY (priced 2026-10-16 at the user's ask; NOT in the leg, stated):
+ * the market's own capacity bounds it (tools/sim/stocks/capacity.mjs, the game's market code, 12 fresh
+ * markets x 200h; an install re-initialises the market, Prestige.ts:166-170, so "age" is hours since the
+ * last install). No trader holds more than sum maxShares x price (Stock.ts:152; transactions move no
+ * price), so its income is bounded by the market's moves on that book, whatever its capital:
+ *   pfCum     perfect foresight, long+short, saturated from the install, no costs (an upper bound on
+ *             any trader): cumulative $ by market age (h), median over seeds
+ *   oracleCum the 4S forecast's side, long only (what a 4S long-only trader can expect, no costs)
+ *   shipCum   the SHIPPED 4S trader (stockstrat.js) on an unlimited book
+ * Calibration (capacity.mjs LIVE CALIBRATION, the ledger /tel/stock-rw.txt at books >= $1e12, matched
+ * by market age and book): the sim under-predicts the live trader, -62% per bin (hours-weighted
+ * geometric), -85% in dollars (BN9.3's 30h life dominates) — so liveFactor 6.7 scales shipCum to the
+ * live ceiling. BN10 has no stock multiplier (BitNode.tsx case 10; only the 4S prices are BN-scaled).
+ */
+export const COVENANT5_TRADER = {
+  source: 'tools/sim/stocks/capacity.mjs --seeds 12 --hours 200 (2026-10-16, bitburner v3.0.2 market)',
+  pfCum: { 12: 2.07e14, 24: 5.77e14, 48: 5.49e15, 61: 2.64e16, 96: 5.44e16, 200: 1.89e17 },
+  oracleCum: { 12: 2.59e13, 24: 8.72e13, 48: 1.49e15, 61: 2.84e15, 96: 5.49e15, 200: 3.41e16 },
+  shipCum: { 12: 1.24e13, 24: 5.1e13, 48: 6.95e14, 61: 1.35e15, 96: 3.14e15 },
+  liveFactor: 6.7,
+}
+/** The trader's most over the leg, in hours of the leg's income: the perfect-foresight $ by the final life's end (age <= `ageH`) / income. */
+export function covenantTraderBoundH(incomePerSec, ageH = 24) {
+  const ages = Object.keys(COVENANT5_TRADER.pfCum).map(Number).sort((a, b) => a - b)
+  const a = ages.find((x) => x >= ageH) ?? ages[ages.length - 1]
+  return incomePerSec > 0 ? COVENANT5_TRADER.pfCum[a] / incomePerSec / 3600 : Infinity
+}
+
 export function covenantLegHours(incomePerSec) {
   if (!(incomePerSec > 0)) return Infinity
   return covenantCost(COVENANT_HELD) / incomePerSec / 3600
