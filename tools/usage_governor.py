@@ -49,12 +49,15 @@ DIRECTIVES = {
                 'healthcheck ignores cosmetic classes; no new optimisation projects',
     'minimal': 'Go loss watcher OFF; healthcheck only for stalls (daemon unreachable, PLAYER IDLE, '
                'NO INSTALL, EXIT NOT APPROACHING); deploy/restart only, no subagents unless the run is stalled',
-    'off': 'no wake watchers; no subagents; one final autonomy audit, then sleep to the reset',
+    'off': 'stall-only health watcher stays (killed only at the hard stop); no other wake watchers; no subagents unless the run is stalled',
 }
 WATCHERS = {  # bracketed patterns: pkill -f must never match its own shell
     'minimal': ['[g]o-loss-watch.py', '[g]rep --line-buffered -m1 -E HOT'],
-    'off': ['[g]o-loss-watch.py', '[w]atch-run.sh', '[g]rep --line-buffered -m1 -E HOT'],
+    # 'off' keeps the STALL-ONLY health watcher: it costs nothing until a stall fires, and killing
+    # it at off hid BN11.2's 21h Bladeburner stall (2026-10-18) for ~12h. Only HARD kills it.
+    'off': ['[g]o-loss-watch.py', '[g]rep --line-buffered -m1 -E HOT'],
 }
+HARD_WATCHERS = ['[w]atch-run.sh']  # killed only at u >= HARD
 
 
 def read_src():
@@ -176,7 +179,7 @@ def main():
             print(json.dumps(out, indent=1)); return
         write_state(out)
         if new != level:
-            for pat in WATCHERS.get(new, []):
+            for pat in WATCHERS.get(new, []) + (HARD_WATCHERS if u >= HARD else []):
                 subprocess.run(['pkill', '-f', pat])
             backlog = (' BUDGET RAISED: work the postponed backlog in docs/postponed-after-reset.md'
                        ' (highest value first; strike items with their commits).') if LEVELS.index(new) > LEVELS.index(level) else ''
