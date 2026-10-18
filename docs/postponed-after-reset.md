@@ -28,6 +28,12 @@ before starting each subagent.
 8. **eBudget / eRep measure 0 in BN13** — later lives credit nothing for extra money/rep.
 9. **Trader model far too optimistic** ($1.5b/12h projected vs ~$2.7m realised).
 10. **Fresh-life income formula still ~x19 high** (opener purchase schedule copied from BN9).
+    2026-10-18 (BN10.3, incomecal.mjs): the steady formula (freshlife.steadyIncomeOf) at the
+    WHOLE fleet reads ~x13 over the live income because the split holds the fleet on the exp
+    farm (pipelines 2.5TB of 52TB); at the pipelines' RAM it is x1.2 (q 0.83-0.87). On the late
+    lives of BN10.1/13.1/9.1 the formula is x0.46-0.71 (measured includes the other streams).
+    The exit's money legs now price income from the state (exitplan incomeModelOf) — the
+    level-scaled extrapolation it replaced was x1e-4 low by the late lives.
 11. **OPTIONS OFF BASIS** (grafts row priced on another pass's basis).
 12. **Split controller oscillates on flat surfaces** on the hacking route (1208h vs 1210h)
     — hold when the gain is inside the estimate's noise.

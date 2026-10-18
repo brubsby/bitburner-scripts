@@ -934,6 +934,16 @@ if (!sleevesExpected) {
     const gainedH = oldest.exitH - now.exitH;
     if (gainedH < 0.5 * elapsedH) fail(`EXIT NOT APPROACHING: projected exit ${oldest.exitH.toFixed(1)}h -> ${now.exitH.toFixed(1)}h over ${elapsedH.toFixed(1)}h of wall time`, "the run is spending time without getting closer to the end — find which leg is stuck (progress.txt todo, installgate plan)");
   }
+  // F1b: the exit's money legs price income from the state (exitplan
+  // incomeModelOf: level, home RAM bought on the way, later batches' money
+  // multipliers, the formula's cap). Without it they hold today's fleet and
+  // multipliers for the rest of the node — BN10.3 2026-10-18 priced the
+  // Covenant leg at 374h for it (~35x too little late income).
+  {
+    const xi = readTel("exitinputs.txt");
+    const fresh = xi?.at && Date.now() - Date.parse(xi.at) < 20 * 60e3;
+    if (fresh && xi.inputs && !xi.inputs.incomeModel && !/scripts earn nothing/.test(String(xi.inputs.incomeModelWhy ?? ""))) fail(`INCOME MODEL OFF: the exit prices its money legs on today's income held flat — ${xi.inputs.incomeModelWhy ?? "no incomeModelWhy published (progress.js predates incomeModelGen?)"}`, "progress.js incomeModelGen: home RAM, batch.txt ram.total, the player's multipliers");
+  }
   // F2: installs must happen on the cadence the plan itself assumes.
   const lifeH = num(now.lifeMs) ? now.lifeMs / 3.6e6 : null;
   // A hold the count-aware exit simulation chose (installgate countDecidedBy

@@ -427,12 +427,28 @@ export function hoursToMoney(target, o = {}) {
   // re-initialised and the estimator relearns (nodeecon.fitCapital).
   const warmH = num(o.capitalWarmupH) && o.capitalWarmupH > 0 ? o.capitalWarmupH : 0
   const lvlIncome = num(incomeAtLevel1) && incomeAtLevel1 > 0 ? incomeAtLevel1 : 0
+  // THE SCRIPTS' INCOME AS A FUNCTION OF THE STATE (o.incomeAt(level, homeGB),
+  // exitplan incomeModelOf: the batcher's steady income from the game's
+  // formulas, freshlife.steadyIncomeOf, anchored to today's measured income)
+  // in place of lvlIncome x (level + 50) / 51 — which held today's fleet and
+  // today's money multipliers for the rest of the node, so a late money leg
+  // read ~35x too little income (BN10.3 2026-10-18: the $1e17 Covenant leg at
+  // 374h against ~10-22h on BN10.1's measured late income).
+  // HOME RAM BOUGHT ON THE WAY (o.homeRam {gb}, mutated so the next leg starts
+  // from it; o.homeCostAt(gb): the next doubling's price, PlayerObjectServer
+  // Methods.ts:30-39): home RAM survives every install (only purchased
+  // servers are deleted), and a long leg buys the doubling whenever the income
+  // it adds over the leg's remaining time at today's rate repays its price.
+  const incAt = typeof o.incomeAt === 'function' ? o.incomeAt : null
+  const homeSt = incAt && o.homeRam && pos(o.homeRam.gb) && typeof o.homeCostAt === 'function' ? o.homeRam : null
+  const homeMax = pos(o.homeMaxGB) ? o.homeMaxGB : 2 ** 30
+  const lvlInc = incAt !== null ? (l) => incAt(l, homeSt ? homeSt.gb : null) : (l) => (lvlIncome * (l + 50)) / 51
   // o.coarse: a quarter of the steps (a screening estimate, ~10% — a caller
   // that only needs to know the leg is well inside another uses it first).
   const coarse = o.coarse === true
   let stepH = o.stepH ?? 1 / 120
   if (!num(target) || target <= money0) return 0
-  if (!(lvlIncome > 0 || flat > 0 || r > 0) || !pos(mult) || !num(exp0)) return null
+  if (!(lvlIncome > 0 || incAt !== null || flat > 0 || r > 0) || !pos(mult) || !num(exp0)) return null
   let money = money0
   let exp = Math.max(0, exp0)
   let h = 0
@@ -444,7 +460,7 @@ export function hoursToMoney(target, o = {}) {
   // is then reported as the maxHours it could not beat.
   {
     const lvl0 = levelAt(exp, mult)
-    const r0 = (lvlIncome * (lvl0 + 50)) / 51 + flat + (typeof extraAt === 'function' ? extraAt(0) : 0) + capitalEarnAt(Math.max(0, money), capC)
+    const r0 = lvlInc(lvl0) + flat + (typeof extraAt === 'function' ? extraAt(0) : 0) + capitalEarnAt(Math.max(0, money), capC)
     const est = r0 > 0 ? (target - money) / r0 / 3600 : maxHours
     stepH = Math.max(stepH, Math.min(maxHours, est) / (coarse ? 50 : 100))
     // A compounding balance must not be stepped past ~2% growth: the linear
@@ -501,7 +517,7 @@ export function hoursToMoney(target, o = {}) {
   const xrAt = typeof o.expRateAt === 'function' ? o.expRateAt : null
   const xr0 = pos(expPerSec) ? expPerSec : 0
   const tgtAt = typeof o.targetAt === 'function' ? o.targetAt : null
-  const trap = shapedCap && lvlIncome > 0
+  const trap = shapedCap && (lvlIncome > 0 || incAt !== null)
   // The level at the next step's start, when this step computed it (the trapezoid's end).
   let lvlNext = null
   // A landing bisected inside a curved step reads the step's own rate (traderw.capitalStepFn).
@@ -510,8 +526,22 @@ export function hoursToMoney(target, o = {}) {
   while (h < maxHours && iter++ < 4000) {
     const lvl = lvlNext ?? levelAt(exp, mult)
     lvlNext = null
-    // income(level) = incomeAtLevel1 * (level + 50) / 51
-    const rate = (lvlIncome * (lvl + 50)) / 51 + flat + (exAt !== null ? exAt(h) : 0)
+    // The home doubling, bought at the step's start where it repays itself
+    // inside the leg (at most a few a step; the balance never goes below 0).
+    if (homeSt !== null && tgtAt === null) {
+      for (let k = 0; k < 4 && homeSt.gb * 2 <= homeMax; k++) {
+        const c = o.homeCostAt(homeSt.gb)
+        if (!(c > 0) || money < c) break
+        const cur = lvlInc(lvl)
+        const gain = incAt(lvl, homeSt.gb * 2) - cur
+        const rNow = cur + flat + (exAt !== null ? exAt(h) : 0) - spend
+        if (!(gain > 0) || !(rNow > 0) || gain * ((target - money + c) / rNow) < c) break
+        money -= c
+        homeSt.gb *= 2
+      }
+    }
+    // income(level) = incomeAtLevel1 * (level + 50) / 51, or the state's (incomeAt)
+    const rate = lvlInc(lvl) + flat + (exAt !== null ? exAt(h) : 0)
     // THE WARM-UP ENDS ON ITS HOUR, not on the next step boundary: a 2.5h
     // step starting inside a 0.16h warm-up earned no capital for all of it
     // (live BN8 2026-09-26: the $250m -> $100b hoard read 10.25h against
@@ -550,8 +580,32 @@ export function hoursToMoney(target, o = {}) {
         dExp = xr * dt
         lvl2 = levelAt(exp + dExp, mult)
       }
-      rateS = rate + (lvlIncome * (lvl2 - lvl)) / 51 / 2
+      rateS = rate + (lvlInc(lvl2) - lvlInc(lvl)) / 2
       lvlNext = lvl2
+    }
+    // THE STATE'S INCOME MOVES WITHIN A LEG (incomeAt: the level climbs from 1
+    // after an install, the home doublings land): a step is held to 2% of the
+    // target at its opening rate and to LVL_STEP of the level's own move, so
+    // neither is read at a step's opening value for hours (a leg sized at the
+    // fresh window's level-1 rate was one 100h step).
+    if (incAt !== null && !trap) {
+      const rr = rate - spend
+      const T = tgtAt !== null ? tgtAt(h) : target
+      if (rr > 0) {
+        const lim2 = Math.max(1 / 3600, (0.02 * T) / (rr * 3600))
+        if (sH > lim2) sH = lim2
+      }
+      dt = sH * 3600
+      dExp = xr * dt
+      if (dExp > 0) {
+        const l2 = levelAt(exp + dExp, mult)
+        const lim = (coarse ? 4 : 1) * LVL_STEP * (lvl + 50)
+        if (l2 - lvl > lim) {
+          sH *= lim / (l2 - lvl)
+          dt = sH * 3600
+          dExp = xr * dt
+        }
+      }
     }
     // The capital term over the step: exponential below the cap, linear at
     // it (traderw.capitalGain; on a curve, at the step's midpoint rate).
@@ -627,6 +681,99 @@ export function hoursToMoney(target, o = {}) {
   }
   return Infinity
 }
+/**
+ * THE INCOME GRID'S VALUE ($/s) at a money multiplier k, a level and a
+ * batcher RAM (GB): the grid is freshlife.incomeTableOf's { k, L, lr, v: ln
+ * $/s } — interpolated in (ln k, ln(L + 50), log2 GB) on ln $/s. Past the
+ * grid's top level the RAM-limited income keeps rising with (L + 50) (the op
+ * time, Hacking.ts:60-81) up to the top level's cap (its largest RAM); below
+ * its RAM, linear in RAM; past its largest k, the largest k (a floor).
+ */
+function slice2At(v, t, L, gb) {
+  const nL = t.L.length
+  const nR = t.lr.length
+  const lnv = (i, j) => (num(v[i]?.[j]) ? v[i][j] : -60)
+  const e = Math.log2(gb)
+  const at = (i, eC) => {
+    if (eC <= t.lr[0]) return lnv(i, 0) + Math.LN2 * (eC - t.lr[0])
+    let j = 0
+    while (j < nR - 2 && t.lr[j + 1] < eC) j++
+    const w = Math.min(1, (eC - t.lr[j]) / (t.lr[j + 1] - t.lr[j]))
+    return lnv(i, j) * (1 - w) + lnv(i, j + 1) * w
+  }
+  const eC = Math.min(e, t.lr[nR - 1])
+  if (L >= t.L[nL - 1]) return Math.min(at(nL - 1, eC) + Math.log((L + 50) / (t.L[nL - 1] + 50)), lnv(nL - 1, nR - 1))
+  if (L <= t.L[0]) return at(0, eC) + Math.log((L + 50) / (t.L[0] + 50))
+  let i = 0
+  while (i < nL - 2 && t.L[i + 1] < L) i++
+  const x0 = Math.log(t.L[i] + 50)
+  const x1 = Math.log(t.L[i + 1] + 50)
+  const w = Math.min(1, Math.max(0, (Math.log(L + 50) - x0) / (x1 - x0)))
+  return at(i, eC) * (1 - w) + at(i + 1, eC) * w
+}
+export function incomeTableAt(t, L, gb, k = 1) {
+  if (!t || !Array.isArray(t.L) || !Array.isArray(t.lr) || !Array.isArray(t.v) || !(gb > 0) || !(L > 0)) return 0
+  const ks = Array.isArray(t.k) && t.k.length ? t.k : [1]
+  const kk = Math.min(Math.max(k > 0 ? k : 1, ks[0]), ks[ks.length - 1])
+  if (ks.length === 1) return Math.exp(slice2At(t.v[0], t, L, gb))
+  let a = 0
+  while (a < ks.length - 2 && ks[a + 1] < kk) a++
+  const w = Math.min(1, Math.max(0, Math.log(kk / ks[a]) / Math.log(ks[a + 1] / ks[a])))
+  return Math.exp(slice2At(t.v[a], t, L, gb) * (1 - w) + slice2At(t.v[a + 1], t, L, gb) * w)
+}
+
+/**
+ * THE INCOME MODEL OF THE EXIT'S MONEY LEGS (o.incomeModel, progress.js
+ * incomeModelNow): the batcher's steady income from the game's formulas on
+ * the trajectory's level, home RAM and money multipliers, ANCHORED to today:
+ *   at(L, homeGB, k) = q x grid(k, L, homeGB + otherGB)
+ * q is the formula's error now: today's measured level-scaled income over the
+ * grid at today's level and the RAM the money pipelines hold now (moneyGB,
+ * batch.txt ram.reservedForPipelines; the whole fleet when unread) — the live
+ * batcher's period and placement against the formula's 4 x spacing (CLAUDE.md:
+ * 0.84-1.20s against 0.80s), carried as a ratio of the money onto the cap as
+ * well. A MONEY LEG RUNS THE WHOLE FLEET ON MONEY (the split's exp farm holds
+ * what the pipelines leave while exp binds; a hoard is money): stated, not the
+ * controller's simulated split. k is the income multipliers bought since today
+ * (installGains.income, a graft's hacking_money, the later batches at the
+ * planned batch's income-to-hacking ratio kappa), carried on the grid's
+ * hacking_money axis: it raises the RAM-limited rate and the efficient
+ * batch's size, so the cap rises with it (stated: a gain in speed or chance
+ * is read as money, which over-states the cap's share of it).
+ * Returns null (the old level-scaled income) when absent or unanchorable.
+ */
+export const Q_BAND = 3
+export function incomeModelOf(m, levelIncomeNow, levelNow) {
+  if (!m || !m.table || !pos(levelIncomeNow) || !pos(levelNow) || !pos(m.homeGB) || !num(m.otherGB) || m.otherGB < 0) return null
+  const t = m.table
+  const R0 = m.homeGB + m.otherGB
+  const Rm = pos(m.moneyGB) ? Math.min(m.moneyGB, R0) : R0
+  const ref = incomeTableAt(t, levelNow, Rm, 1)
+  if (!(ref > 0)) return null
+  // q is one life's measured/formula ratio, and one life's is noisy (a
+  // prep, a target switch, a fresh fleet): it is clipped to Q_BAND, the band
+  // the formula's late-life error falls in across nodes (tools/sim/incomecal.mjs:
+  // x0.46-0.71 on BN10.1, BN13.1 and BN9.1's late lives, unanchored).
+  const qRaw = levelIncomeNow / ref
+  const q = Math.min(Q_BAND, Math.max(1 / Q_BAND, qRaw))
+  const base = pos(m.homeCostBase) ? m.homeCostBase : null
+  return {
+    table: t,
+    q,
+    qRaw,
+    homeGB: m.homeGB,
+    otherGB: m.otherGB,
+    moneyGB: Rm,
+    kappa: num(m.kappa) && m.kappa > 0 ? m.kappa : 0,
+    maxGB: pos(m.homeMaxGB) ? m.homeMaxGB : 2 ** 30,
+    // PlayerObjectServerMethods.ts:30-39: ram x 32000 x 1.58^log2(ram) x HomeComputerRamCost
+    costAt: base ? (gb) => gb * base * Math.pow(1.58, Math.log2(gb)) : null,
+    at(L, homeGB, k) {
+      return q * incomeTableAt(t, L, homeGB + m.otherGB, k)
+    },
+  }
+}
+
 /** The largest relative move of the level's income inside one money-leg step (hoursToMoney). */
 export const LVL_STEP = 0.25
 /** Halvings of a money leg's landing step: the step / 2^26 (< 1e-4 s on a 2h step). */
@@ -1564,6 +1711,11 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // hacking_money augmentations (installGains.income) lift this part alone —
   // they do nothing for a stock portfolio.
   let incomeAtLevel1 = (Math.max(0, incomePerSec - flatInc) * 51) / (hacking + 50)
+  // The final window's income from the state (incomeModelOf), when supplied:
+  // its money multiplier k is incomeAtLevel1's growth from here.
+  const incL1Now = incomeAtLevel1
+  const imod = incomeModelOf(o.incomeModel, Math.max(0, incomePerSec - flatInc), hacking)
+  let imodLaterLn = 0
   let repRate = repPerSec
   let donation = donationCost
 
@@ -1859,6 +2011,18 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     }
     if (i < installsFirst) mult *= Math.pow(cycleAt(i, t), installsFirst - i)
     lifeLegsOut = lifeLegs
+    // THE LATER BATCHES' MONEY MULTIPLIERS (imod.kappa): each later life's
+    // batch buys hacking_money / speed / chance beside its hacking — the
+    // purchase model's per-life gain (multGainPerCycle x the catalogue's
+    // shape) at the planned batch's ln(income)/ln(hacking). Only where the
+    // income is the state's (the cap bounds it); the level-scaled income
+    // without a cap never carried them.
+    if (imod && imod.kappa > 0 && installsFirst > 1) {
+      let ln = 0
+      for (let j = 1; j < installsFirst; j++) ln += Math.log(multGainPerCycle * shapeAt(j))
+      imodLaterLn = Math.max(0, imod.kappa * ln)
+      incomeAtLevel1 *= Math.exp(imodLaterLn)
+    }
     // THE EXIT FACTION'S FAVOR BANKED IN AN EARLIER LIFE (o.favorLife {rep}):
     // the LAST life before the final window (life installsFirst, a fresh life
     // after an install — the current one cannot reach the join here) joins
@@ -2006,6 +2170,9 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     return at < 0 ? 0 : fleet[at].perSec
   }
   let eNet = null
+  // The home RAM the final window's legs buy (incomeModelOf): from today's home.
+  const ramState = imod && imod.costAt ? { gb: imod.homeGB } : null
+  const incomeAtFn = imod ? (L, homeGB) => imod.at(L, homeGB ?? imod.homeGB, incomeAtLevel1 / incL1Now) : null
   const moneyLeg = (target, targetAt = null) => {
     const t0 = h
     const age0 = h - finalStart
@@ -2013,7 +2180,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     const ex = steps.length && fleet.length ? (rel) => extraAt(t0 + rel) + fl(age0 + rel) : steps.length ? (rel) => extraAt(t0 + rel) : fleet.length ? (rel) => fl(age0 + rel) : null
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
     // the hacknet stream the next install would destroy (lifeInc).
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: ex, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0 })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: ex, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0, incomeAt: incomeAtFn, homeRam: ramState, homeCostAt: imod?.costAt ?? null, homeMaxGB: imod?.maxGB })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
@@ -2195,7 +2362,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       h += hm
       exp = expAdv(exp, hm)
       cash = target
-      legs.push({ leg: 'covenant money', hours: hm, detail: D(() => `$${Math.round(target)} in hand`) })
+      legs.push({ leg: 'covenant money', hours: hm, detail: D(() => `$${Math.round(target)} in hand${imod ? `; the state's income (incomeModelOf: formula x${imod.q.toFixed(2)}, money multipliers x${(incomeAtLevel1 / incL1Now).toFixed(1)} since today${imodLaterLn > 0 ? ` incl. x${Math.exp(imodLaterLn).toFixed(1)} from the later batches` : ''}), home ${ramState ? `${Math.round(imod.homeGB)} -> ${Math.round(ramState.gb)}GB` : `${Math.round(imod.homeGB)}GB`}, $${incomeAtFn(levelAt(exp, mult), ramState ? ramState.gb : imod.homeGB).toExponential(2)}/s at the leg's end` : ''}`) })
     }
     cash -= covenant.cost
     slotH += covenant.member ? 0 : covenant.combatH
@@ -2780,7 +2947,7 @@ export function bestExitPolicy(o = {}, maxInstalls = 400, minInstalls = 0) {
  * The inputs' descriptive fields (text, the cadence's record, the purchase
  * model's inputs) are skipped. Objects must not be mutated once passed in.
  */
-const MEMO_SKIP = new Set(['cadence', 'incomeSource', 'expSource', 'repSource', 'capitalFit', 'streams', 'hacknet', 'freshHackCum'])
+const MEMO_SKIP = new Set(['cadence', 'incomeSource', 'expSource', 'repSource', 'capitalFit', 'streams', 'hacknet', 'freshHackCum', 'incomeModelWhy'])
 const jsonMemo = new WeakMap()
 function memoKeyOf(o) {
   let out = ''

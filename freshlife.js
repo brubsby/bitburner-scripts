@@ -363,6 +363,94 @@ function prepHoursOf(s, level, G, P) {
 }
 
 /**
+ * THE BATCHER'S TARGETS AT ONE STATE (level, ports, RAM): batch.js's ranking
+ * (targetScore, the 2% / 1% filters, top maxTargets) and moneyTargetsOf on
+ * `moneyGB`, plus the exp farm's best target. P: {speed, bnSpeed, int,
+ * growMult, bnGrowth, weakenRate}; M(key): the player's multiplier.
+ */
+function targetsAt(world, level, ports, P, M, shm, homeGB, moneyGB) {
+  const hackable = []
+  for (const s of world) {
+    if (s.ports > ports || !(s.moneyMax > 0) || s.req > level) continue
+    const hackS = hackTimeS(s.req, s.minSec, level, P.speed, P.bnSpeed, P.int)
+    const phi = hackPercentOf(s.req, s.minSec, level, M('hacking_money'), shm)
+    const chance = hackChanceOf(s.req, s.minSec, level, M('hacking_chance'), P.int)
+    const k = growLogOf(s.minSec, s.growth, P.growMult, P.bnGrowth)
+    const score = phi > 0 && k > 0 ? (chance * s.moneyMax) / (hackS * (1.98 / phi + 6.16 / k)) : 0
+    const e = expBaseOf(s.baseSec)
+    const xs = expScore({ baseDifficulty: s.baseSec, hackTime: hackS * 1000, chance }, P.weakenRate, BATCHER.margin)
+    hackable.push({ ...s, hackS, phi, chance, k, score, e, xs })
+  }
+  const ranked = hackable.filter((t) => t.score > 0).sort((a, b) => b.score - a.score)
+  const bestS = ranked[0]?.score ?? 0
+  const bestMoney = ranked.reduce((a, t) => Math.max(a, t.moneyMax), 0)
+  const worth = ranked.filter((t) => t.score >= bestS * BATCHER.minScoreFrac && t.moneyMax >= bestMoney * BATCHER.minMoneyFrac)
+  const cands = (worth.length ? worth : ranked).slice(0, BATCHER.maxTargets)
+  const hackGB = Math.max(homeGB, ...world.filter((s) => s.ports <= ports).map((s) => s.ram))
+  const mt = moneyTargetsOf(cands, moneyGB, hackGB, P.weakenRate)
+  const farmT = hackable.filter((t) => t.xs > 0).sort((a, b) => b.xs - a.xs)[0] ?? null
+  return { mt, farmT }
+}
+
+const paramsOf = (bn, mults, intelligence) => {
+  const B = (k) => (num(bn?.[k]) ? bn[k] : 1)
+  const M = (k) => (pos(mults?.[k]) ? mults[k] : 1)
+  return {
+    B,
+    M,
+    P: { speed: M('hacking_speed'), bnSpeed: B('HackingSpeedMultiplier'), int: num(intelligence) ? intelligence : 0, growMult: M('hacking_grow'), bnGrowth: B('ServerGrowthRate'), weakenRate: B('ServerWeakenRate') },
+    shm: B('ScriptHackMoney'),
+    shmGain: num(bn?.ScriptHackMoneyGain) ? bn.ScriptHackMoneyGain : 1,
+  }
+}
+
+/**
+ * THE SCRIPTS' HACKING INCOME IN STEADY STATE ($/s) at a hacking level and a
+ * batcher fleet: every port open, every chosen target prepped — the money the
+ * batcher's model earns at that state (min of the targets' saturation and the
+ * RAM-limited rate; THE MONEY CAP is the same call at unbounded RAM). `ramGB`
+ * is the RAM the batcher owns (home + purchased servers); the rooted network
+ * is added as simulateFreshLife adds it. The income grid the exit model reads
+ * (exitplan hoursToMoney o.incomeTable) is this function on a grid.
+ */
+export function steadyIncomeOf({ bn, mults, intelligence = 0, level, ramGB, homeGB = null, world = null, addNet = true }) {
+  if (!pos(level) || !num(ramGB) || ramGB < 0) return null
+  const { M, P, shm, shmGain } = paramsOf(bn ?? {}, mults ?? {}, intelligence)
+  const w = (world ?? worldOf(bn ?? {})).filter((s) => s.host !== 'w0r1d_d43m0n')
+  const netGB = addNet ? w.reduce((a, s) => a + s.ram, 0) : 0
+  const { mt } = targetsAt(w, level, 5, P, M, shm, pos(homeGB) ? homeGB : ramGB, ramGB + netGB)
+  return mt.targets.reduce((a, x) => a + x.perSec, 0) * shmGain
+}
+
+/**
+ * THE INCOME GRID of steadyIncomeOf: ln($/s) at `ks` (the money multipliers
+ * later batches buy: k^share on each of hacking_money / speed / chance, the
+ * shares the planned batch's own ln mix; all on hacking_money absent) x `levels` x
+ * log2(RAM GB) `lr`, for one node and one set of player multipliers.
+ * { k: [], L: [], lr: [], v: [k][L][lr] ln } — the RAM is the batcher's WHOLE
+ * money RAM (the network included, as batch.txt counts it); a cell that earns
+ * nothing is -Infinity. hacking_money moves both the RAM-limited rate and the
+ * efficient batch's size (planOf's sweep: the cap rises with it until 0.99),
+ * speed only the RAM-limited rate, chance stops at 1 — which is why it is an
+ * axis and not a RAM factor. incomeSliceOf is one k.
+ */
+export function incomeSliceOf({ bn, mults, intelligence = 0, levels, lr, k = 1, shares = null, world = null }) {
+  const w = world ?? worldOf(bn ?? {})
+  // k^share on each of hacking_money / speed / chance / grow (`shares` {money, speed, chance, hgrow}: never a member named like an ns function: ln part / ln k of the batch the axis reads; all money absent)
+  const sh = shares ?? { money: 1 }
+  const at = (key, s) => (pos(mults?.[key]) ? mults[key] : 1) * Math.pow(k, num(s) ? s : 0)
+  const m = { ...(mults ?? {}), hacking_money: at('hacking_money', sh.money), hacking_speed: at('hacking_speed', sh.speed), hacking_chance: at('hacking_chance', sh.chance), hacking_grow: at('hacking_grow', sh.hgrow) }
+  return levels.map((L) => lr.map((e) => {
+    const x = steadyIncomeOf({ bn, mults: m, intelligence, level: L, ramGB: Math.pow(2, e), world: w, addNet: false })
+    return x > 0 ? Math.log(x) : -Infinity
+  }))
+}
+export function incomeTableOf({ bn, mults, intelligence = 0, levels, lr, ks = [1], shares = null }) {
+  const world = worldOf(bn ?? {})
+  return { k: ks.slice(), shares, L: levels.slice(), lr: lr.slice(), v: ks.map((k) => incomeSliceOf({ bn, mults, intelligence, levels, lr, k, shares, world })) }
+}
+
+/**
  * A FRESH LIFE, SIMULATED. Returns {pts: [{h, level, exp, expPerSec,
  * hackPerSec, cum, ramGB, farmGB, moneyGB, prepping, targets}], why} —
  * `cum` the hacking stream earned since the install ($, what tel.js records
@@ -423,26 +511,7 @@ export function simulateFreshLife(o = {}) {
     const moneyGB = Math.max(0, G - farmGB)
     // Targets at this level (cached until the level moves 1% or the RAM 5%).
     if (!cache || Math.abs(level - cache.level) > Math.max(1, 0.01 * level) || Math.abs(G - cache.G) > 0.05 * Math.max(1, cache.G) || ports !== cache.ports) {
-      const hackable = []
-      for (const s of world) {
-        if (s.ports > ports || !(s.moneyMax > 0) || s.req > level) continue
-        const hackS = hackTimeS(s.req, s.minSec, level, P.speed, P.bnSpeed, P.int)
-        const phi = hackPercentOf(s.req, s.minSec, level, M('hacking_money'), shm)
-        const chance = hackChanceOf(s.req, s.minSec, level, M('hacking_chance'), P.int)
-        const k = growLogOf(s.minSec, s.growth, P.growMult, P.bnGrowth)
-        const score = phi > 0 && k > 0 ? (chance * s.moneyMax) / (hackS * (1.98 / phi + 6.16 / k)) : 0
-        const e = expBaseOf(s.baseSec)
-        const xs = expScore({ baseDifficulty: s.baseSec, hackTime: hackS * 1000, chance }, P.weakenRate, BATCHER.margin)
-        hackable.push({ ...s, hackS, phi, chance, k, score, e, xs })
-      }
-      const ranked = hackable.filter((t) => t.score > 0).sort((a, b) => b.score - a.score)
-      const bestS = ranked[0]?.score ?? 0
-      const bestMoney = ranked.reduce((a, t) => Math.max(a, t.moneyMax), 0)
-      const worth = ranked.filter((t) => t.score >= bestS * BATCHER.minScoreFrac && t.moneyMax >= bestMoney * BATCHER.minMoneyFrac)
-      const cands = (worth.length ? worth : ranked).slice(0, BATCHER.maxTargets)
-      const hackGB = Math.max(homeGB, ...world.filter((s) => s.ports <= ports).map((s) => s.ram))
-      const mt = moneyTargetsOf(cands, moneyGB, hackGB, P.weakenRate)
-      const farmT = hackable.filter((t) => t.xs > 0).sort((a, b) => b.xs - a.xs)[0] ?? null
+      const { mt, farmT } = targetsAt(world, level, ports, P, M, shm, homeGB, moneyGB)
       cache = { level, G, ports, mt, farmT }
     }
     // Money: prepped targets earn; a target's prep starts the first age it is chosen.

@@ -1,0 +1,115 @@
+{
+ "generatedAt": "2026-10-18T16:53:01.035Z",
+ "source": "tools/sim/incomecal.mjs from .telemetry/history.jsonl",
+ "tolLn": 0.9162907318741551,
+ "nodes": [
+  {
+   "name": "BN10.1",
+   "bn": 10,
+   "anchor": {
+    "life": 5,
+    "L": 149,
+    "R": 4096,
+    "I": 7357122.828811903,
+    "windows": 9,
+    "mults": {
+     "hacking": 1.2524032488,
+     "hacking_speed": 1.2524032488,
+     "hacking_money": 1.2524032488,
+     "hacking_grow": 1.2524032488,
+     "hacking_chance": 1.2524032488,
+     "hacking_exp": 1.3776435736800001
+    }
+   },
+   "late": {
+    "life": 23,
+    "L": 6356,
+    "R": 16792576,
+    "I": 2468927229095.306,
+    "windows": 24,
+    "mults": {
+     "hacking": 7.82052872422155,
+     "hacking_speed": 2.1028742148277484,
+     "hacking_money": 12.638626029538685,
+     "hacking_grow": 8.218896320250002,
+     "hacking_chance": 2.3851110747615687,
+     "hacking_exp": 5.502954993461372
+    }
+   }
+  },
+  {
+   "name": "BN13.1",
+   "bn": 13,
+   "anchor": {
+    "life": 8,
+    "L": 296,
+    "R": 14848,
+    "I": 3258853.0464208387,
+    "windows": 2,
+    "mults": {
+     "hacking": 1.462373905474944,
+     "hacking_speed": 1.2776581623125762,
+     "hacking_money": 1.2281631859200002,
+     "hacking_grow": 1.2281631859200002,
+     "hacking_chance": 1.2281631859200002,
+     "hacking_exp": 1.350979504512
+    }
+   },
+   "late": {
+    "life": 21,
+    "L": 3027,
+    "R": 1061376,
+    "I": 40823038676.7067,
+    "windows": 7,
+    "mults": {
+     "hacking": 4.766617165598727,
+     "hacking_speed": 1.7046726679184188,
+     "hacking_money": 5.120221210123535,
+     "hacking_grow": 2.828007336,
+     "hacking_chance": 1.6148826850907523,
+     "hacking_exp": 3.951631075248558
+    }
+   }
+  },
+  {
+   "name": "BN9.1",
+   "bn": 9,
+   "anchor": {
+    "life": 4,
+    "L": 215,
+    "R": 4096,
+    "I": 23787.762400051048,
+    "windows": 2,
+    "mults": {
+     "hacking": 1.6470948198507267,
+     "hacking_speed": 1.3318460148787201,
+     "hacking_money": 1.2928033536,
+     "hacking_grow": 1.2928033536,
+     "hacking_chance": 1.35744352128,
+     "hacking_exp": 2.0442453028800003
+    }
+   },
+   "late": {
+    "life": 10,
+    "L": 3903,
+    "R": 32768,
+    "I": 587124498.6120762,
+    "windows": 7,
+    "mults": {
+     "hacking": 9.786592827149505,
+     "hacking_speed": 2.3476216395728615,
+     "hacking_money": 13.04632364339477,
+     "hacking_grow": 8.484022008,
+     "hacking_chance": 2.4620501416893616,
+     "hacking_exp": 7.810645797170978
+    }
+   }
+  },
+  {
+   "name": "BN8.1",
+   "bn": 8,
+   "anchor": null,
+   "why": "ScriptHackMoneyGain 0: scripts earn nothing in BitNode 8, the model returns null (the trader is the capital term, unchanged)"
+  }
+ ]
+}

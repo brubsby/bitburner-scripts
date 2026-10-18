@@ -187,7 +187,7 @@ import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
-import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb } from 'freshlife.js'
+import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb, incomeSliceOf, worldOf } from 'freshlife.js'
 import { catalogueFromOffers, ownedAfterBatch, moneyScaleOfGen, lifeTableGen, lifeInputsOf, lifeCadenceAt, nodeFactionsOf, freshLifeMoney, freshHacknetStreamsGen } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
@@ -1947,7 +1947,7 @@ function installGainsOf(names, offers) {
   }, g), 1)
   const growMult = prod(['hacking_grow'])
   const growLift = typeof growShareNow === 'number' && growShareNow >= 0 && growShareNow <= 1 ? Math.pow(growMult, growShareNow) : 1
-  return { hacking: prod(['hacking']), rep: prod(['faction_rep']), income: prod(['hacking_money', 'hacking_chance', 'hacking_speed']) * growLift, exp: prod(['hacking_exp']) }
+  return { hacking: prod(['hacking']), rep: prod(['faction_rep']), income: prod(['hacking_money', 'hacking_chance', 'hacking_speed']) * growLift, exp: prod(['hacking_exp']), incomeParts: { money: prod(['hacking_money']), speed: prod(['hacking_speed']), chance: prod(['hacking_chance']), hgrow: growMult } }
 }
 
 function nextInstallGainOf(plan, pending, offers) {
@@ -5163,6 +5163,81 @@ function freshPriorOf(ns, info, player) {
 }
 
 /**
+ * THE EXIT'S INCOME MODEL (exitplan.incomeModelOf): the batcher's steady
+ * income from the game's formulas (freshlife.incomeSliceOf) on a grid of
+ * money multipliers x hacking levels x batcher RAM, at this life's multipliers, plus the RAM it
+ * owns now (home less the reserves, which survives every install, and the
+ * rest of the batcher's fleet: batch.txt ram.total less the network the grid
+ * adds itself), home RAM's price (PlayerObjectServerMethods.ts:30-39, x the
+ * node's HomeComputerRamCost) and the planned batch's ln(income)/ln(hacking)
+ * (kappa: the later batches' money multipliers). The grid (~1560 cells, one money-multiplier slice per step) is
+ * CACHED in /tel/incomemodel.txt by its inputs (node, multipliers, int).
+ * Without it the exit's money legs held today's fleet and money multipliers
+ * for the rest of the node (BN10.3 2026-10-18: the Covenant leg read 374h).
+ * Returns { model, why } — model null with the reason when unbuildable.
+ */
+const INCOME_MODEL_FILE = '/tel/incomemodel.txt'
+const INCOME_GRID_LEVELS = [1, 50, 150, 300, 600, 1000, 1600, 2500, 4000, 6000, 10000, 20000]
+const INCOME_GRID_LR = [6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30]
+const INCOME_GRID_K = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+let incomeModelMemo
+function* incomeModelGen(ns, info, player, out) {
+  if (incomeModelMemo !== undefined && incomeModelMemo.pass === passT0) return incomeModelMemo.r
+  const done = (r) => {
+    incomeModelMemo = { pass: passT0, r }
+    return r
+  }
+  try {
+    const bn = bitNodeMults(info)
+    if (!bn || !player?.mults) return done({ model: null, why: 'no BitNode or player multipliers' })
+    if (bn.ScriptHackMoneyGain === 0) return done({ model: null, why: 'scripts earn nothing in this node (ScriptHackMoneyGain 0)' })
+    const homeRam = homeRamOf(readJson(ns, '/tel/homeup.txt'), readJson(ns, '/tel/boot.txt'), info?.lastNodeReset)
+    if (!(homeRam > 0)) return done({ model: null, why: 'home RAM unread' })
+    const homeGB = Math.max(1, homeRam - homeReserveGb(singularityRamMultiplier(info)))
+    const b = readJson(ns, '/tel/batch.txt')
+    const total = b && Date.now() - Date.parse(b.at) < 10 * 60e3 ? b.ram?.total : null
+    if (!(total > 0)) return done({ model: null, why: 'no fresh batch.txt ram.total' })
+    // The grid's RAM is the batcher's whole money RAM (the network included,
+    // as batch.txt counts it); the pipelines' share is today's money RAM.
+    const otherGB = Math.max(0, total - homeGB)
+    const pipes = b.ram?.reservedForPipelines
+    const moneyGB = pipes > 0 ? pipes : null
+    const m = player.mults
+    const mults = { hacking: m.hacking, hacking_exp: m.hacking_exp, hacking_speed: m.hacking_speed, hacking_money: m.hacking_money, hacking_grow: m.hacking_grow, hacking_chance: m.hacking_chance }
+    const int = player.skills?.intelligence ?? 0
+    // THE MONEY AXIS'S COMPOSITION: each of the planned batch's hacking_money /
+    // speed / chance / grow as a power of its income gain (ln part / ln
+    // income: k at that gain is exactly the batch; a later batch is read as
+    // this one's mix). Grow enters the income at its measured share only, so
+    // the powers sum past 1 when the batch carries grow.
+    const ip = out?.installGains?.incomeParts
+    const lnI = Math.log(Math.max(1, out?.installGains?.income ?? 1))
+    const sh = (x) => +(Math.log(Math.max(1, x ?? 1)) / lnI).toFixed(3)
+    const shares = ip && lnI > 1e-6 ? { money: sh(ip.money), speed: sh(ip.speed), chance: sh(ip.chance), hgrow: sh(ip.hgrow) } : { money: 1, speed: 0, chance: 0, hgrow: 0 }
+    const key = JSON.stringify([info?.currentNode, Object.values(mults).map((x) => +Number(x).toFixed(4)), Math.round(int / 10), INCOME_GRID_LEVELS, INCOME_GRID_LR, INCOME_GRID_K, shares, 'v3'])
+    const cached = readJson(ns, INCOME_MODEL_FILE)
+    let table = cached?.key === key && cached.table?.v ? cached.table : null
+    if (!table) {
+      // One money-multiplier slice per step (~20ms each): the grid never blocks a pass.
+      const world = worldOf(bn)
+      const v = []
+      for (const k of INCOME_GRID_K) {
+        v.push(incomeSliceOf({ bn, mults, intelligence: int, levels: INCOME_GRID_LEVELS, lr: INCOME_GRID_LR, k, shares, world }))
+        yield
+      }
+      table = { k: INCOME_GRID_K, shares, L: INCOME_GRID_LEVELS, lr: INCOME_GRID_LR, v }
+      ns.write(INCOME_MODEL_FILE, JSON.stringify({ at: new Date().toISOString(), key, table }), 'w')
+    }
+    const g = out?.installGains
+    const kappa = g && g.hacking > 1.0001 && g.income > 1 ? Math.log(g.income) / Math.log(g.hacking) : 0
+    const model = { table, homeGB, otherGB, moneyGB, homeCostBase: 32000 * (bn.HomeComputerRamCost ?? 1), homeMaxGB: 2 ** 30, kappa: +kappa.toFixed(4) }
+    return done({ model, why: `the batcher's steady income from the game's formulas (freshlife.incomeSliceOf) at this life's multipliers, anchored to today's income; home ${Math.round(homeGB)}GB usable + ${Math.round(otherGB)}GB other fleet, ${moneyGB ? `${Math.round(moneyGB)}GB` : 'the whole fleet (pipelines unread)'} on money now; later batches' money multipliers at kappa ${kappa.toFixed(2)} (the planned batch's ln income / ln hacking), read as its mix (k^ money ${table.shares?.money ?? '?'}, speed ${table.shares?.speed ?? '?'}, chance ${table.shares?.chance ?? '?'}, grow ${table.shares?.hgrow ?? '?'})` })
+  } catch (e) {
+    return done({ model: null, why: `incomeModelGen threw: ${String(e).slice(0, 160)}` })
+  }
+}
+
+/**
  * THE FORMULA'S ERROR, UPDATED BY THE LIVES (bayes.formulaErrorPosterior over
  * freshlife.calibrationResiduals): the seed lives (tools/sim/freshcal.mjs) and
  * every completed life tel.js recorded with its inputs, scored here once and
@@ -5446,6 +5521,12 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
   // pass prices income and exp at the controller's split, not at whatever
   // the batcher earned under the split it ran.
   const out = splitConditionedOf(ns, info, exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet))
+  yield
+  // THE FINAL WINDOW'S INCOME FROM THE STATE (incomeModelGen): level, home
+  // RAM bought on the way, the later batches' money multipliers, the cap.
+  const im = yield* incomeModelGen(ns, info, player, out)
+  if (im.model) out.incomeModel = im.model
+  out.incomeModelWhy = im.why
   yield
   // EVERY MONEY STREAM ONCE, with its own growth driver (the final window's
   // money leg is the binding one on the trader's curve): the committed gang
