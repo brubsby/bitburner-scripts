@@ -1377,7 +1377,7 @@ export const GIFT_NODES = new Set([13])
  * graft / install while the gift is unaccepted, and stanek.js does NOT accept.
  * Empty: BN11's hold (2026-10-15) is now the priced decision below.
  */
-export const GIFT_HOLD_NODES = new Set([10]) // 2026-10-18 BN10.3: hack+gift unpriced outside BN13 and the Covenant mandate unpriced at node start — held until priced
+export const GIFT_HOLD_NODES = new Set([]) // BN10.3's hold (2026-10-18) is now the priced chain: hack + gift priced (hackChainGiftInputsOf), the mandate's combat leg (sleeveplan.covenantCombatLegOf), an unpriced chain HOLDS (giftWantOf)
 
 /**
  * THE GIFT ON THE BLADEBURNER ROUTE, PRICED (tools/sim/bbstanek.mjs --table -> tools/sim/
@@ -1466,7 +1466,8 @@ export function giftVerdictOfProgress(text, resetInfo, now = Date.now(), maxAgeM
   if (!r || r.node !== resetInfo?.currentNode || r.lastAugReset !== resetInfo?.lastAugReset) return null
   if (!(now - Date.parse(rec.at ?? '') < maxAgeMin * 60e3)) return null
   const g = r.gift
-  return g && g.chain === true && typeof g.accept === 'boolean' ? { accept: g.accept, why: g.why ?? null } : null
+  // a chain published with accept null (the route decision unpriced) is a verdict too: HOLD, never a decline
+  return g && g.chain === true && (typeof g.accept === 'boolean' || g.accept === null) ? { accept: g.accept, chain: true, why: g.why ?? null } : null
 }
 
 /**
@@ -1486,6 +1487,7 @@ export function giftWantOf({ node, l13, l7, route, verdict = null }) {
   const txt = priced ? `the Bladeburner exit ${priced.withoutH}h without the gift vs ${priced.withH}h with it (bbsim, shared seeds, NOT CALIBRATED; stanekplan.BLADE_GIFT_PRICED)` : 'the Bladeburner route with the gift is not priced for this node/SF13/SF7'
   // THE CHAIN (L4, the route decision prices blade+gift, blade without and hack as one decision): where
   // progress.js's route record of this node and life carries its verdict, the accept follows the chosen arm
+  if (verdict && verdict.chain === true && verdict.accept === null) return { want: false, pending: true, basis: null, priced, chained: true, why: `the chained route decision has not priced the gift (an arm unpriced): HELD open, not accepted (${String(verdict.why ?? '').slice(0, 200)})` }
   if (verdict && (route === 'blade' || route === 'hack') && typeof verdict.accept === 'boolean') {
     const vw = `the route decision priced the gift with the route (${String(verdict.why ?? '').slice(0, 200)})`
     return { want: verdict.accept, pending: false, basis: verdict.accept ? route : null, priced, chained: true, why: verdict.accept ? `the '${route}' route with the gift: accept — ${vw}` : `the '${route}' route without the gift: never — ${vw}` }
@@ -1929,6 +1931,54 @@ export function hackGiftInputsOf(base, st, { node, layout, f = DEFAULT_F, sameLi
   const ctx = { layout: st.layout.placed, nodePower: st.layout.nodePower, fleetGB, hosts, fNow, cycleH }
   const L = Array.isArray(layout) && layout.length ? layout : st.layout.placed
   return { inputs: { ...layoutInputsOf(base, ctx, f, L), giftLife: { layout: L, nodePower: st.layout.nodePower, fleetGB, hosts, f, refL: cycleH } }, why: `${layoutKeyOf(L)} at f ${f} of the fleet, from the placed ${layoutKeyOf(st.layout.placed)} at fNow ${fNow.toFixed(3)}` }
+}
+
+/**
+ * THE HACKING ROUTE WITH THE GIFT, BEFORE AN ACCEPT (the chain, 2026-10-18 live BN10.3: hack + gift
+ * outside BN13 was not priced, so the chained decision declined the gift on the hacking route the
+ * gameplan plays as hacking + Stanek). No charger runs before the accept, so the charger is a MODEL,
+ * labelled: the gameplan's BN13 charger ramp (nodeModel's homeAt: home RAM 2^HOME.log2Start ->
+ * 2^log2End, cores 1 -> HOME.coresEnd, shape u^HOME.shapeQ over the no-gift node length `ramHours`;
+ * log2End = effects.mjs stRam mid, MEASURED p50 of 10 no-gift exits), floored at the fleet measured now
+ * (`liveGB`, `liveHome` {ram, cores}: the charger never has less than the live fleet). Every life holds
+ * `layout` at f from zero (every install clears the charge: the life-average, chargeLnOf), averaged over
+ * the node's remaining time at the ramp's quadrature points; Genesis's x0.9 applies at the accept, at
+ * once (acceptGift -> applyAugmentation, Augmentations.ts:1593-1627: every hacking channel, the
+ * offline fresh-entry cases' penaltyStepInputsOf 1 -> 0.9). `ramHours` unknown: the measured fleet
+ * alone (a LOWER bound: the fleet only grows). Returns {inputs, basis, why} — inputs null when unpriced.
+ */
+// fallbackH: the node length when no pass has priced it yet (the gameplan's BN10.3 hacking + Stanek clear, ~61h) —
+// a default, stated; the live BN10.3 replay moved the hack + gift arm 0.02h between 60h and 300h of it.
+export const HACK_CHARGER_RAMP = { log2End: 21, fallbackH: 61, source: 'the gameplan charger ramp (stanekplan.nodeModel homeAt; tools/sim/gameplan/effects.mjs stRam mid 21 = log2 home GB at a no-gift hacking exit, MEASURED p50)' }
+export function hackChainGiftInputsOf(base, { layout, nodePower = 1, f = DEFAULT_F, liveGB = 0, liveHome = null, ageH = 0, ramHours = null, log2End = HACK_CHARGER_RAMP.log2End } = {}) {
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  const cycleH = base?.cycleHours
+  if (!Array.isArray(layout) || !layout.length) return { inputs: null, basis: null, why: 'no hacking layout for this grid' }
+  if (!(cycleH > 0)) return { inputs: null, basis: null, why: 'cycleHours unknown in the exit inputs: the life the charge regrows over is unpriced' }
+  const hRam = fin(liveHome?.ram) && liveHome.ram > 0 ? liveHome.ram : 0
+  const hCores = fin(liveHome?.cores) && liveHome.cores >= 1 ? liveHome.cores : 1
+  const restGB = Math.max(0, (fin(liveGB) ? liveGB : 0) - hRam)
+  const ramp = fin(ramHours) && ramHours > 0 && fin(ageH) && ageH >= 0
+  const us = ramp ? [0.125, 0.375, 0.625, 0.875].map((q) => Math.min(1, (ageH + q * Math.max(0, ramHours - ageH)) / ramHours)) : [null]
+  const acc = { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
+  let gbSum = 0
+  for (const u of us) {
+    const h = u === null ? { ram: 0, cores: 1 } : homeAt(u, log2End)
+    const home = { host: 'home', cores: Math.max(hCores, h.cores), maxRam: Math.max(hRam, h.ram) }
+    const hosts = [{ ...home, capGb: home.maxRam }, ...(restGB > 0 ? [{ host: 'fleet', cores: 1, maxRam: restGB, capGb: restGB }] : [])]
+    const fleetGB = home.maxRam + restGB
+    if (!(fleetGB > 0)) return { inputs: null, basis: null, why: 'no fleet measured and no ramp: the charger is unpriced' }
+    gbSum += fleetGB
+    const r = chargeLnOf({ layout, nodePower, fleetGB, hosts, f, cycleH })
+    for (const k of Object.keys(acc)) acc[k] += r[k] / us.length
+  }
+  const zero = { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
+  const basis = ramp ? 'ramp' : 'measured'
+  return {
+    inputs: scaleByGift(penaltyStepInputsOf(base, PENALTY[0], PENALTY[1]), acc, zero),
+    basis,
+    why: `${layoutKeyOf(layout)} at f ${f} from zero each life (Genesis x${PENALTY[1]} at the accept); the charger ${ramp ? `on ${HACK_CHARGER_RAMP.source} over the node's ${ramHours.toFixed(1)}h from ${ageH.toFixed(1)}h, floored at the measured ${Math.round(liveGB)}GB` : `on the fleet measured now (${Math.round(liveGB)}GB; no node length to ramp over: a LOWER bound)`} — mean fleet ${Math.round(gbSum / us.length)}GB, ln(hacking) ${acc.lnHack >= 0 ? '+' : ''}${acc.lnHack.toFixed(4)}, ln(income) ${acc.lnIncome >= 0 ? '+' : ''}${acc.lnIncome.toFixed(4)}`,
+  }
 }
 
 /**

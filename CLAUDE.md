@@ -384,11 +384,18 @@ fleet, progress.js prices the arm with the fleet the blade route WOULD run (`bbp
 the live sleeve count, gym fleets included; `routeFleet`, re-chosen every 30 min; every Bladeburner start of the
 pass carries it, `armSleeves`). **The gift and the route are one chained decision while the gift is unaccepted
 and acceptable** (`stanekepoch.routeGiftChainOptionsOf`): blade WITH the gift (Genesis x0.9 at once, the
-Bladeburner layout from zero on the BLADE_HOST mid ramp), blade without, hack without (hack + gift outside BN13
-NOT PRICED: no charger fleet before an accept); the min is the route, and `route.gift.accept` in progress.txt
+Bladeburner layout from zero on the BLADE_HOST mid ramp), blade without, hack without, and hack WITH the gift
+(2026-10-18, `stanekplan.hackChainGiftInputsOf`: the hacking layout from zero each life at f in
+`stanekepoch.CHAIN_HACK_F`, Genesis x0.9 at once, the charger a MODEL before the accept — the gameplan's ramp
+`HACK_CHARGER_RAMP`, home 2^8 -> 2^21 over the bare no-gift hacking exit `gift.hackBareH`, floored at the measured
+fleet, batch.txt + homeup); the min is the route, and `route.gift.accept` in progress.txt
 (`giftVerdictOfProgress`) is what stanek.js accepts on and act.js gates on. Live BN7.3 16:27Z re-priced offline
 (the published arms reproduced to 0.01% / 0.3%): fleet i1s3c2t100, blade + gift 25.3h, blade 30.4h, hack 54.7h ->
-blade, accept. Test SG22.
+blade, accept. Test SG22. An UNPRICED decision (an arm unpriced, the route held) publishes `accept: null`, and
+`giftWantOf` HOLDS the option on it (never a decline; act.js refuses non-NFG orders) — BN10.3's hand hold
+(`GIFT_HOLD_NODES` 10) is gone. The Covenant mandate's combat leg (`sleeveplan.covenantCombatLegOf`) is the faster
+of training now and the final window's measured leg (BN10.1: 2.4h); a leg over 200h is ABSURD, never priced
+(live BN10.3 node start read 1.4e16h at the x0.4 level multipliers and left both arms unpriced). Test SG23, MC6.
 
 **Early-game Singularity: act.js.** progress.js refuses to run until home spares
 its whole acting block (1,305GB at SF4.1). `act.js` (~6GB, anywhere) decides with

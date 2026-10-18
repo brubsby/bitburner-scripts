@@ -119,5 +119,32 @@ export async function run() {
     c5.examined(1)
     if (!ok) c5.fail(`progress.js: ${what} — not found`)
   }
+
+  // MC6 THE COMBAT LEG AS THE ROUTE RUNS IT (live BN10.3 2026-10-18 11:35Z: combat 1-46, no augs, BN10's
+  // level multiplier 0.4 -> covenantCombatHours 13674747338185746h, the mandate unpriced, both arms unpriced)
+  const c6 = new Check('MC6', "the mandate's combat leg: live vs the final window, the faster; an absurd leg is never priced, an unpriced one names its cause")
+  checks.push(c6)
+  const sl = await import('sleeveplan.js')
+  const { bitNodeMults } = await import('bitNodeMultipliers.js')
+  const nm = bitNodeMults(10, 3)
+  const lvm = (k) => 1.3 * nm[`${k[0].toUpperCase()}${k.slice(1)}LevelMultiplier`]
+  const startP = { skills: { strength: 46, defense: 3, dexterity: 9, agility: 9 }, exp: { strength: 4566, defense: 91, dexterity: 282, agility: 282 }, mults: { strength: lvm('strength'), defense: lvm('defense'), dexterity: lvm('dexterity'), agility: lvm('agility'), strength_exp: 1.3, defense_exp: 1.3, dexterity_exp: 1.3, agility_exp: 1.3 } }
+  const live = sl.covenantCombatHours(startP, null, 1)
+  const leg = sl.covenantCombatLegOf(live)
+  c6.examined(4)
+  c6.note(`node start: live ${live?.hours?.toExponential(3)}h -> ${leg.hours}h (${leg.basis}): ${leg.why}`)
+  if (!(live?.hours > sl.COVENANT_COMBAT_MAX_H)) c6.fail(`fixture: at BN10's node-start multipliers the live legs must read absurd (${live?.hours}h)`)
+  if (leg.hours !== sl.COVENANT_COMBAT_FINAL.hours || leg.basis !== 'final window' || !/ABSURD/.test(leg.why)) c6.fail('node start: the leg is the final window\'s measured one, the absurd live value named', JSON.stringify(leg))
+  const quick = sl.covenantCombatLegOf({ hours: 0.3 })
+  if (quick.hours !== 0.3 || quick.basis !== 'live') c6.fail('a live leg shorter than the final window is the leg (the route trains now)', JSON.stringify(quick))
+  const noFinal = sl.covenantCombatLegOf({ hours: 1e16 }, null)
+  if (noFinal.hours !== null || noFinal.unpriced !== true || !/ABSURD/.test(noFinal.why)) c6.fail('no final-window leg and an absurd live one: UNPRICED, cause named (never the absurd value)', JSON.stringify(noFinal))
+  const fnAt6 = prog.indexOf('function covenantMandateOf(')
+  const body6 = fnAt6 >= 0 ? prog.slice(fnAt6, prog.indexOf('\n}\n', fnAt6)) : ''
+  const ex = prog.indexOf('function covenantExitOf(')
+  const exBody = ex >= 0 ? prog.slice(ex, prog.indexOf('\n}\n', ex)) : ''
+  c6.examined(2)
+  if (!/const leg = member \? null : covenantCombatLegOf\(legs\)/.test(body6) || /legs \? legs\.hours : null/.test(body6)) c6.fail('progress.js covenantMandateOf: the combat leg through covenantCombatLegOf, never the raw live hours')
+  if (!/covenantCombatLegOf\(legs\)/.test(exBody) || /legs \? legs\.hours : null/.test(exBody)) c6.fail('progress.js covenantExitOf: the combat leg through covenantCombatLegOf, never the raw live hours')
   return checks
 }

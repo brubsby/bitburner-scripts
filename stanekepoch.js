@@ -59,7 +59,7 @@
 // clear of the charge inside the exit (the Bladeburner route never installs), and the hacking route
 // (its exit model is life-averaged — L1 decides per life at the install epoch, L2 prices the in-life
 // switch: none wins).
-import { PENALTY, giftSize, bladeThrAt, layoutMults, chargeTrackOf, relayDiffOf, fragKeyOf, sameLayout, layoutKeyOf, layoutFits, layoutForGrid, fragmentById, canPlace, orientations, layoutValue, chargeFactor, coreBonus, threadsOf, bladeHostGbAt, TYPE, FRAGMENTS, BLADE_LAYOUTS, BLADE_PHASE_PRICED, BLADE_HOST, BLADE_WEIGHTS, LAYOUT_MULT_KEYS } from 'stanekplan.js'
+import { PENALTY, giftSize, bladeThrAt, layoutMults, chargeTrackOf, relayDiffOf, fragKeyOf, sameLayout, layoutKeyOf, layoutFits, layoutForGrid, fragmentById, canPlace, orientations, layoutValue, chargeFactor, coreBonus, threadsOf, bladeHostGbAt, TYPE, FRAGMENTS, BLADE_LAYOUTS, BLADE_PHASE_PRICED, BLADE_HOST, BLADE_WEIGHTS, LAYOUT_MULT_KEYS, hackChainGiftInputsOf } from 'stanekplan.js'
 import { bladeExitGen, bladeMemberOf, BLADE_ENSEMBLE } from 'bbplan.js'
 
 export const EPOCH_FILE = '/tel/stanekepoch.txt'
@@ -486,7 +486,9 @@ export const bladeGiftMakerOf = ({ live, target = null, duty = BLADE_HOST.duty, 
 /**
  * THE CHAIN's options (L4; progress.js routeGiftChainOf calls it, tools/sim/routegift.mjs too): see there.
  */
-export function routeGiftChainOptionsOf({ gift: g, nodeMults: nm, base, install = null }) {
+/** The hacking charger's fractions the chain prices hack + gift at (stanekplan.ALLOC_GRID's middle; the best is the arm). */
+export const CHAIN_HACK_F = [0.05, 0.1, 0.2, 0.3]
+export function routeGiftChainOptionsOf({ gift: g, nodeMults: nm, base, install = null, hackCharger = null }) {
   if (!g?.available || g.forfeited || g.accepted) return null
   const gs = giftSize(nm?.StaneksGiftExtraSize ?? 0, g.l13 ?? 0)
   const np = nm?.StaneksGiftPowerMultiplier ?? 1
@@ -496,12 +498,27 @@ export function routeGiftChainOptionsOf({ gift: g, nodeMults: nm, base, install 
   const thrAt = bladeThrAt({ gbMax: BLADE_HOST.gbMax.mid })
   const bladeOptions = [{ src: 'without the gift', key: null, make: null }]
   if (placed.length) bladeOptions.push({ src: `accept now + the Bladeburner layout ${layoutKeyOf(placed)} (Genesis x0.9 at once; the charger ramp BLADE_HOST mid)`, key: layoutKeyOf(placed), make: bladeGiftMakerOf({ live, target: null, duty: BLADE_HOST.duty, nodePower: np, install, accept: true, thrAt }) })
+  // HACK + GIFT (2026-10-18): the hacking layout for this grid from zero each life, the charger as
+  // stanekplan.hackChainGiftInputsOf models it (the gameplan's ramp floored at the measured fleet), Genesis at once
+  const hackOptions = [{ src: 'without the gift', key: null, inputs: base, withGift: false }]
+  const hackWhy = []
+  const hTab = layoutForGrid(gs.width, gs.height, np, 'hack')
+  const hPlaced = (hTab?.placed ?? []).map((p) => ({ id: p.id, x: p.x, y: p.y, rot: p.rot ?? p.rotation }))
+  if (!hackCharger) hackWhy.push('no charger inputs: hack + gift unpriced')
+  else if (!hPlaced.length) hackWhy.push(`no hacking layout for the ${gs.width}x${gs.height} grid: hack + gift unpriced`)
+  else {
+    for (const f of CHAIN_HACK_F) {
+      const r = hackChainGiftInputsOf(base, { ...hackCharger, layout: hPlaced, nodePower: np, f })
+      if (r.inputs) hackOptions.push({ src: `accept now + the hacking layout at f ${f} (${r.why})`.slice(0, 400), key: layoutKeyOf(hPlaced), inputs: r.inputs, withGift: true, f, chargerBasis: r.basis })
+      else hackWhy.push(`f ${f}: ${r.why}`)
+    }
+  }
   return {
     chain: true,
-    hackOptions: [{ src: 'without the gift', key: null, inputs: base, withGift: false }],
+    hackOptions,
     bladeOptions,
     switchCostH: ROUTE_GIFT.switchCostH,
-    notSimulated: 'hack + gift outside BitNode 13 (no charger fleet before an accept); the charger as the node-start ramp, not this fleet',
-    why: placed.length ? null : `no Bladeburner layout for the ${gs.width}x${gs.height} grid: blade + gift unpriced`,
+    notSimulated: "hack + gift: the charger is a MODEL before the accept (the gameplan's ramp floored at the measured fleet, stanekplan.HACK_CHARGER_RAMP), Awakening/Serenity not credited; blade + gift: the charger as the node-start ramp, not this fleet",
+    why: [placed.length ? null : `no Bladeburner layout for the ${gs.width}x${gs.height} grid: blade + gift unpriced`, ...hackWhy].filter(Boolean).join('; ') || null,
   }
 }

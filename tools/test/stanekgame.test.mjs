@@ -1444,11 +1444,84 @@ async function sg22() {
   const aj = rd('act.js')
   c.examined(2)
   if ((sj.match(/giftStateOf\(info, canAccessCotMG\(info\), route, verdict\)/g) ?? []).length !== 2) c.fail("stanek.js must accept on the route decision's gift verdict (both reads)")
-  if (!/if \(!g0\.accepted\) return routeGiftChainOf\(info, base, s0, g0\)/.test(pr)) c.fail('progress.js: an unaccepted, acceptable gift must enter the route decision as the chain (routeGiftChainOf)')
+  if (!/if \(!g0\.accepted\) return routeGiftChainOf\(ns, info, base, s0, g0\)/.test(pr)) c.fail('progress.js: an unaccepted, acceptable gift must enter the route decision as the chain (routeGiftChainOf)')
   if ((aj.match(/giftVerdictOfProgress\(readHomeFile\(ns, PROGRESS_FILE\), ri\)/g) ?? []).length !== 2) c.fail("act.js's purchase gate must read the same verdict (both call sites)")
   return c
 }
 
+// SG23 HACK + GIFT OUTSIDE BN13, IN THE CHAIN (live BN10.3 2026-10-18: "hack with the gift outside BN13 is not
+// priced", so the chain declined the gift on the hacking route the gameplan plays as hacking + Stanek; held by
+// hand in GIFT_HOLD_NODES). The chain prices hack + gift (the hacking layout from zero each life, Genesis at
+// once, the charger on the gameplan's ramp floored at the measured fleet); the accept follows the faster
+// option of the chosen arm; an UNPRICED decision publishes accept null and the option is HELD, never declined.
+async function sg23() {
+  const c = new Check('SG23', 'hack + gift priced in the chain outside BN13: the accept follows hack+gift / hack; an unpriced decision holds the gift open')
+  const P = await import('../../plan.js')
+  const BB = await import('../../bbplan.js')
+  const se = await import('../../stanekepoch.js')
+  const { bitNodeMults } = await import('../../bitNodeMultipliers.js')
+  const { drain } = await import('../../coop.js')
+  const nm = bitNodeMults(10, 3)
+  // a BN10.3 entry (SF10.2 held), the builder covenantroute's MC checks use, at the lo economy
+  const { freshInputs, defaultProfile } = await import('../sim/nodechoice/hackexit.mjs')
+  const SF = [[1, 3], [2, 1], [4, 2], [5, 1], [6, 3], [7, 2], [8, 1], [9, 3], [10, 2], [11, 1], [12, 1], [13, 2], [14, 3]]
+  const base = freshInputs({ node: 10, sf: SF, g: 0.0405, profile: defaultProfile({ cycleHours: 2.63 }) })
+  const charger = { liveGB: 780, liveHome: { ram: 128, cores: 1 }, ageH: 0.2, ramHours: 61 }
+  const gift = { available: true, accepted: false, forfeited: false, l13: 1 }
+  const g = se.routeGiftChainOptionsOf({ gift, nodeMults: nm, base, install: null, hackCharger: charger })
+  const withG = (g?.hackOptions ?? []).filter((o) => o.withGift)
+  c.examined(3)
+  if (withG.length !== se.CHAIN_HACK_F.length) c.fail(`the chain must price hack + gift at every CHAIN_HACK_F (${withG.length} of ${se.CHAIN_HACK_F.length})`, g?.why)
+  if (!(g?.hackOptions ?? []).some((o) => o.withGift === false && o.inputs === base)) c.fail('the chain keeps hack WITHOUT the gift on the live inputs')
+  // the inputs: Genesis x0.9 at the accept (hacking x0.9 before the charge) and the life-average charge on top
+  const gen = sp.penaltyStepInputsOf(base, 1, sp.PENALTY[1])
+  const o1 = withG.find((o) => o.f === 0.1)
+  c.examined(2)
+  if (!(Math.abs(gen.hackingMult / base.hackingMult - 0.9) < 1e-12)) c.fail('Genesis moves hacking x0.9 at the accept', gen.hackingMult)
+  if (!(o1?.inputs?.hackingMult > gen.hackingMult && o1.inputs.incomePerSec > gen.incomePerSec)) c.fail('the charged hacking layout lifts hacking and income above Genesis alone', JSON.stringify(o1?.inputs))
+  if (se.routeGiftChainOptionsOf({ gift, nodeMults: nm, base, install: null }).hackOptions.some((o) => o.withGift)) c.fail('no charger inputs: hack + gift unpriced (not invented)')
+  const f0 = sp.hackChainGiftInputsOf(base, { ...charger, layout: sp.layoutForGrid(4, 4, nm.StaneksGiftPowerMultiplier, 'hack').placed, nodePower: nm.StaneksGiftPowerMultiplier, f: 0 })
+  c.examined(1)
+  if (!(f0.inputs && Math.abs(f0.inputs.hackingMult / gen.hackingMult - 1) < 1e-12 && Math.abs(f0.inputs.incomePerSec / gen.incomePerSec - 1) < 1e-12)) c.fail('hack + gift at f 0 is Genesis alone: the accept costs x0.9 before any charge', JSON.stringify(f0.inputs && { h: f0.inputs.hackingMult, g: gen.hackingMult }))
+  // the decision on the hacking exit model itself (plan.trajectoryOf, the default policy)
+  const traj = P.trajectoryOf(null, {})
+  const trajGen = P.trajectoryGenOf(null, {})
+  const ones = { strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1, hacking: 1, intelligence: 149 }
+  const m = { strength: 0.52, defense: 0.52, dexterity: 0.52, agility: 0.52, charisma: 0.52, strength_exp: 1.3, defense_exp: 1.3, dexterity_exp: 1.3, agility_exp: 1.3, charisma_exp: 1.3, bladeburner_success_chance: 1, bladeburner_max_stamina: 1, bladeburner_stamina_gain: 1 }
+  const s0 = BB.bladeStartOf({ tel: null, person: { skills: ones, exp: {}, mults: m, city: 'Sector-12', money: 1262 }, sleeves: { infiltrate: 1, support: 4, fa: 0, contracts: 2, trainTo: 100 }, gymExpPerSec: 14.7, bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: null, rankScale: 1, successScale: 1, maxH: 400 })
+  const dec = (gg, mandate = null) => drain(P.decideBladeRouteGen({ base, traj, trajGen, bladeStart: s0, draws: [], post: false, gift: gg, mandate }))
+  const cov = { covenant: { cost: 1e17, joinMoney: 75e9, combatH: 2.4, member: false, sleeveExpPerSec: 0 }, why: 'test' }
+  const d = dec(g, cov)
+  const noG = d.gift?.hack?.options?.find((o) => !o.withGift)?.hours
+  const best = Math.min(...(d.gift?.hack?.options ?? []).filter((o) => o.withGift).map((o) => o.hours))
+  c.examined(3)
+  c.note(`hack ${d.hackH}h (without the gift ${noG}h, best with ${best}h), blade ${d.bladeH}h -> '${d.key}', accept ${d.gift?.accept}, hackBareH ${d.gift?.hackBareH}`)
+  if (d.key !== 'hack' || !(best < noG) || d.gift?.accept !== true || d.gift?.hackWithGift !== true) c.fail('hack + gift faster: the route is hack and the accept is true', JSON.stringify({ key: d.key, accept: d.gift?.accept, best, noG }))
+  if (!(typeof d.gift?.hackBareH === 'number' && d.gift.hackBareH > 0)) c.fail('the chain publishes the bare no-gift hacking exit (the ramp length the next pass uses)')
+  // hack + gift slower (an absurdly expensive Genesis): hack without, accept false
+  const slow = { ...g, hackOptions: g.hackOptions.map((o) => (o.withGift ? { ...o, inputs: { ...o.inputs, incomePerSec: o.inputs.incomePerSec * 0.5 } } : o)) }
+  const ds = dec(slow, cov)
+  c.examined(1)
+  if (ds.key !== 'hack' || ds.gift?.accept !== false) c.fail('hack chosen, hack + gift slower: the accept is false', JSON.stringify({ key: ds.key, accept: ds.gift?.accept }))
+  // UNPRICED: a mandate that binds unpriced -> both arms unpriced, the route held, the accept NULL (never a decline)
+  const du = drain(P.decideBladeRouteGen({ base, traj, trajGen, bladeStart: s0, draws: [], post: false, gift: g, mandate: { covenant: null, unpriced: true, why: 'test' }, prev: { key: 'hack', at: new Date().toISOString() } }))
+  c.examined(1)
+  if (!(du.unpriced?.length > 0) || du.gift?.accept !== null) c.fail('an unpriced route decision publishes accept null', JSON.stringify({ unpriced: du.unpriced, accept: du.gift?.accept }))
+  // the verdict null HOLDS the option (stanek.js does not accept, act.js refuses non-NFG orders); a priced false does not
+  const ri = { currentNode: 10, lastAugReset: 1000, lastNodeReset: 0, ownedSF: new Map([[13, 1], [7, 3], [10, 2]]), ownedAugs: new Map() }
+  const prog = (gift2) => JSON.stringify({ at: new Date().toISOString(), route: { route: 'hack', node: 10, lastAugReset: 1000, gift: gift2 } })
+  const vNull = sp.giftVerdictOfProgress(prog({ chain: true, accept: null }), ri)
+  const held = sp.giftStateOf(ri, true, 'hack', vNull)
+  const yes = sp.giftStateOf(ri, true, 'hack', sp.giftVerdictOfProgress(prog({ chain: true, accept: true }), ri))
+  const no = sp.giftStateOf(ri, true, 'hack', sp.giftVerdictOfProgress(prog({ chain: true, accept: false }), ri))
+  c.examined(4)
+  if (!(vNull && vNull.accept === null) || held.want || !held.hold || sp.giftOrderGate(held, { kind: 'buyaug', args: ['CyberSec', 'BitRunners'] }).allow) c.fail('a chain verdict with accept null HOLDS the gift open (no accept, non-NFG orders refused)', JSON.stringify({ vNull, want: held.want, hold: held.hold }))
+  if (!yes.want || yes.basis !== 'hack') c.fail('the chain verdict accept on the hack route: wanted, basis hack', JSON.stringify(yes))
+  if (no.want || no.hold) c.fail('a priced decline on the hack route: not wanted, not held', JSON.stringify(no))
+  if (sp.GIFT_HOLD_NODES.has(10)) c.fail('BN10 needs no hand hold once the chain prices hack + gift')
+  return c
+}
+
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22(), await sg23()]
 }

@@ -1320,6 +1320,34 @@ export function covenantCombatHours(player, fleetGymAtTm1, trainingMult, target 
 }
 
 /**
+ * THE MANDATE'S COMBAT LEG AS THE ROUTE RUNS IT (2026-10-18, live BN10.3 node start: covenantCombatHours
+ * at combat 1-46, no augmentations, BN10's level multiplier 0.4 read 13674747338185746h — the exp for 850
+ * at those multipliers is ~e^48, a level no route trains to: the route runs the legs in its FINAL window,
+ * on the multipliers its installs bought, which the exit model does not carry). Two trajectories, the
+ * faster one is the leg:
+ *   live         train now, at the live rate (covenantCombatHours, the fleet beside the player)
+ *   final window the gameplan's measured leg (tools/sim/gameplan/sleeves.mjs, the purchase leg): BN10.1
+ *                trained the 850s 457 -> 1441 inside one 2.4h life of its final window — 2.4h, an UPPER
+ *                bound on that leg (it fit inside the life). NOT the live state: CALIBRATED on one run.
+ * A leg longer than COVENANT_COMBAT_MAX_H (200h, bodyplan.combatBarPlanOf's horizon; a whole BN10 clear
+ * is ~61h) is ABSURD: never priced — dropped with its cause named, and with no candidate left the leg is
+ * UNPRICED ({hours: null, unpriced: true, why}). Returns {hours, basis, liveH, why}.
+ */
+export const COVENANT_COMBAT_FINAL = { hours: 2.4, from: 457, to: 1441, node: 'BN10.1', source: 'tools/sim/gameplan/sleeves.mjs purchase leg: MEASURED 457 -> 1441 inside one 2.4h BN10.1 final-window life' }
+export const COVENANT_COMBAT_MAX_H = 200
+export function covenantCombatLegOf(live, final = COVENANT_COMBAT_FINAL) {
+  const liveH = live?.hours
+  const ok = (h) => num(h) && h >= 0 && h <= COVENANT_COMBAT_MAX_H
+  const finalH = final?.hours
+  const liveTxt = num(liveH) ? `${liveH.toPrecision(4)}h` : liveH === Infinity ? 'never (no rate)' : 'unreadable'
+  const absurd = num(liveH) && liveH > COVENANT_COMBAT_MAX_H ? ` (ABSURD: over ${COVENANT_COMBAT_MAX_H}h — the live multipliers, not a trajectory any route runs)` : ''
+  const cands = [ok(liveH) ? ['live', liveH] : null, ok(finalH) ? ['final window', finalH] : null].filter(Boolean)
+  if (!cands.length) return { hours: null, unpriced: true, basis: null, liveH: num(liveH) ? liveH : null, why: `the Covenant combat legs are unpriced: training now ${liveTxt}${absurd}, and no final-window leg (${final?.source ?? 'none'}) within ${COVENANT_COMBAT_MAX_H}h` }
+  const [basis, hours] = cands.reduce((a, b) => (b[1] < a[1] ? b : a))
+  return { hours, basis, liveH: num(liveH) ? liveH : null, why: basis === 'live' ? `the combat legs at the live rate: ${hours.toFixed(2)}h` : `the combat legs in the final window: ${hours.toFixed(2)}h (${final.source}; training now ${liveTxt}${absurd})` }
+}
+
+/**
  * THE COMBAT BATCH for the Covenant campaign's install path: every offered,
  * unowned augmentation that raises a combat LEVEL multiplier, whose
  * reputation is already met at the offering faction and whose prerequisites

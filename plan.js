@@ -3203,6 +3203,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   let hackBase = withCov(base)
   let giftRec = null
   let pointHack = null
+  let noGiftRowH = null // the hacking option without the gift (`.hack` member access is billed as ns.hack: kept local)
   if (gift) {
     const hackRows = []
     for (const o of gift.hackOptions ?? []) {
@@ -3210,6 +3211,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
       hackRows.push({ src: o.src, key: o.key ?? null, inputs: withCov(o.inputs), withGift: o.withGift !== false, hours: yield* hoursOf(withCov(o.inputs)) })
       yield
     }
+    noGiftRowH = hackRows.find((r) => r.withGift === false)?.hours ?? null
     const hb = hackRows.filter((r) => fin(r.hours)).reduce((b, r) => (!b || r.hours < b.hours ? r : b), null)
     if (hb) {
       hackBase = hb.inputs
@@ -3278,6 +3280,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     mandateRec = {
       priced: fin(pointHack) && fin(pointBlade),
       why: mandate.why ?? null,
+      combat: mandate.combat ?? null,
       cost: fin(cov.cost) ? cov.cost : null,
       hackH: r3(hackNoCovH),
       hackCovH: r3(pointHack),
@@ -3298,8 +3301,15 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   // a mandate that binds but cannot be priced leaves BOTH arms unpriced (never priced as if it did not bind)
   const mUnp = mandate?.unpriced === true
   const d = unpricedHoldOf(d0, { pointHack: mUnp ? null : pointHack, pointBlade: mUnp ? null : pointBlade, prev: was, hold, post })
-  // THE CHAIN (the gift unaccepted and acceptable): the accept follows the chosen arm's best option
-  if (giftRec) giftRec.accept = d.key === 'blade' ? giftRec.bladeWithGift === true : d.key === 'hack' ? giftRec.hackWithGift === true : null
+  // THE CHAIN (the gift unaccepted and acceptable): the accept follows the chosen arm's best option — and
+  // only a PRICED decision decides it: an arm unpriced (held route) publishes null, never a decline (the
+  // gift's holders keep the option open on null: stanekplan.giftWantOf)
+  if (giftRec) giftRec.accept = d.unpriced?.length ? null : d.key === 'blade' ? giftRec.bladeWithGift === true : d.key === 'hack' ? giftRec.hackWithGift === true : null
+  // the hacking exit without the gift and without the mandate: the node length the chain's charger ramp runs over
+  if (giftRec && gift.chain === true) {
+    const bare = cov ? yield* hoursOf(base) : noGiftRowH
+    giftRec.hackBareH = fin(bare) ? +bare.toFixed(3) : null
+  }
   if (giftRec && typeof gift.boundInputsOf === 'function') {
     const bh = yield* hoursOf(gift.boundInputsOf(hackBase))
     const pointKey = (h) => (fin(pointBlade) && (!fin(h) || pointBlade < h) ? 'blade' : fin(h) ? 'hack' : null)

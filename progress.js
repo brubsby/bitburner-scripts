@@ -148,7 +148,7 @@ import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLa
 import { makePacer, drain, stepMemoryStore, pageStorage, LoopCapError } from 'coop.js'
 import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, batchLedgerOf, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangExitGen, gangArms, gangArmsGen, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
-import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantTarget, covenantCombatHours, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES, preJoinFleetObjectiveOf } from 'sleeveplan.js'
+import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantTarget, covenantCombatHours, covenantCombatLegOf, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES, preJoinFleetObjectiveOf } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
 import { freshCurve, countTiming } from 'countplan.js'
 
@@ -183,7 +183,7 @@ import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, p
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
 import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT, routeGiftChainOptionsOf } from 'stanekepoch.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, HACK_CHARGER_RAMP, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2681,7 +2681,7 @@ const BLADE_TEL = '/tel/bladeburner.txt'
 const HACK_LAYOUT_MEMO = new Map()
 function routeGiftOf(ns, info, base, s0) {
   const g0 = giftStateOf(info, canAccessCotMG(info))
-  if (!g0.accepted) return routeGiftChainOf(info, base, s0, g0)
+  if (!g0.accepted) return routeGiftChainOf(ns, info, base, s0, g0)
   const st0 = readJson(ns, STANEK_FILE)
   const st = st0 && st0.node === info.currentNode && st0.lastNodeReset === (info.lastNodeReset ?? st0.lastNodeReset) ? st0 : null
   const sameLife = st?.lastAugReset === info.lastAugReset
@@ -2726,8 +2726,24 @@ function routeGiftOf(ns, info, base, s0) {
  * acts on. NOT PRICED, stated: hack + gift outside BN13 (no charger fleet is measured before an accept;
  * BN13 accepts by policy, GIFT_NODES). null: no Church here, or the gift forfeited.
  */
-function routeGiftChainOf(info, base, s0, g) {
-  return routeGiftChainOptionsOf({ gift: g, nodeMults: bitNodeMults(info), base, install: s0?.install ?? null })
+function routeGiftChainOf(ns, info, base, s0, g) {
+  return routeGiftChainOptionsOf({ gift: g, nodeMults: bitNodeMults(info), base, install: s0?.install ?? null, hackCharger: chainHackChargerOf(ns, info) })
+}
+/**
+ * The hacking charger the chain prices hack + gift on (stanekplan.hackChainGiftInputsOf): the fleet measured
+ * now (batch.txt ram.total; home's RAM and cores from the watchdog's homeup record) and the node's no-gift
+ * hacking length to ramp over — the last pass's hacking arm WITHOUT the gift (hours from then) plus the node's
+ * age then; none yet: the measured fleet alone (a lower bound).
+ */
+function chainHackChargerOf(ns, info) { // ramHours: the last pass's hackBareH (no gift, no mandate) + the node's age then, else HACK_CHARGER_RAMP.fallbackH
+  const liveGB = readJson(ns, '/tel/batch.txt')?.ram?.total
+  const hu = readJson(ns, '/tel/watchdog.txt')?.jobs?.['homeup.js']?.next ?? null
+  const ageH = info?.lastNodeReset > 0 ? Math.max(0, (Date.now() - info.lastNodeReset) / 3.6e6) : null
+  const prev = planCtx?.prevAny?.decisions?.bladeRoute
+  const prevAt = Date.parse(prev?.decidedAt ?? '')
+  const bare = prev?.gift?.chain === true ? prev.gift.hackBareH : null
+  const ramHours = typeof bare === 'number' && bare > 0 && prevAt > 0 && info?.lastNodeReset > 0 ? (prevAt - info.lastNodeReset) / 3.6e6 + bare : HACK_CHARGER_RAMP.fallbackH
+  return { liveGB: typeof liveGB === 'number' && liveGB > 0 ? liveGB : 0, liveHome: hu?.homeRam > 0 ? { ram: hu.homeRam, cores: hu.cores > 0 ? hu.cores : 1 } : null, ageH: ageH ?? 0, ramHours: ageH === null ? null : Math.max(ramHours, ageH) }
 }
 /** The fleet the BLADEBURNER route would run is re-chosen at most this often (the chooser: every configuration, one exit each). */
 const ROUTE_FLEET_MS = 30 * 60e3
@@ -4778,10 +4794,12 @@ function covenantMandateOf(ns, info, player, planFleet) {
   const cost = covenantSleeveCost(from)
   const member = player.factions.includes(COVENANT.faction)
   const legs = member ? null : covenantCombatHours(levelledPerson(player, info), planFleet?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
-  const combatH = member ? 0 : legs ? legs.hours : null
-  if (!isFinite(cost) || combatH === null) return { covenant: null, unpriced: true, why: `the Covenant mandate binds (sleeve #${from + 1} of ${covenantTarget(sfLevel(info, 10))}) but its ${combatH === null ? 'combat legs are' : 'price is'} unpriced` }
+  // the leg as the route runs it (sleeveplan.covenantCombatLegOf: live vs the final window; an absurd leg is unpriced, named)
+  const leg = member ? null : covenantCombatLegOf(legs)
+  const combatH = member ? 0 : leg.hours
+  if (!isFinite(cost) || combatH === null) return { covenant: null, unpriced: true, why: `the Covenant mandate binds (sleeve #${from + 1} of ${covenantTarget(sfLevel(info, 10))}) but its ${combatH === null ? `combat legs are unpriced: ${leg?.why ?? '?'}` : 'price is unpriced'}` }
   const perSleeveExp = planFleet?.expToPlayerHackingIfStudying && n > 0 ? planFleet.expToPlayerHackingIfStudying / n : 0
-  return { covenant: { cost, joinMoney: COVENANT.joinMoney, combatH, member, sleeveExpPerSec: perSleeveExp }, why: `MANDATED (${covenantTarget(sfLevel(info, 10)) > COVENANT_MANDATE.target ? COVENANT_MANDATE.decided5 : COVENANT_MANDATE.decided}): sleeve #${from + 1} of ${covenantTarget(sfLevel(info, 10))}, $${cost.toExponential(2)}${member ? '' : `, ${combatH.toFixed(1)}h of combat to join`} — every route priced to exit holding it` }
+  return { covenant: { cost, joinMoney: COVENANT.joinMoney, combatH, member, sleeveExpPerSec: perSleeveExp }, combat: leg ? { hours: leg.hours, basis: leg.basis, liveH: leg.liveH } : null, why: `MANDATED (${covenantTarget(sfLevel(info, 10)) > COVENANT_MANDATE.target ? COVENANT_MANDATE.decided5 : COVENANT_MANDATE.decided}): sleeve #${from + 1} of ${covenantTarget(sfLevel(info, 10))}, $${cost.toExponential(2)}${member ? '' : `, ${combatH.toFixed(1)}h of combat to join (${leg.why})`} — every route priced to exit holding it` }
 }
 
 /**
@@ -4805,8 +4823,9 @@ function covenantExitOf(ns, info, player, schedule, basePolicy, inputs, planFlee
     // The combat legs with the fleet at the gym beside the player
     // (sleeveplan.covenantCombatHours); the player-alone forecast was ~2x.
     const legs = member ? null : covenantCombatHours(levelledPerson(player, info), planFleet?.gymToPlayerAtTm1, ns.hacknet.getTrainingMult())
-    const combatH = member ? 0 : legs ? legs.hours : null
-    if (combatH === null) return out(false, 'Covenant combat legs unpriced (player or fleet gym rates unreadable)')
+    const leg = member ? null : covenantCombatLegOf(legs)
+    const combatH = member ? 0 : leg.hours
+    if (combatH === null) return out(false, `Covenant combat legs unpriced: ${leg?.why ?? '?'}`)
     const mandated = covenantMandated(info?.currentNode, from, sfLevel(info, 10))
     const base = basePolicy?.best
     if (!base) return out(false, `no base trajectory to compare against: ${basePolicy?.why ?? 'exit unpriced'}`)
