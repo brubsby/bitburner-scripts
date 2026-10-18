@@ -1377,7 +1377,7 @@ export const GIFT_NODES = new Set([13])
  * graft / install while the gift is unaccepted, and stanek.js does NOT accept.
  * Empty: BN11's hold (2026-10-15) is now the priced decision below.
  */
-export const GIFT_HOLD_NODES = new Set([])
+export const GIFT_HOLD_NODES = new Set([10]) // 2026-10-18 BN10.3: hack+gift unpriced outside BN13 and the Covenant mandate unpriced at node start — held until priced
 
 /**
  * THE GIFT ON THE BLADEBURNER ROUTE, PRICED (tools/sim/bbstanek.mjs --table -> tools/sim/
