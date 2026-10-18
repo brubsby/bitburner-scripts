@@ -58,6 +58,11 @@ before starting each subagent.
     Also: the leg ignores the final window's banked money (~1h long); the per-sleeve base value re-derives
     6.6e-3 vs the committed 7.2e-3; gameplan RT4 (income calibration vs BN8/14/9) fails, unverified whether that predates this work.
 
+17c. **Server spend ignores Stanek's charge host** (2026-10-17, before BN10.3): installgate spendExit.servers prices
+    cloud servers for batching only. highestCharge = one charge call's threads on ONE host, the effect ~ ln(threads)/60,
+    so one big server (BN10: x5 cost, 15 max, 512TB cap) lifts each fragment's term ~0.088 -> ~0.21. Price
+    "buy the big charge host" vs not as trajectories with the gift's gain included, for BN10.3's hacking + gift lives.
+
 ## Go
 18. **Opening books for hard layouts** — subagent was running at the cut; deploy/verify
     its result.
