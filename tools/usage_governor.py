@@ -39,6 +39,7 @@ DWELL = float(os.environ.get('DWELL', 2)) * 3600  # s at a level before stepping
 POLL = int(os.environ.get('POLL', 300))
 WINDOW = float(os.environ.get('WINDOW', 6))     # h of samples for the burn rate
 HARD = float(os.environ.get('HARD', 95))        # % -> 'off' regardless of projection
+MIN_SPAN_CUR = float(os.environ.get('MIN_SPAN_CUR', 2)) * 3600  # s of the current level's own samples before its slope counts
 
 LEVELS = ['off', 'minimal', 'conserve', 'full']  # ascending aggressiveness
 FACTOR = {'full': 1.0, 'conserve': 0.45, 'minimal': 0.12, 'off': 0.02}  # prior burn vs full
@@ -77,12 +78,12 @@ def load_samples():
     return out
 
 
-def slope(samples, reset, level=None, now=None):
+def slope(samples, reset, level=None, now=None, min_span=1800):
     """%/h over the last WINDOW h of this week's samples (optionally one level's)."""
     now = now or time.time()
     s = [x for x in samples if x.get('reset') == reset and now - x['t'] <= WINDOW * 3600
          and (level is None or x.get('level') == level)]
-    if len(s) < 2 or s[-1]['t'] - s[0]['t'] < 1800:
+    if len(s) < 2 or s[-1]['t'] - s[0]['t'] < min_span:
         return None
     # least squares
     n = len(s); mt = sum(x['t'] for x in s) / n; mu = sum(x['u'] for x in s) / n
@@ -95,7 +96,10 @@ def slope(samples, reset, level=None, now=None):
 def rates(samples, reset, current, now):
     """Burn rate per level: measured where there are samples, else the current level's
     measurement scaled by the FACTOR ratio, else a week-average fallback."""
-    meas = {lv: slope(samples, reset, lv, now) for lv in LEVELS}
+    # The CURRENT level needs >= MIN_SPAN_CUR of its own samples before its slope counts: the wake
+    # a level change sends is itself a burst of usage, and 30 min of it extrapolated over the week
+    # flapped off -> minimal -> off in minutes (2026-10-18: minimal "projected 173%" on the wake's burst).
+    meas = {lv: slope(samples, reset, lv, now, MIN_SPAN_CUR if lv == current else 1800) for lv in LEVELS}
     base = None
     for lv in [current] + [l for l in LEVELS if l != current]:
         if meas.get(lv) is not None:
