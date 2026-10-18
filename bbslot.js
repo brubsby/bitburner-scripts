@@ -60,6 +60,11 @@ const parse = (ns, f) => {
  */
 export function slotClaim(ns, host, info, now = Date.now()) {
   const c = claimOf(ns, info, now)
+  // THE BLADE'S SIMULACRUM INSTALLED: Bladeburner actions run beside any work — startAction
+  // does not finish it (Bladeburner.ts:179) and process() keeps going while it runs (:1355) — so
+  // the actor never waits on the work slot. 2026-10-18 BN11.2 (SF7.3: the Simulacrum free) sat
+  // 21h at rank 200 while the slot read 'body' for the parallel gym (3203526).
+  if (c.owner !== 'bladeburner' && simulacrumOf(info)) return { ...c, ours: true, simulacrum: true, why: `The Blade's Simulacrum installed: Bladeburner acts beside the ${c.owner ?? 'unclaimed'} slot (${String(c.why ?? '').slice(0, 120)})` }
   if (c.owner !== 'bladeburner') return c
   const l = parse(ns, ACT)?.lent ?? null
   const lAt = Date.parse(l?.at ?? '')
@@ -95,4 +100,12 @@ function claimOf(ns, info, now) {
     if (work) return { owner: `handoff:${work.kind}`, ours: false, at: pr.at, by: 'progress.js', why: `an order batch (${ob.at}) newer than the claim (${pr.at}) starts ${work.kind} — the slot is being handed off; not starting an action until progress.js claims it again` }
   }
   return { owner, ours: owner === 'bladeburner', at: pr.at, by: 'progress.js', why: owner === 'bladeburner' ? 'progress.js holds the slot for bladeburner' : `progress.js holds the slot for ${owner ?? 'nobody'}` }
+}
+
+/** The Blade's Simulacrum among the INSTALLED augmentations (getResetInfo().ownedAugs: installed only). */
+export function simulacrumOf(info) {
+  const owned = info?.ownedAugs
+  if (!owned) return false
+  const names = typeof owned.keys === 'function' ? [...owned.keys()] : Array.isArray(owned) ? owned.map((x) => x?.name ?? x) : Object.keys(owned)
+  return names.includes("The Blade's Simulacrum")
 }

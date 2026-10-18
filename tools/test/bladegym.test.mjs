@@ -120,5 +120,22 @@ export async function run() {
     if (!step.length) c.fail('progress.js has no bladeGymStep')
     else if (!/if \(!Object\.keys\(short\)\.length && installedCount\?\.has\?\.\(SIMULACRUM\)\) \{[\s\S]{0,300}short = \{ \[low\]:/.test(step)) c.fail("bladeGymStep idles the slot with the Simulacrum installed while both exit models credit the class beside the action")
   }
+  {
+    // BG7 THE SIMULACRUM FREES THE ACTOR FROM THE SLOT (bbslot.slotClaim): Bladeburner actions run beside
+    // any work with it installed (Bladeburner.ts:179, :1355), so a 'body' claim must not stop the actor.
+    // Live 2026-10-18 BN11.2: 21h at rank 200 while the slot read 'body' for the parallel gym.
+    const c = add('BG7', "the Simulacrum installed: the Bladeburner actor acts beside a 'body' slot claim")
+    const slot = await import(path.join(REPO_ROOT, 'bbslot.js'))
+    const now = Date.now()
+    const files = { [slot.PROGRESS]: JSON.stringify({ at: new Date(now).toISOString(), slot: { owner: 'body', why: 'gym' } }) }
+    const ns = { read: (f) => files[f] ?? '', fileExists: (f) => f in files }
+    const base = { lastAugReset: now - 3600e3 }
+    const withSim = slot.slotClaim(ns, 'home', { ...base, ownedAugs: new Map([["The Blade's Simulacrum", 1]]) }, now)
+    const without = slot.slotClaim(ns, 'home', { ...base, ownedAugs: new Map([['NeuroFlux Governor', 1]]) }, now)
+    c.examined(2)
+    if (!withSim.ours) c.fail(`with the Simulacrum the actor must act beside the 'body' claim: ${JSON.stringify(withSim).slice(0, 200)}`)
+    if (without.ours) c.fail(`without the Simulacrum a 'body' claim must hold the actor: ${JSON.stringify(without).slice(0, 200)}`)
+  }
+
   return checks
 }
