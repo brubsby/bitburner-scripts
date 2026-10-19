@@ -112,3 +112,9 @@ before starting each subagent.
 3. **Own-infra Desk phase 2** (in-game OC desk screen); tailscale serve stays off (user: "Not yet").
 4. Agents still running at the cut may have left follow-ups: Empty Cell priority + press channel, rocket kit,
    spawn-egg answer (relay to the Desk `spawner-souls`), base Fishing Port gate, cane soil swap. Read their reports.
+
+## autogtnh Solar Factory T1 (postponed 2026-10-19 ~17:00 UTC, governor off)
+Plan done (autogtnh docs/research/solar-factory.md section 7, plan `sf-t1-p1m1`, site + AE what-if OK). On step-up:
+mint/craft the chains (20 Damascus frames via EV mixer + EBF + extruder + assembler; controller; panel chain; 2
+Industrial Diamonds via Coal Chunk + 4 Dynamite), dev-rehearse (structure, G2 P2P -> EV hatch, Dual Interface + pipe
+split), then robot #1: under-deck trunk, `multiblock build`, port bus + P2P paste, verify, patterns, test craft.
