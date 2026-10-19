@@ -97,6 +97,9 @@ before starting each subagent.
     ctauto/go-cheat, run endgame.js --next N). Fix: endgame.js must exit whatever home holds — e.g. run
     the destroy from any rooted host with >= 37.2GB free (Singularity works from any host), or have the
     launchers of transient residents (ctauto.js, go-cheat.js) honour /tel/reserve-endgame.txt.
+0c. **NO INSTALL false positive in a saving final window** (2026-10-19 BN10.3): fired at 0.7h into the
+    final life ("3x the 0.2h window") while cash grew $7e13 -> $7e14 in 20 min toward the $1e17 Covenant
+    sleeve. The check should read the plan's final-window money leg (no install planned) instead of the window.
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
