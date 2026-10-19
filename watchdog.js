@@ -113,7 +113,7 @@ import { isHacknetServerHost } from 'hacknetplan.js'
 // Pure: whether gang.js has any business running (a gang, or one creatable now).
 import { gangDaemonOf } from 'gangplan.js'
 // Pure (0GB): bladeburner.js's placement and the reservation batch.js honours.
-import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn, goPlacementOf, actionSlotOf, stockHeldOf } from 'raiseplace.js'
+import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reservesOf, heldOn, goPlacementOf, actionSlotOf, stockHeldOf, ENDGAME_RESERVE } from 'raiseplace.js'
 // Pure (0GB): go.js's priced placement verdict (goplace.js).
 import { goPlaceStreamsOf, goPlaceValueOf, goMilestoneOf } from 'goplace.js'
 // Pure (0GB): bb-lite.js's actor headroom, held like the RAISED reservations.
@@ -1246,6 +1246,9 @@ function restoreLaunchClock(ns) {
   return last
 }
 
+/** Transient home residents the exit's reserve evicts (each restarts on its own once the reserve lapses). */
+export const ENDGAME_EVICT = ['ctauto.js', 'go-cheat.js']
+
 export async function main(ns) {
   ns.disableLog('ALL')
   ns.print('watchdog running')
@@ -1331,6 +1334,20 @@ export async function main(ns) {
       // changes when buyserv buys a server, and a 30s delay in noticing that is
       // invisible; thirteen redundant BFS walks every tick were not free.
       const hosts = scanAll(ns)
+      // THE EXIT HOLDS HOME (raiseplace.ENDGAME_RESERVE, fresh, this life): endgame.js is ready and could
+      // not raise its 37.2GB. batch.js keeps its workers off; RESIDENTS filled home in BN7.2 and BN11.2
+      // (stock 28.6, ctauto 22, go-cheat 11.1GB) and both exits were unblocked by hand. The transient
+      // residents go, and nothing but endgame.js is relaunched onto home while the reserve stands.
+      const endgameHold = (() => {
+        try {
+          const r = JSON.parse(ns.read(ENDGAME_RESERVE.file) || 'null')
+          const at = Date.parse(r?.at ?? '')
+          return !!r && Number.isFinite(at) && Date.now() - at <= ENDGAME_RESERVE.freshMs && r.lastAugReset === ns.getResetInfo().lastAugReset
+        } catch {
+          return false
+        }
+      })()
+      if (endgameHold) for (const s of ENDGAME_EVICT) ns.scriptKill(s, 'home')
 
       for (const entry of WATCHED) {
         const { script, host, args, threads: threadSpec } = entry
@@ -1470,6 +1487,10 @@ export async function main(ns) {
           // /tel/installgate.txt stayed the previous life's and homeup.js read
           // 'inputs unreadable' — the home upgrade and the planner each waiting
           // on the other.
+          if (endgameHold && target === 'home' && script !== 'endgame.js') {
+            rec.state = 'deferred: the exit holds home (endgame.js reserve)'
+            continue
+          }
           if (target === 'home' && kind === DAEMON && script !== 'progress.js' && typeof entry.place !== 'function') {
             const block = 13 + 6.25 * singularityRamMultiplier(ns.getResetInfo())
             const after = ns.getServerMaxRam('home') - ns.getServerUsedRam('home') - ns.getScriptRam(script, 'home') * (threads ?? 1)

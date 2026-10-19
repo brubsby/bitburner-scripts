@@ -1375,6 +1375,11 @@ async function sg21() {
   if (!/\(endRes && h === endRes\.host \? endRes\.gb : 0\)/.test(bj) || !/endgameReserveOf\(JSON\.parse\(ns\.read\(ENDGAME_RESERVE\.file\)/.test(bj)) c.fail("batch.js must keep endgame's reserved block free of new workers (reserveFor)")
   c.examined(1)
   if (!/if \(!\(await raiseRam\(ns, want, STATUS, 'endgame\.js destroying the world daemon'\)\)\) \{[\s\S]{0,600}ns\.write\(ENDGAME_RESERVE\.file/.test(eg)) c.fail('endgame.js must reserve its block when the exit is ready and the raise is refused')
+  // RESIDENTS too (BN7.2, BN11.2: home full of stock/ctauto/go-cheat, both exits unblocked by hand): the
+  // watchdog evicts the transient residents and relaunches nothing but endgame.js onto home while it stands.
+  const wd = rd('watchdog.js')
+  if (!/if \(endgameHold\) for \(const s of ENDGAME_EVICT\) ns\.scriptKill\(s, 'home'\)/.test(wd) || !/ENDGAME_EVICT = \['ctauto\.js', 'go-cheat\.js'\]/.test(wd)) c.fail("watchdog.js must evict the transient home residents while endgame's reserve stands")
+  if (!/if \(endgameHold && target === 'home' && script !== 'endgame\.js'\) \{[\s\S]{0,120}continue/.test(wd)) c.fail("watchdog.js must not relaunch anything but endgame.js onto home while endgame's reserve stands")
   return c
 }
 
