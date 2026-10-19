@@ -90,7 +90,7 @@ before starting each subagent.
    connect (10-12 18:29) and no restart since, so the reconnect-after-restart path is UNTESTED live.
    Remaining work: one deliberate `systemctl --user restart bitburner-daemon` (needs the user's ok)
    and confirm reconnects -> 1 within ~70s without a hand reconnect.
-0b. **Exit blocked on home RAM by RESIDENTS (HIGH, before BN10.3's exit)**: BN7.2 (10-16) and BN11.2 (10-18)
+0b. ~~**Exit blocked on home RAM by RESIDENTS**~~ DONE fd7f74f (watchdog evicts ctauto/go-cheat while the reserve stands; untested live until the next exit): BN7.2 (10-16) and BN11.2 (10-18)
     both finished every black op, then endgame.js could not raise to 37.2GB on a 128GB home. The reserve
     (fc777a6) only stops batch.js workers; home was full of residents (stock.js 28.6, ctauto.js 22,
     go-cheat.js 11.1, batch.js 9.8, watchdog 8.9, cmd.js 8.2 ...). Unblocked by hand both times (kill
