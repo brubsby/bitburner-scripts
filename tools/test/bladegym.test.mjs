@@ -135,6 +135,11 @@ export async function run() {
     c.examined(2)
     if (!withSim.ours) c.fail(`with the Simulacrum the actor must act beside the 'body' claim: ${JSON.stringify(withSim).slice(0, 200)}`)
     if (without.ours) c.fail(`without the Simulacrum a 'body' claim must hold the actor: ${JSON.stringify(without).slice(0, 200)}`)
+    // the actor must read the reset info FRESH: SF7.3 pushes the Simulacrum into the installed augs only at the
+    // join, so a startup copy never shows it (BN3.1 2026-10-21: 17h at rank 300).
+    const bj = fs.readFileSync(path.join(REPO_ROOT, 'bladeburner.js'), 'utf8')
+    c.examined(1)
+    if (!/export function slotClaim\(ns, host, info\) \{[\s\S]{0,700}fresh = ns\.getResetInfo\(\)[\s\S]{0,200}return slotClaimHere\(ns, host, fresh\)/.test(bj)) c.fail('bladeburner.js slotClaim must read getResetInfo() fresh (the Simulacrum arrives at the join)')
   }
 
   return checks

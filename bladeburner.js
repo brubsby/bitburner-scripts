@@ -150,7 +150,16 @@ export function slotClaim(ns, host, info) {
   } catch {
     /* fall through to whatever copy is here; its age decides */
   }
-  return slotClaimHere(ns, host, info)
+  // FRESH reset info: the Simulacrum SF7.3 grants is pushed into the installed augs only AT THE JOIN
+  // (PlayerObjectBladeburnerMethods.ts:13-18), so an `info` read at startup, before the join, never
+  // shows it (BN3.1 2026-10-21: 17h at rank 300 on a 'body' slot with the Simulacrum installed).
+  let fresh = info
+  try {
+    fresh = ns.getResetInfo()
+  } catch {
+    /* the startup copy */
+  }
+  return slotClaimHere(ns, host, fresh)
 }
 
 async function operate(ns, say, info, mults, carry = { rec: {} }) {
