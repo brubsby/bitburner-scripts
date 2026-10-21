@@ -100,6 +100,9 @@ before starting each subagent.
 0c. **NO INSTALL false positive in a saving final window** (2026-10-19 BN10.3): fired at 0.7h into the
     final life ("3x the 0.2h window") while cash grew $7e13 -> $7e14 in 20 min toward the $1e17 Covenant
     sleeve. The check should read the plan's final-window money leg (no install planned) instead of the window.
+0d. **EXIT NOT APPROACHING spans a node change** (2026-10-21 17:11Z): compared BN3.1's last exit (4.3h) with BN3.2's
+    first (10.3h) 0.5h after the entry and fired. The window must reset at lastNodeReset (and at installs if the
+    model's basis changes).
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
