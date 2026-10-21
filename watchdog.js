@@ -1247,7 +1247,7 @@ function restoreLaunchClock(ns) {
 }
 
 /** Transient home residents the exit's reserve evicts (each restarts on its own once the reserve lapses). */
-export const ENDGAME_EVICT = ['ctauto.js', 'go-cheat.js']
+export const ENDGAME_EVICT = ['ctauto.js', 'go-cheat.js', 'go.js'] // go.js 20.8GB: BN3.1 (10-21) still 31GB short of 37.2 without it; the node ends, the game it drops is moot
 
 export async function main(ns) {
   ns.disableLog('ALL')
