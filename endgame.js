@@ -384,6 +384,21 @@ async function leave(ns, flags, report, reset, note, level, need) {
     return true
   }
 
+  // NEVER ENTER A MAXED NODE (2026-10-22: a stale --next 3 replayed BN3 after BN3.3 cleared — 9h for nothing).
+  // The target's level after this destroy (the current node's own Source-File rises by one when it is the
+  // target); level 3 is the cap for every node but BN12. Held, reported blocked: the watchdog's --next is stale.
+  const maxedNext = (() => {
+    const n = Number(flags.next)
+    if (!Number.isInteger(n) || n === 12) return null
+    const after = sfLevel(reset, n) + (n === reset?.currentNode ? 1 : 0)
+    return after >= 3 ? after : null
+  })()
+  if (maxedNext !== null) {
+    report.result = 'blocked'
+    report.detail = `--next ${flags.next} would replay BitNode ${flags.next} with its Source-File already at ${maxedNext} (the cap): not destroying — set the watchdog's --next to the plan's next node`
+    note('ok', report)
+    return true
+  }
   report.result = 'destroying'
   note('ok', report)
   ns.tprint(`endgame: destroying ${WD} by the ${need === null ? 'Bladeburner' : 'hacking'} route, entering BitNode ${flags.next}`)

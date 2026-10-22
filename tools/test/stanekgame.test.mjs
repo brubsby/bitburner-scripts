@@ -1375,6 +1375,8 @@ async function sg21() {
   if (!/\(endRes && h === endRes\.host \? endRes\.gb : 0\)/.test(bj) || !/endgameReserveOf\(JSON\.parse\(ns\.read\(ENDGAME_RESERVE\.file\)/.test(bj)) c.fail("batch.js must keep endgame's reserved block free of new workers (reserveFor)")
   c.examined(1)
   if (!/if \(!\(await raiseRam\(ns, want, STATUS, 'endgame\.js destroying the world daemon'\)\)\) \{[\s\S]{0,600}ns\.write\(ENDGAME_RESERVE\.file/.test(eg)) c.fail('endgame.js must reserve its block when the exit is ready and the raise is refused')
+  // a stale --next must never replay a maxed node (2026-10-22: BN3 replayed after BN3.3, 9h lost)
+  if (!/if \(maxedNext !== null\) \{[\s\S]{0,400}return true[\s\S]{0,80}report\.result = 'destroying'/.test(eg) || !/const after = sfLevel\(reset, n\) \+ \(n === reset\?\.currentNode \? 1 : 0\)/.test(eg)) c.fail('endgame.js must refuse a --next whose Source-File would already be at the cap')
   // RESIDENTS too (BN7.2, BN11.2: home full of stock/ctauto/go-cheat, both exits unblocked by hand): the
   // watchdog evicts the transient residents and relaunches nothing but endgame.js onto home while it stands.
   const wd = rd('watchdog.js')
