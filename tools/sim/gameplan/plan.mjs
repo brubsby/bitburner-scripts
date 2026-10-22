@@ -274,11 +274,14 @@ const bn10ModelIncomeOf = (sfPairs) => freshInputs({ node: 10, sf: sfPairs, g: 1
 //     I(state) = I_measured(BN10.1) x model(state's SFs) / model(BN10.1's entry SFs)
 // (the ratio is hacking_money's, rates.mjs incomeOffset). No measured BN10 window (or --rates const):
 // the model alone, printed NOT CALIBRATED.
-const r10 = econ.runs.find((r) => r.bn === 10)
-// the one finished BN10 run (a second one would need its own anchor: throw rather than pick one silently)
+// THE ANCHOR PAIR: a measured BN10 final window and ITS OWN run (the window's key), so the model ratio
+// uses that run's entry Source-Files. Several BN10 runs (BN10.1, BN10.3 since 2026-10-20): the latest
+// window that has its run — never a window from one run against another run's SFs.
 const loos10 = (econ.rates?.channels?.income?.loo ?? []).filter((l) => l.bn === 10)
-if (loos10.length > 1) throw new Error(`plan: ${loos10.length} measured BN10 final windows — anchor the Covenant leg on the run matching econ.runs' BN10`)
-const loo10 = loos10[0]
+const paired10 = loos10.map((l) => ({ l, r: econ.runs.find((r) => r.bn === 10 && String(l.key).startsWith(String(r.start))) })).filter((x) => x.r)
+if (loos10.length && !paired10.length) throw new Error(`plan: ${loos10.length} measured BN10 final window(s) and none matches an econ.runs BN10 key — the Covenant leg has no anchor (windows ${JSON.stringify(loos10.map((l) => l.key))}; runs ${JSON.stringify(econ.runs.filter((r) => r.bn === 10).map((r) => ({ start: r.start, key: r.key })))})`)
+const loo10 = paired10.at(-1)?.l ?? null
+const r10 = paired10.at(-1)?.r ?? econ.runs.find((r) => r.bn === 10)
 const BN10_ANCHOR = loo10 && r10 && bn10ModelIncomeOf(r10.sfOnEntry) > 0 ? { measured: loo10.measured, level: loo10.lpk, key: loo10.key, model: bn10ModelIncomeOf(r10.sfOnEntry) } : null
 const bn10IncomeOf = (sfPairs) => {
   const m = bn10ModelIncomeOf(sfPairs)
