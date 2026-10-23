@@ -304,11 +304,27 @@ export function runBladeburner(o) {
     let goEff = 1
     let goT0 = 0
     let goNext = 0
+    // GRAFTS (o.grafts: {schedule: [name], wealth, moneyPerH, fare}): the game's GraftableAugmentation
+    // (cost baseCost x 3, time / graftingIntBonus at focus), started in order the first step the slot
+    // is free and wealth + moneyPerH x t - spent covers price + fare; applied at the end with one
+    // entropy stack (calculateEntropy, the game's) unless the Congruity Implant is grafted (it clears
+    // them). The slot: with the Simulacrum the actions go on and the parallel class stops; without
+    // it the graft cancels the action (Bladeburner.ts:179, :1355). Money is otherwise not binding here.
+    const gr = o.grafts && Array.isArray(o.grafts.schedule) && o.grafts.schedule.length ? o.grafts : null
+    const grafted = new Set()
+    let gi = 0
+    let gRun = null
+    let gSpent = 0
+    let gStacks = 0
+    let gCongruity = false
+    const gDone = []
     const applyMults = () => {
       P.resetMultipliers()
       P.reapplyAllSourceFiles()
       for (const s of COMBAT) P.mults[s] *= augMult * goEff
       for (const a of bladeburnerAugs()) if (owned.has(a.name)) for (const [k, v] of Object.entries(a.mults ?? {})) if (typeof P.mults[k] === 'number') P.mults[k] *= v
+      for (const name of grafted) for (const [k, v] of Object.entries(g.Augmentations[name]?.mults ?? {})) if (typeof P.mults[k] === 'number') P.mults[k] *= v
+      if (gStacks > 0 && !gCongruity) P.mults = g.calculateEntropy(gStacks) // EntropyAccumulation.ts, on this Player
       P.updateSkillLevels()
     }
     // Stanek's Gift (o.stanek): the game's gift, placed once; its multipliers re-read from the charge
@@ -599,7 +615,7 @@ export function runBladeburner(o) {
       augMult *= Math.exp(growth * every)
       if (o.buyBladeAugs !== false) {
         for (const a of bladeburnerAugs()) {
-          if (owned.has(a.name) || !a.prereqs.every((p) => owned.has(p))) continue
+          if (owned.has(a.name) || grafted.has(a.name) || !a.prereqs.every((p) => owned.has(p) || grafted.has(p))) continue
           if (faction.playerReputation >= a.repCost * mults.AugmentationRepCost) owned.add(a.name)
         }
       }
@@ -642,13 +658,46 @@ export function runBladeburner(o) {
       }
     }
 
+    const graftTick = () => {
+      if (gRun && t >= gRun.endT) {
+        grafted.add(gRun.name)
+        if (gRun.name === 'violet Congruity Implant') {
+          gStacks = 0
+          gCongruity = true
+        } else if (!gCongruity) gStacks++
+        applyMults()
+        applyGift()
+        P.updateSkillLevels()
+        gDone.push({ name: gRun.name, startH: +(gRun.startT / 3600).toFixed(3), endH: +(t / 3600).toFixed(3) })
+        gRun = null
+        if (!simOn) decide()
+      }
+      if (!gRun && gi < gr.schedule.length) {
+        const name = gr.schedule[gi]
+        const ga = new g.GraftableAugmentation(g.Augmentations[name])
+        const need = ga.cost + (gr.fare ?? 2 * g.CONSTANTS.TravelCost)
+        // gr.fromS: the schedule decided at that time (its wealth is that moment's): nothing starts before it
+        const from = gr.fromS ?? 0
+        if (t >= from && (gr.wealth ?? 0) + ((gr.moneyPerH ?? 0) * (t - from)) / 3600 - gSpent >= need) {
+          gSpent += need
+          gRun = { name, startT: t, endT: t + g.calculateGraftingTimeWithBonus(ga) / 1000 }
+          gi++
+          if (!simOn && bb.action) bb.resetAction() // the graft is the work: it cancels the action
+        }
+      }
+    }
     decide()
     while (t < maxS && bb.numBlackOpsComplete < bb.blackOperationArray.length) {
       if (t >= nextInstall) {
+        if (gRun) gRun = null // the install cancels it (finishWork(true)); the price stays spent
         install()
         nextInstall += every * 3600
       }
-      if (gymming) {
+      if (gr) graftTick()
+      const slotGraft = !!gRun
+      if (slotGraft) {
+        if (!simOn && bb.action) bb.resetAction()
+      } else if (gymming) {
         // THE RETRAIN AS progress.js RUNS IT (bbplan POLICY.retrainLegS): one
         // class per stat short of the bar, each held until a pass sees it
         // there — at least one pass long, the stat training on past the bar.
@@ -664,7 +713,9 @@ export function runBladeburner(o) {
           decide()
         }
       }
-      if (!gymming && startTrain) {
+      if (slotGraft) {
+        // the graft holds the work slot: no class (with the Simulacrum the action goes on)
+      } else if (!gymming && startTrain) {
         // the start's training leg: the slot at the gym, no action, until every listed stat is at `to`
         if (bb.action) bb.resetAction()
         const s = lowestOf(P, trainStats, train.to ?? 100)
@@ -690,7 +741,7 @@ export function runBladeburner(o) {
       if (fleetStarted) for (const s of P.sleeves) s.process(STEP * 5)
       t += STEP
       if (bb.rank >= C.RankNeededForFaction && !faction.isMember) bb.joinFaction()
-      if (!gymming && !startTrain && (!bb.action || bb.actionTimeCurrent === 0 || bb.actionTimeCurrent < STEP)) decide()
+      if (!gymming && !startTrain && !(gRun && !simOn) && (!bb.action || bb.actionTimeCurrent === 0 || bb.actionTimeCurrent < STEP)) decide()
       if (o.onStep) o.onStep({ t, P, bb })
       if (t % 36000 < STEP) trace.push({ h: +(t / 3600).toFixed(1), rank: Math.round(bb.rank), bo: bb.numBlackOpsComplete, str: P.skills.strength, agi: P.skills.agility, augMult: +augMult.toFixed(2), bbAugs: owned.size })
     }
@@ -710,6 +761,7 @@ export function runBladeburner(o) {
       simulacrum: simOn,
       bbAugs: owned.size,
       augMult,
+      ...(gr ? { grafts: { done: gDone, running: gRun?.name ?? null, notStarted: gr.schedule.slice(gi), spent: Math.round(gSpent), entropy: gStacks } } : {}),
       goEffect: goC ? +goEff.toFixed(4) : null,
       stanekSwitches: stTrack ? stSwitches : undefined,
       stanek: stM ? { strength: +(stM.strength * (genesis?.strength ?? 1)).toFixed(4), success: +stM.bladeburner_success_chance.toFixed(4), stamina: +stM.bladeburner_max_stamina.toFixed(4) } : null,

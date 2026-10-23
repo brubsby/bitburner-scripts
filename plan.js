@@ -2651,7 +2651,7 @@ function exitStabilityNow(prev, rec) {
  * by that field, naming each. Returns {on, why, moot: {name: why}}.
  */
 export const BLADE_MOOT = {
-  grafts: 'no graft starts on the committed Bladeburner route (the work slot is the division\'s): this prices the World Daemon exit — the route decision\'s hack arm — and is not acted on',
+  grafts: 'the hacking route\'s graft set prices the World Daemon exit — the route decision\'s hack arm — and is not acted on here; the committed Bladeburner route grafts on its own schedule, priced on the black-op exit (decisions.bladeRoute.grafts, bbplan.bladeGraftsGen)',
   lifeLength: 'the later lives\' length is the hacking route\'s cadence; on the committed Bladeburner route every install is the black-op install decision\'s: this prices the hack arm only',
   fourS: 'a money purchase priced on the World Daemon exit; the committed black-op exit prices no money: the hack arm\'s decision, not on the committed exit\'s basis',
   sleeveObjective: 'the fleet\'s objective (karma, reputation, exp, money) priced on the World Daemon exit; on the committed Bladeburner route the fleet is sleeve.js\'s Bladeburner mix, priced on the black-op exit — not run (live 22:59Z it opened and never closed before the page froze)',

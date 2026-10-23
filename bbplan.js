@@ -47,6 +47,7 @@
 import { drain } from 'coop.js'
 import { PRIORS } from 'bayes.js'
 import { OPPONENTS, POWER_PER_HOUR, effectAt, keyOfGame, nodePowerFromBonus } from 'goplan.js'
+import { ENTROPY_EFFECT, GRAFT_COST_MULT, graftTimeMs, NOT_GRAFTABLE } from 'graftplan.js'
 
 // --- constants: Bladeburner/data/Constants.ts -------------------------------
 export const BBC = {
@@ -1820,6 +1821,66 @@ export function* bladeExitGen(s0, pol = POLICY) {
       }
     }
   }
+  // GRAFTS ON THIS ROUTE (s0.grafts, bladeGraftsGen: {schedule [bladeGraftSpecOf], wealth,
+  // moneyPerH, entropy, congruity, fare}). A graft applies the moment it finishes, with no install
+  // (GraftingWork.finish -> applyAugmentation, GraftingWork.tsx:50), so it is the one way an
+  // augmentation reaches a route that never installs. In schedule order, each starts the first
+  // step the work slot is free and the money is in hand: wealth + moneyPerH x t - spent >= its
+  // price (baseCost x 3, GraftableAugmentation.cost) + the flights (New Tokyo and back to the gym,
+  // CONSTANTS.TravelCost each; Grafting.ts:58). It holds the work slot slotS: with The Blade's
+  // Simulacrum the actions go on and only the parallel gym stops (Bladeburner.ts:179, :1355);
+  // without it the slot IS the action, so nothing acts and the world goes on (idle). At the end:
+  // its multipliers, then one ENTROPY stack — every player multiplier x0.98 (CONSTANTS.EntropyEffect,
+  // EntropyAccumulation.ts calculateEntropy; the hacknet costs divided) — unless the Congruity
+  // Implant is installed, which (grafted itself) removes every stack (AugmentationHelpers.ts:45-48).
+  // An install cancels a running graft and keeps its price (prestigeAugmentation -> finishWork(true)).
+  // NOT SIMULATED, named: the intelligence a graft pays (IntelligenceGraftBaseExpGain, GraftingWork.tsx:83),
+  // pessimistic; the gift's and the Go farm's factors are outside Player.mults in the game
+  // (applyEntropy re-applies them after the nerf) — a product, so the nerf on the whole is the same.
+  const gr = s0.grafts && Array.isArray(s0.grafts.schedule) && s0.grafts.schedule.length ? s0.grafts : null
+  const gSched = gr ? gr.schedule : []
+  let gi = 0
+  let gRun = null
+  let gSpent = 0
+  let gStacks = gr && Number.isFinite(gr.entropy) && gr.entropy > 0 ? gr.entropy : 0
+  let gCongruity = gr?.congruity === true
+  const gDone = []
+  const gFare = gr && Number.isFinite(gr.fare) && gr.fare >= 0 ? gr.fare : 2 * GRAFT_FARE
+  const gWealth = gr && Number.isFinite(gr.wealth) ? gr.wealth : 0
+  const gPerH = gr && Number.isFinite(gr.moneyPerH) && gr.moneyPerH > 0 ? gr.moneyPerH : 0
+  const scaleAll = (f) => {
+    for (const k of new Set([...Object.keys(person.mults), ...BLADE_GAIN_KEYS])) {
+      if (/^hacknet_node_.*_cost$/.test(k)) person.mults[k] = (person.mults[k] ?? 1) / f
+      else person.mults[k] = (person.mults[k] ?? 1) * f
+    }
+  }
+  const graftStep = () => {
+    if (gRun && t >= gRun.endS) {
+      const g = gRun.g
+      for (const [k, x] of Object.entries(g.gains ?? {})) if (Number.isFinite(x) && x > 0) person.mults[k] = (person.mults[k] ?? 1) * x
+      if (g.congruity === true) {
+        if (gStacks > 0) scaleAll(1 / Math.pow(ENTROPY_EFFECT, gStacks))
+        gStacks = 0
+        gCongruity = true
+      } else if (!gCongruity) {
+        gStacks++
+        scaleAll(ENTROPY_EFFECT)
+      }
+      env.augMult = augSuccess()
+      relevel()
+      gDone.push({ name: g.name, startH: +(gRun.startS / 3600).toFixed(3), endH: +(t / 3600).toFixed(3), cost: Math.round(g.cost) })
+      gRun = null
+    }
+    if (!gRun && gi < gSched.length) {
+      const g = gSched[gi]
+      const need = (g.cost ?? Infinity) + gFare
+      if (gWealth + (gPerH * Math.max(0, t)) / 3600 - gSpent >= need && Number.isFinite(g.slotS) && g.slotS >= 0) {
+        gSpent += need
+        gRun = { g, startS: t, endS: t + g.slotS }
+        gi++
+      }
+    }
+  }
   while (t < maxS && st.bo < BLACK_OPS.length) {
     if (steps.length) applySteps()
     goSync()
@@ -1828,7 +1889,16 @@ export function* bladeExitGen(s0, pol = POLICY) {
       sinceYield = 0
       yield
     }
+    if (gr) graftStep()
+    if (gRun && !simOn && t < nextInstall) {
+      // The graft holds the slot and nothing else runs it: no action; the world (counts, cities, sleeves) goes on.
+      const secs = Math.min(dt, Math.max(1, gRun.endS - t))
+      idle(secs)
+      t += secs
+      continue
+    }
     if (t >= nextInstall) {
+      if (gRun) gRun = null // the install cancels it (finishWork(true)): the price stays spent
       // An install: combat (and every) exp to 0, the multipliers the batch bought.
       const g = inst.combatGain ?? 1
       for (const c of ['strength', 'defense', 'dexterity', 'agility']) person.mults[c] = lvMult(c) * g
@@ -1897,7 +1967,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
       st.bo++
       continue
     }
-    if (simOn) gymParallel(dt)
+    if (simOn && !gRun) gymParallel(dt) // a graft holds the work slot: no class beside the actions
     let left = dt
     for (let k = 0; k < 3 && left > 1e-9; k++) {
       const c = k === 0 ? pick : chooseAction(viewOf(), polNow())
@@ -1965,6 +2035,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
     ...(csN > 0 ? { sleeveContracts: { rank: +csRank.rank.toFixed(1), contracts: +csRank.contracts.toFixed(1), trainH: +(csRank.trainS / 3600).toFixed(2), stats: bodies.slice(0, csN).map((b) => ({ shock: +b.shock.toFixed(1), str: b.skills.strength, def: b.skills.defense, dex: b.skills.dexterity, agi: b.skills.agility })) } } : {}),
     scales: { success: successScale, rank: rankScale },
     ...(goC ? { goEffect: +goE.toFixed(4) } : {}),
+    ...(gr ? { grafts: { done: gDone, running: gRun ? gRun.g.name : null, notStarted: gSched.slice(gi).map((g) => g.name), spent: Math.round(gSpent), entropy: gStacks, entropyFactor: +Math.pow(ENTROPY_EFFECT, gCongruity ? 0 : gStacks).toFixed(5) } } : {}),
     ...(retrainWhy ? { retrainWhy } : {}),
     ...(snapOut ? { snap: snapOut } : {}),
     why: done ? null : `not finished in ${s0.maxH ?? 400}h (rank ${Math.round(st.rank)}, ${st.bo}/21 black ops)`,
@@ -2715,4 +2786,149 @@ export function* simulacrumVerdictGen({ s0, withoutH, cost, repReq, wealth = 0, 
   const gainH = withH === null ? null : withoutH - withH
   const buy = gainH !== null && gainH > 0
   return { ...out, buy, withH: r2(withH), gainH: r2(gainH), why: buy ? `buy (${money}, ${repTxt}) and install at ${reachH.toFixed(1)}h: the exit ${withH.toFixed(1)}h against ${withoutH.toFixed(1)}h (${gainH.toFixed(1)}h sooner)` : `not worth it: bought at ${reachH.toFixed(1)}h and installed, the exit is ${withH === null ? 'unpriced' : withH.toFixed(1) + 'h'} against ${withoutH.toFixed(1)}h (the install's reset costs more than the parallel gym returns)` }
+}
+
+// --- grafting on the Bladeburner route ---------------------------------------
+//
+// THE TWO TRAJECTORIES: the black-op exit WITH a graft schedule vs WITHOUT, from one start (the
+// route decision's own bladeStartOf; the same Q members, paired), the decision withH - withoutH
+// (bladeGraftsGen). The route never installs, so a BOUGHT augmentation never applies on it and a
+// grafted one does (GraftingWork.finish -> applyAugmentation, no install). The mechanics are
+// bladeExitGen's s0.grafts (money and its time, the work slot, the flights, entropy).
+
+/** CONSTANTS.TravelCost: the flight to New Tokyo (Grafting.ts:58 throws elsewhere) and back to the gym. */
+export const GRAFT_FARE = 200e3
+/** Removes every entropy stack and stops new ones (AugmentationHelpers.ts:45-48; GraftingWork.tsx:60). */
+export const CONGRUITY = 'violet Congruity Implant'
+/**
+ * The special augmentations a member of the Bladeburners may graft: getGraftingAvailableAugs keeps a
+ * special aug only when its factions include the Bladeburners and the player is in that faction
+ * (GraftingHelpers.ts:12-14). [BG1] re-derives the set from the game's Augmentations.
+ */
+export const BLADE_GRAFT_SPECIAL = new Set(['BLADE-51b Tesla Armor', 'BLADE-51b Tesla Armor: Energy Shielding Upgrade', 'BLADE-51b Tesla Armor: IPU Upgrade', 'BLADE-51b Tesla Armor: Omnibeam Upgrade', 'BLADE-51b Tesla Armor: Power Cells Upgrade', 'BLADE-51b Tesla Armor: Unibeam Upgrade', "Blade's Runners", "The Blade's Simulacrum", 'EMS-4 Recombination', 'EsperTech Bladeburner Eyewear', 'GOLEM Serum', 'Hyperion Plasma Cannon V1', 'Hyperion Plasma Cannon V2', 'I.N.T.E.R.L.I.N.K.E.D', 'ORION-MKIV Shoulder', 'Vangelis Virus', 'Vangelis Virus 3.0'])
+/** May this augmentation be grafted (getGraftingAvailableAugs, prerequisites aside)? */
+export const bladeGraftableOf = (name, inBladeburners) => !NOT_GRAFTABLE.has(name) || (inBladeburners === true && BLADE_GRAFT_SPECIAL.has(name))
+
+/**
+ * ONE GRAFT AS bladeExitGen TAKES IT, from a graftplan candidate {name, mults, baseCost, prereqs}:
+ * cost baseCost x 3 (GraftableAugmentation.cost; the node's AugmentationMoneyCost does not apply),
+ * slotS the work-slot seconds (GraftableAugmentation.time / graftingIntBonus / focusPenalty —
+ * GraftingWork.process: focused, or with the Neuroreceptor Management Implant, 1, else
+ * CONSTANTS.BaseFocusBonus 0.8), gains its BLADE_GAIN_KEYS multipliers. Null when unreadable.
+ */
+export function bladeGraftSpecOf(aug, intelligence, { focus = true, neuroreceptor = false } = {}) {
+  if (!aug || typeof aug.name !== 'string' || !Number.isFinite(aug.baseCost) || aug.baseCost < 0) return null
+  const ms = graftTimeMs(aug.mults ?? {}, intelligence)
+  if (!Number.isFinite(ms)) return null
+  const gains = {}
+  for (const k of BLADE_GAIN_KEYS) if (Number.isFinite(aug.mults?.[k]) && aug.mults[k] > 0 && aug.mults[k] !== 1) gains[k] = aug.mults[k]
+  const pen = focus || neuroreceptor ? 1 : 0.8
+  return { name: aug.name, gains, cost: aug.baseCost * GRAFT_COST_MULT, slotS: ms / 1000 / pen, prereqs: Array.isArray(aug.prereqs) ? aug.prereqs : [], ...(aug.name === CONGRUITY ? { congruity: true } : {}) }
+}
+
+/**
+ * THE GRAFT SCHEDULE ON THE BLACK-OP EXIT. Greedy on the exit itself (never a multiplier sum): each
+ * round appends to the schedule the candidate whose exit (the Q members' mean, bladeExitMeanGen on
+ * s0 + grafts) is lowest; it stops when no candidate improves the exit by BLADE_GRAFT.minGainH or at
+ * maxN. Round 1 prices every feasible candidate; later rounds the `keep` best of the round before
+ * (lazy greedy: a graft's marginal only shrinks as the entropy stacks). The order is the greedy's
+ * (strongest first); each starts as soon as the slot is free and the money is in hand
+ * (bladeExitGen). Feasible: its prerequisites owned or earlier in the schedule, its price + fares
+ * inside wealth + moneyPerH x the exit, its slot time inside the exit.
+ *   s0          bladeStartOf(...) of the committed trajectory (members from it)
+ *   candidates  [bladeGraftSpecOf]
+ *   wealth      cash + the trader's book now (nodeecon.wealthOf); moneyPerH the node's income
+ *   entropy     stacks held now; congruity the Congruity Implant installed
+ *   owned       Set of installed augmentation names (prerequisites)
+ * Returns {graft, schedule, withH, withoutH, gainH, entropyH (the schedule's exit with the entropy
+ * minus without it: what the stacks cost), sim (bladeExitGen's grafts on s0), singles (round 1,
+ * best first), priced (exit means run), why}.
+ * NOT SIMULATED, named: other orders and start delays than the greedy's and "as soon as
+ * affordable"; the intelligence a graft pays; the cross-node value (none: entropy clears at a node).
+ */
+export const BLADE_GRAFT = { maxN: 6, keep: 5, minGainH: 0.02, maxCands: 24, everyMs: 30 * 60e3 }
+export function bladeGrafts(o) {
+  return drain(bladeGraftsGen(o))
+}
+export function* bladeGraftsGen({ s0, candidates = [], wealth = 0, moneyPerH = 0, entropy = 0, congruity = false, owned = new Set(), fare = 2 * GRAFT_FARE, maxN = BLADE_GRAFT.maxN, keep = BLADE_GRAFT.keep, minGainH = BLADE_GRAFT.minGainH, maxCands = BLADE_GRAFT.maxCands, Q = BLADE_ENSEMBLE.Q } = {}) {
+  const r2 = (x) => (Number.isFinite(x) ? +x.toFixed(3) : null)
+  if (!s0) return { graft: false, schedule: [], why: 'no Bladeburner start to price grafts on' }
+  const W = Number.isFinite(wealth) ? Math.max(0, wealth) : 0
+  const R = Number.isFinite(moneyPerH) && moneyPerH > 0 ? moneyPerH : 0
+  const gOf = (schedule, extra = {}) => ({ ...s0, grafts: { schedule, wealth: W, moneyPerH: R, entropy, congruity, fare, ...extra } })
+  let priced = 0
+  const meanH = function* (schedule, extra) {
+    priced++
+    const m = yield* bladeExitMeanGen(schedule.length ? gOf(schedule, extra) : s0, { Q })
+    return Number.isFinite(m?.hours) ? m.hours : null
+  }
+  const withoutH = yield* meanH([])
+  if (withoutH === null) return { graft: false, schedule: [], withoutH: null, priced, why: 'the exit without grafts is unpriced: nothing to compare against' }
+  const have = owned instanceof Set ? owned : new Set(owned ?? [])
+  const reachable = (c, cost) => cost + fare <= W + R * withoutH && c.slotS / 3600 < withoutH
+  let pool = candidates.filter((c) => c && !have.has(c.name) && Number.isFinite(c.cost) && Number.isFinite(c.slotS) && (Object.keys(c.gains ?? {}).length > 0 || c.congruity === true))
+  const nGainful = pool.length
+  pool = pool.filter((c) => reachable(c, c.cost))
+  // CPU bound in-game (each price is Q exits): past maxCands the reachable ones are SCREENED on one
+  // trajectory each (the start itself, not a member mean — still the exit, never a proxy) and the
+  // best maxCands go on to the greedy.
+  const nReach = pool.length
+  const capped = pool.length > maxCands
+  if (capped) {
+    const sc = []
+    for (const c of pool) {
+      priced++
+      const h = (yield* bladeExitGen(gOf([c])))?.hours
+      sc.push({ c, h: Number.isFinite(h) ? h : Infinity })
+    }
+    pool = sc.sort((a, b) => a.h - b.h).slice(0, maxCands).map((x) => x.c)
+  }
+  let cur = []
+  let curH = withoutH
+  let spent = 0
+  let shortlist = null
+  let singles = null
+  for (let round = 0; round < maxN; round++) {
+    const names = new Set(cur.map((c) => c.name))
+    const elig = (shortlist ?? pool).filter((c) => !names.has(c.name) && (c.prereqs ?? []).every((p) => have.has(p) || names.has(p)) && reachable(c, spent + c.cost + fare * cur.length))
+    if (!elig.length) break
+    const rows = []
+    for (const c of elig) {
+      const h = yield* meanH([...cur, c])
+      rows.push({ c, h, d: h === null ? null : h - curH })
+    }
+    rows.sort((a, b) => (a.h ?? Infinity) - (b.h ?? Infinity))
+    if (round === 0) singles = rows.slice(0, 8).map((x) => ({ name: x.c.name, gainH: x.d === null ? null : r2(-x.d), cost: Math.round(x.c.cost), slotH: r2(x.c.slotS / 3600) }))
+    const best = rows[0]
+    if (!best || best.h === null || !(curH - best.h >= minGainH)) break
+    cur = [...cur, best.c]
+    curH = best.h
+    spent += best.c.cost
+    // the next round: the runners-up that shortened the exit this round, plus any whose
+    // prerequisite was just added (a chain's next link is new, not a runner-up)
+    const runners = rows.slice(1, 1 + keep).filter((x) => x.d !== null && x.d < 0).map((x) => x.c)
+    const unlocked = pool.filter((c) => (c.prereqs ?? []).includes(best.c.name))
+    shortlist = [...new Set([...runners, ...unlocked])]
+    if (!shortlist.length) break
+  }
+  const sched = cur.map((c) => ({ name: c.name, cost: Math.round(c.cost), slotH: r2(c.slotS / 3600), gains: c.gains, ...(c.congruity ? { congruity: true } : {}) }))
+  const base = { withoutH: r2(withoutH), singles, priced, capped, reachable: nReach, gainful: nGainful }
+  if (!cur.length) return { ...base, graft: false, schedule: [], withH: r2(withoutH), gainH: 0, why: `no graft shortens the black-op exit by ${minGainH}h (${nReach} reachable of ${nGainful} that move it; best alone ${singles?.[0] ? `${singles[0].name} ${singles[0].gainH}h` : 'none'})` }
+  // What the entropy costs this schedule: the same schedule with no stacks (the counterfactual
+  // the Congruity Implant would buy for free), against it.
+  const noEntH = congruity ? curH : yield* meanH(cur, { congruity: true })
+  const sim = (yield* bladeExitGen(gOf(cur)))?.grafts ?? null
+  const gainH = withoutH - curH
+  const nStack = congruity ? 0 : cur.filter((c) => !c.congruity).length
+  return {
+    ...base,
+    graft: true,
+    schedule: sched,
+    withH: r2(curH),
+    gainH: r2(gainH),
+    entropyH: noEntH === null ? null : r2(curH - noEntH),
+    entropyFactor: +Math.pow(ENTROPY_EFFECT, (congruity ? 0 : entropy) + nStack).toFixed(5),
+    sim,
+    why: `graft ${sched.map((g) => g.name).join(', ')} ($${(spent / 1e9).toFixed(2)}b, ${sched.reduce((a, g) => a + (g.slotH ?? 0), 0).toFixed(2)}h of work slot): the exit ${curH.toFixed(2)}h against ${withoutH.toFixed(2)}h without (${gainH.toFixed(2)}h sooner; entropy x${Math.pow(ENTROPY_EFFECT, nStack).toFixed(3)} on every multiplier costs ${noEntH === null ? '?' : (curH - noEntH).toFixed(2)}h of it)`,
+  }
 }

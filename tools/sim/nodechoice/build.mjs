@@ -50,6 +50,10 @@ export { initSourceFiles } from "${GAME}/src/SourceFile/SourceFiles";
 export { calculateClassEarnings } from "${GAME}/src/Work/Formulas";
 export { Augmentations } from "${GAME}/src/Augmentation/Augmentations";
 export { CONSTANTS } from "${GAME}/src/Constants";
+// grafting (bbsim o.grafts): the game's own cost and time, and the entropy nerf
+export { GraftableAugmentation } from "${GAME}/src/PersonObjects/Grafting/GraftableAugmentation";
+export { calculateGraftingTimeWithBonus } from "${GAME}/src/PersonObjects/Grafting/GraftingHelpers";
+export { calculateEntropy } from "${GAME}/src/PersonObjects/Grafting/EntropyAccumulation";
 // Number formatters are built lazily on this event (ui/formatNumber.ts:30); the
 // Bladeburner log strings format HP on every damaging failure, so emit it once.
 export { FormatsNeedToChange } from "${GAME}/src/ui/formatNumber";

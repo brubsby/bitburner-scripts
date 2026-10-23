@@ -47,6 +47,28 @@ const sfOf = (state) => {
 export const FULL_TIER_GB = 128
 export const FULL_ABSENT_MIN = 15
 
+/**
+ * BLADE GRAFT NOT STARTED: the Bladeburner route's priced graft schedule (bbplan.bladeGraftsGen,
+ * published by progress.js as progress.txt bladeGraft) has a graft DUE — prerequisites installed,
+ * cash + book covering it — and no graft has run for BLADE_GRAFT_LATE_MIN since it became due
+ * (the order chain: travel to New Tokyo, act-graft, the raise from the book, the gift gate). A
+ * graft that is due and never starts is hours of the exit forgone with every component green.
+ */
+export const BLADE_GRAFT_LATE_MIN = 20
+export function bladeGraftHealthOf({ pr = null, state = {}, nowMs = Date.now() } = {}) {
+  const out = []
+  const g = pr?.bladeGraft ?? null
+  const prAge = ageMinOf(pr?.at, nowMs)
+  if (!g || prAge === null || prAge > 15 || !g.due || g.running) return out
+  if (num(state?.bitNode) && g.node !== null && g.node !== undefined && g.node !== state.bitNode) return out
+  const work = state?.currentWork ?? null
+  const workType = work?.type ?? work?.ctor ?? null
+  if (workType === 'GraftingWork' || workType === 'GRAFTING') return out
+  const late = ageMinOf(g.dueSince, nowMs)
+  if (late !== null && late >= BLADE_GRAFT_LATE_MIN) out.push({ what: `BLADE GRAFT NOT STARTED: ${g.due} has been due for ${late.toFixed(0)} min on the Bladeburner route (budget ${BLADE_GRAFT_LATE_MIN}) and no graft is running`, detail: `schedule [${(g.schedule ?? []).join(', ')}] priced ${g.gainH ?? '?'}h sooner (entropy ${g.entropyH ?? '?'}h); ${String(g.why ?? '').slice(0, 160)} — check /tel/act.txt orders.results (travel, graft, the raise, the Stanek gate)` })
+  return out
+}
+
 export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null, eg = null, sl = null, wd = null, act = null, state = {}, prev = null, nowMs = Date.now() } = {}) {
   const fails = []
   const notes = []
@@ -185,6 +207,9 @@ export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null
   if (fb && fb.route === 'blade' && fb.joined === true && !fb.config && Array.isArray(fb.byConfig) && fb.byConfig.length && fb.byConfig.every((c) => !num(c?.hours))) {
     fail(`BLADE FLEET UNPRICED: sleeve.js priced none of ${fb.byConfig.length} Bladeburner fleets on the committed route — the sleeves keep their ordinary plan`, String(fb.why ?? '').slice(0, 240))
   }
+
+  // ---- the route's grafts (progress.js bladeGraft, decisions.bladeRoute.grafts) ----
+  for (const f of bladeGraftHealthOf({ pr, state, nowMs })) fail(f.what, f.detail)
 
   // ---- the exit -------------------------------------------------------------
   if (bb.exitReady) {

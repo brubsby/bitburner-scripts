@@ -766,7 +766,7 @@ export function committedGraftsOf(o = {}) {
  * (act-graft.js), so a price divided back wrongly fails loud, not silent.
  *
  * o: {names, stats, prereqs, price, owned (Set|array), augMoneyCost,
- *     queuedNonSoA, sf11}. Returns [] with nothing readable, never throws.
+ *     queuedNonSoA, sf11, allow (Set: specials graftable here)}. Returns [] with nothing readable, never throws.
  */
 // Every augmentation with `isSpecial: true` in Augmentations.ts — which
 // getGraftingAvailableAugs drops (GraftingHelpers.ts:15). NeuroFlux and the
@@ -781,7 +781,8 @@ export function graftCandidatesOf(o = {}) {
   const queueMult = Math.pow(1.9 * [1, 0.96, 0.94, 0.93][sf11], q)
   const out = []
   for (const name of o.names ?? []) {
-    if (owned.has(name) || NOT_GRAFTABLE.has(name)) continue
+    // o.allow: special augmentations graftable here (bbplan.BLADE_GRAFT_SPECIAL for a Bladeburners member, GraftingHelpers.ts:12-14)
+    if (owned.has(name) || (NOT_GRAFTABLE.has(name) && !(o.allow instanceof Set && o.allow.has(name)))) continue
     const stats = o.stats?.[name]
     const price = o.price?.[name]
     if (!stats || !num(price) || !(price > 0)) continue

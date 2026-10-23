@@ -166,7 +166,7 @@ import { goExitInputsOf, w0Eligible } from 'goplan.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, chooseSleeveConfigGen, sleeveConfigKey, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, chooseSleeveConfigGen, sleeveConfigKey, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf, bladeGraftsGen, bladeGraftSpecOf, BLADE_GRAFT, BLADE_GRAFT_SPECIAL, CONGRUITY } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen, routeFullAtOf, hackHomeArmOf, waitingResidentsOf, fleetForUnlockOf } from 'homeplan.js'
 import { leanUntilOf, FULL_TIER, LEAN_PLACE_H, bladeSlotStallOf, LITE_FILE, BB_FILE } from 'bbliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
@@ -2747,7 +2747,7 @@ function chainHackChargerOf(ns, info) { // ramHours: the last pass's hackBareH (
 }
 /** The fleet the BLADEBURNER route would run is re-chosen at most this often (the chooser: every configuration, one exit each). */
 const ROUTE_FLEET_MS = 30 * 60e3
-async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0, pin = null } = {}) {
+async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0, pin = null, work = null } = {}) {
   const mults = bitNodeMults(info)
   if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
   const pc = planCtxOf(ns, info)
@@ -2910,6 +2910,17 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
           simulacrum = { buy: false, why: `the Simulacrum verdict threw: ${String(e).slice(0, 160)}` }
         }
       }
+      // GRAFTS ON THIS EXIT (bbplan.bladeGraftsGen, bladeRouteGraftsGen): the black-op exit with a
+      // graft schedule vs without, from this start — the one way an augmentation reaches a route
+      // that never installs. The graft step below orders the schedule's next graft when it is due.
+      let grafts = null
+      if (d?.key === 'blade' && tel?.joined === true) {
+        try {
+          grafts = yield* bladeRouteGraftsGen({ info, pc, player, sing, s0: startFor(bladeBasis), owned, queued, wealth, moneyPerH: (moneyPerSec ?? 0) * 3600, work })
+        } catch (e) {
+          grafts = { graft: false, schedule: [], at: new Date().toISOString(), lastAugReset: info.lastAugReset, error: true, why: `the graft schedule threw: ${String(e).slice(0, 160)}` }
+        }
+      }
       // THE HASH EXCHANGES ON THIS EXIT (hashplan.bladeExchangeGen): +100 rank
       // and +10 skill points per purchase, priced on the route's own start —
       // hashspend.js and hacknet.js price hashes with them on this route.
@@ -2944,6 +2955,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         // The start's inputs a reader re-prices with (sleeve.js's fleet search): one state model.
         start: { gymExpPerSec, gym: gym?.name ?? null, trainingMult: ns.hacknet.getTrainingMult(), ...(gymWhy ? { gymWhy } : {}), goCombat: goCombat.effect === null ? { effect: null, why: goCombat.why } : { effect: +goCombat.effect.toFixed(5), nodes: Math.round(goCombat.nodes), perHour: Math.round(goCombat.perHour), rateSource: goCombat.rateSource, goPower: goCombat.goPower, sf14: goCombat.sf14, why: goCombat.why } },
         simulacrum,
+        grafts,
         hashExchange,
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
       }
@@ -2964,6 +2976,53 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     pc.decisions.bladeRoute = { key: held, held: !!held, unpriced: ['hack', 'blade'], error: true, why: `bladeRouteOf threw${held ? ` (held on '${held}')` : ''}: ${String(e?.stack ?? e).slice(0, 240)}` }
     return pc.decisions.bladeRoute
   }
+}
+/**
+ * THE GRAFT SCHEDULE ON THE COMMITTED BLADEBURNER EXIT (bbplan.bladeGraftsGen) from the route's own
+ * start: the catalogue's graftable augmentations (graftplan.graftCandidatesOf — the price divided
+ * back to baseCost; the Bladeburners' special augmentations too once a member, GraftingHelpers.ts:12-14),
+ * each as bbplan.bladeGraftSpecOf (focused: act-graft orders focus), on cash + the book and the
+ * node's income, the entropy held now (player.entropy). Re-searched at most every
+ * BLADE_GRAFT.everyMs, and at once when the installed set, the entropy, the faction or the life
+ * changes; a running graft holds the decision it was ordered on.
+ */
+function* bladeRouteGraftsGen({ info, pc, player, sing, s0, owned, queued = [], wealth = 0, moneyPerH = 0, work = null }) {
+  const base = { at: new Date().toISOString(), lastAugReset: info.lastAugReset }
+  if (!canUseGrafting(info)) return { ...base, graft: false, schedule: [], why: 'grafting is not accessible here (BitNode 10 or Source-File 10: sfgate.canUseGrafting)' }
+  if (!sing || !s0) return { ...base, graft: false, schedule: [], why: 'no Singularity view or no Bladeburner start: unpriced' }
+  const installed = owned instanceof Map ? new Set(owned.keys()) : owned instanceof Set ? owned : new Set(owned ?? [])
+  const inFaction = player?.factions?.includes?.('Bladeburners') === true
+  const entropy = Number.isFinite(player?.entropy) && player.entropy > 0 ? player.entropy : 0
+  const key = `${info.lastAugReset}|${installed.size}|${entropy}|${inFaction ? 1 : 0}`
+  const prev = pc.prevAny?.decisions?.bladeRoute?.grafts ?? null
+  const sameLife = prev?.lastAugReset === info.lastAugReset
+  const running = work?.type === 'GRAFTING' ? work.augmentation ?? null : null
+  if (sameLife && running && prev?.schedule) return { ...prev, carried: true, running, carriedWhy: `grafting ${running}: the decision it was ordered on holds until it finishes` }
+  if (sameLife && !prev?.error && prev?.key === key && Date.now() - Date.parse(prev.at ?? '') < BLADE_GRAFT.everyMs) return { ...prev, carried: true, carriedWhy: `priced ${Math.round((Date.now() - Date.parse(prev.at)) / 60e3)} min ago on the same installed set (re-priced every ${BLADE_GRAFT.everyMs / 60e3} min)` }
+  const safe = (f) => {
+    try {
+      return f()
+    } catch {
+      return null
+    }
+  }
+  const names = sing.catalogNames()
+  const raw = graftCandidatesOf({
+    names,
+    stats: Object.fromEntries(names.map((n) => [n, safe(() => sing.augStats(n))])),
+    prereqs: Object.fromEntries(names.map((n) => [n, safe(() => sing.augPrereq(n))])),
+    price: Object.fromEntries(names.map((n) => [n, safe(() => sing.augPrice(n))])),
+    owned: new Set([...installed, ...(queued ?? [])]),
+    augMoneyCost: bitNodeMults(info)?.AugmentationMoneyCost,
+    queuedNonSoA: (queued ?? []).filter((n) => !isSoa(n)).length,
+    sf11: sfLevel(info, 11),
+    allow: inFaction ? BLADE_GRAFT_SPECIAL : null,
+  })
+  yield
+  const int = player?.skills?.intelligence ?? 0
+  const cands = raw.map((a) => bladeGraftSpecOf(a, int, { focus: true, neuroreceptor: installed.has('Neuroreceptor Management Implant') })).filter(Boolean)
+  const v = yield* bladeGraftsGen({ s0, candidates: cands, wealth, moneyPerH, entropy, congruity: installed.has(CONGRUITY), owned: installed })
+  return { ...base, ...v, key, candidates: cands.length, inFaction, entropyNow: entropy, wealth: Math.round(wealth), moneyPerH: Math.round(moneyPerH), model: 'bbplan.bladeGraftsGen on the route decision\'s start (paired members); NOT CALIBRATED live (no Bladeburner life has grafted); checked against the game\'s classes by tools/sim/bbgraft.mjs' }
 }
 /** The route held when an arm is unpriced: the committed (last acted) route of this node, else the one the accepted gift serves (stanekplan.giftStateOf basis), else null. */
 function routeHoldOf(info, pc) {
@@ -7892,6 +7951,7 @@ async function act(ns, canJoin, info, note) {
         // The retrain's cash stream (the exit inputs' flatIncomePerSec): contracts and the flat income.
         flatPerSec: (econNow?.flatPerSec ?? 0) + (contractMoneyPerSec > 0 ? contractMoneyPerSec : 0),
         pin: routePin,
+        work,
       })
     : null
   const bladeOn = bladeRoute?.key === 'blade'
@@ -8055,6 +8115,45 @@ async function act(ns, canJoin, info, note) {
     return { running: false, name: next.name, cost: next.cost, slotH: next.slotH }
   })()
   const lifeGraftHold = lifeGraftHoldOf(graftDecision, new Set(installedCount.keys()), info?.lastAugReset ?? null)
+  // THE BLADEBURNER ROUTE'S GRAFTS (decisions.bladeRoute.grafts, bbplan.bladeGraftsGen: the black-op
+  // exit with the schedule vs without, priced on the route's own start). The schedule's next graft
+  // is DUE when its prerequisites are installed and cash + the book covers its price (+ the flight
+  // to New Tokyo): ordered through the same travel + act-graft path as the hacking route's, its
+  // cost raised from the book. With The Blade's Simulacrum installed the Bladeburner actor acts
+  // beside the graft (bbslot.slotClaim); without it the graft cancels the action — what the
+  // schedule priced (bladeExitGen s0.grafts). Published as progress.txt bladeGraft; health BLADE
+  // GRAFT NOT STARTED (tools/bbhealth.mjs) when one stays due and unstarted.
+  const bladeGraft = (() => {
+    if (!bladeOn || bladeRoute?.joined !== true || work?.type === 'GRAFTING') return null
+    const v = bladeRoute?.grafts
+    if (!v?.graft || !Array.isArray(v.schedule) || !v.schedule.length) return null
+    const installed = new Set(installedCount.keys())
+    const next = v.schedule.find((x) => x?.name && !installed.has(x.name))
+    if (!next) return null
+    const pre = (() => {
+      try {
+        return sing.augPrereq(next.name) ?? []
+      } catch {
+        return []
+      }
+    })()
+    const missing = pre.filter((p) => !installed.has(p))
+    if (missing.length) return { due: false, name: next.name, cost: next.cost, why: `its prerequisite(s) ${missing.join(', ')} not installed yet (the schedule grafts them first)` }
+    const wealth = wealthOf(player.money, stockNow) ?? 0
+    const need = next.cost + (cityAfterOrders !== GRAFT_CITY ? TRAVEL_FARE : 0)
+    if (!(wealth >= need)) return { due: false, name: next.name, cost: next.cost, why: `waits for $${Math.round(need).toLocaleString()} in cash + book (have $${Math.round(wealth).toLocaleString()}); priced to start when the money is there` }
+    return { due: true, name: next.name, cost: next.cost, slotH: next.slotH ?? null, why: v.why ?? '' }
+  })()
+  const bladeGraftRec = (() => {
+    if (!bladeOn) return null
+    const prevRec = readJson(ns, '/tel/progress.txt')?.bladeGraft ?? null // STATUS: the last pass's record (a read, not a writer)
+    const runningName = work?.type === 'GRAFTING' ? work.augmentation ?? '?' : null
+    const dueName = bladeGraft?.due ? bladeGraft.name : null
+    const same = prevRec && prevRec.lastAugReset === info?.lastAugReset && prevRec.due === dueName && typeof prevRec.dueSince === 'string'
+    const v = bladeRoute?.grafts ?? null
+    return { node: info?.currentNode ?? null, lastAugReset: info?.lastAugReset ?? null, due: dueName, dueSince: dueName ? (same ? prevRec.dueSince : new Date().toISOString()) : null, running: runningName, next: bladeGraft?.name ?? null, why: bladeGraft?.why ?? v?.why ?? null, schedule: Array.isArray(v?.schedule) ? v.schedule.map((x) => x.name) : [], gainH: v?.gainH ?? null, entropyH: v?.entropyH ?? null }
+  })()
+  if (bladeGraft && !bladeGraft.due) did.push(`blade graft ${bladeGraft.name}: ${bladeGraft.why}`.slice(0, 300))
   if (lifeGraftHold.why && !lifeGraftHold.hold) todo.push(lifeGraftHold.why)
 
   // WHICH FACTION THE NEXT SAMPLE BELONGS TO.
@@ -8111,14 +8210,26 @@ async function act(ns, canJoin, info, note) {
   }
   // THE BLADEBURNER SLOT: committed route, in the division, combat retrained
   // (no body leg left). A RUNNING graft keeps the slot (never interrupted);
-  // no NEW graft starts — the committed grafts were priced on the hacking
-  // exit this route replaces. Every other claimant (desk, crime, faction
+  // the hacking route's committed grafts never start here (priced on the
+  // hacking exit this route replaces) — this route's own schedule
+  // (bladeGraft above, priced on the black-op exit) does. Every other claimant (desk, crime, faction
   // work, the gang bootstrap) yields: the route was priced with the slot on
   // Bladeburner, and faction work would cancel the action
   // (Bladeburner.ts:1353-1366).
   const bladeJoined = bladeRoute?.joined === true
   if (bladeOn && graftStep && !graftStep.running) todo.push(`graft ${graftStep.name} not started: the committed route is Bladeburner (${String(bladeRoute.why ?? '').slice(0, 120)})`)
-  if (bladeOn && bladeJoined && !bodyStep && !graftStep?.running && canWork && !flags.dry) {
+  // A due graft takes the slot before the Simulacrum's parallel gym (the schedule priced the gym
+  // stopping for it, bladeExitGen); without the Simulacrum a retrain short of the bar goes first
+  // (bladeExitGen trains to the bar before acting, and the graft is priced from there).
+  const bladeGraftFirst = bladeGraft?.due === true && bladeJoined && !graftStep?.running && (installedCount?.has?.(SIMULACRUM) || !bodyStep)
+  if (bladeOn && bladeGraftFirst && canWork && !flags.dry) {
+    workedFaction = null
+    slotOwner = 'graft'
+    if (joinTargetDue) joinTargetStep()
+    if (cityAfterOrders !== GRAFT_CITY && !order('travel', [GRAFT_CITY], `grafting happens only in ${GRAFT_CITY} (Grafting.ts:58)`, TRAVEL_FARE)) todo.push(`blade graft ${bladeGraft.name} waits: the flight to ${GRAFT_CITY} is not in cash at this point of the batch`)
+    else if (order('graft', [bladeGraft.name, true], `the Bladeburner exit's graft schedule: ${bladeGraft.why}`.slice(0, 300), bladeGraft.cost))
+      did.push(`ordered graft ${bladeGraft.name} ($${Math.round(bladeGraft.cost).toLocaleString()}, ${bladeGraft.slotH ?? '?'}h of work slot) on the Bladeburner route — ${installedCount?.has?.(SIMULACRUM) ? "the actor acts beside it (The Blade's Simulacrum)" : 'the action stops for it, as priced (no Simulacrum)'}`)
+  } else if (bladeOn && bladeJoined && !bodyStep && !graftStep?.running && canWork && !flags.dry) {
     workedFaction = null
     slotOwner = 'bladeburner'
     if (joinTargetDue) joinTargetStep()
@@ -10120,7 +10231,7 @@ async function act(ns, canJoin, info, note) {
 
   publishPlan(ns, info, planExtrasOf(scheduleTarget, bodyStep, countRoute))
   flushOrders()
-  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, credit: slotOwner === 'body' ? bodyCredit : null, bladeStall: slotOwner === 'bladeburner' ? bladeSlot : null, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction, route: routeOut }
+  const report = { at: new Date().toISOString(), capabilities: { canJoin, canWork, canBuyAug, canInstall }, did, todo, contracts: contractForecast, stocks: stockForecast, income: econNow, stockRecord: stockNow ? { ok: stockNow.ok, equity: stockNow.equity, why: stockNow.why } : null, slot: { ...(crimeAlt ?? {}), owner: slotOwner, credit: slotOwner === 'body' ? bodyCredit : null, bladeStall: slotOwner === 'bladeburner' ? bladeSlot : null, gangBootstrapPending, routeLeg: routeLead ? { kind: routeLead.kind, target: routeLead.target, aug: routeLead.name, faction: routeLead.faction, companyLeg: routeLead.companyLeg } : null }, ordered: orders.length, gangFaction, route: routeOut, bladeGraft: bladeGraftRec }
   ns.write(STATUS, JSON.stringify(report, null, 2), 'w')
   ns.write(TODO, JSON.stringify({ at: report.at, todo }, null, 2), 'w')
 
