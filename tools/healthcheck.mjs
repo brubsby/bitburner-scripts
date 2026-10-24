@@ -57,7 +57,9 @@ const { splitHealth } = await import("../splitctl.js");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TEL = path.join(ROOT, ".telemetry");
-const STATE = path.join(TEL, "healthcheck-last.json");
+// A second scheduled runner (tools/notify.mjs) keeps its OWN baseline: two runners on one file
+// interleave samples ~7 min apart and the >=15/30 min movement checks never fire for either.
+const STATE = process.env.HEALTHCHECK_STATE ?? path.join(TEL, "healthcheck-last.json");
 const CTL = process.env.CTL_PORT ?? 12526;
 const argv = process.argv.slice(2);
 const JSON_OUT = argv.includes("--json");
