@@ -24,6 +24,9 @@
 //          life that does not anticipate it, as today's exitplan; default: the exit shift ln W/g)
 //          --bn8-hack (BN8 on the hacking/stanek routes: the placeholder pricing before bn8.mjs) | --gift-uncal
 //          (Stanek's Gift at the uncalibrated charge model: stanekplan.GIFT_CAL off)
+//          --route-rule expected|point (expected, the default: every clear's route chosen on E[hours] under the
+//          route family's measured leave-one-out error, routecal.js, and committed in every draw; point: the old
+//          rule, the minimum over the points, per draw)
 //          --rates fit|const (the hacking exit's exp/s and $/s: fit = rates.mjs's progress model fitted to
 //          history.jsonl, the node in progress through its posterior readings; const = the old constants,
 //          expRich/expPoor/incomeL1 — the regression mode, reproducing the numbers before the fit)
@@ -195,7 +198,8 @@ if (G_DEF === 'route') {
   // every calibrated node prices its favor life against its own (world.go.played): the g's value is overridden per call
   const calEcon = { ...econRaw, ownG: new Map([...econRaw.ownG, ...gReads.map((o) => [Number(o.param.slice(1)), 1])]) }
   const calWorld = worldOf(calEcon, {}, { sigmaPlayed: SIGMA_P })
-  CAL = { ...routeCalibrate({ econ: econRaw, readings: gReads, segs: await nodeSegments(), world: calWorld, S, gifts: giftRows(TELEMETRY) }), world: calWorld }
+  const gifts = giftRows(TELEMETRY)
+  CAL = { ...routeCalibrate({ econ: econRaw, readings: gReads, segs: await nodeSegments(), world: calWorld, S, gifts }), world: calWorld, gifts }
   const bad = CAL.items.filter((it) => !(it.gRoute > 0))
   if (bad.length) throw new Error(`plan: route-level g not backed out for ${bad.map((it) => `${it.name} (${it.why})`).join('; ')} — fix it or run --g-def sim`)
   for (const x of [econ, econRaw]) {
@@ -239,6 +243,61 @@ const discRes = (CAL ? CAL.items : econ.runs).map((r, i) => {
 })
 const discFit = fitDiscrepancy(discRes)
 if (!has('--no-disc')) econ.disc = { sd: discFit.sd, applies: (n) => !econ.ownG.has(n) }
+
+// ---------------------------------------------------------------------------
+// 2d. THE ROUTE CALIBRATION BAND (routecal.js): each route family's out-of-sample error, measured here
+// every run, and the route chosen on E[hours] = point x exp(s^2/2) (routes.mjs clearTime, params.mjs
+// routeErrOf). --route-rule point: the old rule (the minimum over the points), for the comparison.
+// ---------------------------------------------------------------------------
+const ROUTE_RULE = arg('--route-rule', has('--phase1') ? 'point' : 'expected')
+if (!['expected', 'point'].includes(ROUTE_RULE)) throw new Error(`--route-rule ${ROUTE_RULE}: expected 'expected' or 'point'`)
+const RC = await import('routecal.js')
+const BLADE_RES = []
+const BLADE_SKIP = []
+{
+  // THE BLADEBURNER FAMILY: every finished Bladeburner clear whose k is NOT in the posterior (observe.mjs
+  // withholds them: out of sample), entered after the Go farm's combat channel (the grid prices the farm),
+  // priced by the plan's own route at its entry state against its measured hours — the route it PLAYED:
+  // 'bladeStanek' where it accepted Stanek's Gift (calib.mjs giftRows) and the gift's leg is tabled; where the
+  // gift's leg is not tabled the plan itself prices that state by 'blade', so the clear is read against it
+  const { nodeSegments, TELEMETRY } = await import('../nodechoice/measure.mjs')
+  const { giftLegOf } = await import('./bladestanek.mjs')
+  const gifts = CAL?.gifts ?? (await import('./calib.mjs')).giftRows(TELEMETRY)
+  const { HACK_LEVEL, MIN_CLEAR_H, GO_COMBAT_SINCE } = await import('./observe.mjs')
+  const { bladeHours } = await import('./routes.mjs')
+  const segs = await nodeSegments()
+  const kIn = new Set(appliedObs(store.observations).filter((o) => o.param === 'k').map((o) => o.key.split('|')[1]))
+  const w = worldOf(econ, {}, { sigmaPlayed: SIGMA_P })
+  segs.forEach((s, i) => {
+    if (i === segs.length - 1 || !s.startedAt || s.startedAt < GO_COMBAT_SINCE || s.hours < MIN_CLEAR_H) return
+    if (!(s.bbJoinH >= 0) || s.maxLevel >= HACK_LEVEL) return
+    const sf = new Map(s.sfOnEntry ?? [])
+    const lv = (n) => sf.get(n) ?? 0
+    const clear = `BN${s.bitNode}.${lv(s.bitNode) + 1}`
+    if (kIn.has(clear)) return BLADE_SKIP.push(`${clear} (its k is in the posterior: in sample)`)
+    const gift = gifts.some((x) => x.bn === s.bitNode && x.t >= Date.parse(s.startedAt) && x.t <= Date.parse(s.endedAt))
+    const leg = gift ? giftLegOf(s.bitNode, lv(13), lv(6), lv(7)) : null
+    const h = bladeHours({ node: s.bitNode, lv, world: w, S }, leg)
+    if (!(h > 0) || !isFinite(h)) return BLADE_SKIP.push(`${clear} (the route has no leg at SF6.${lv(6)}/SF7.${lv(7)} on the grid)`)
+    BLADE_RES.push({ bn: s.bitNode, clear, T: s.hours, pred: h, r: Math.log(s.hours / h), route: leg ? 'bladeStanek' : gift ? 'blade+gift' : 'blade' })
+  })
+}
+const rms = (xs) => (xs.length ? Math.sqrt(xs.reduce((a, x) => a + x * x, 0) / xs.length) : null)
+const byNode = (res) => {
+  const out = {}
+  for (const bn of new Set(res.map((x) => x.bn))) out[bn] = +rms(res.filter((x) => x.bn === bn).map((x) => x.r)).toFixed(3)
+  return out
+}
+// r = ln(measured / predicted) for both families (discRes carries ln T - E ln T_pred)
+const ROUTE_MEASURED = {
+  hacking: { pooled: rms(discRes.map((d) => d.r)), n: discRes.length, nodes: byNode(discRes) },
+  blade: { pooled: rms(BLADE_RES.map((d) => d.r)), n: BLADE_RES.length, nodes: byNode(BLADE_RES) },
+}
+// k's posterior spread in ln: the part of the Bladeburner band the draws already carry
+const kQ = postSum.k?.post ?? [BB_PARAMS.k.lo, BB_PARAMS.k.mid, BB_PARAMS.k.hi]
+const K_SD = Math.log(kQ[2] / kQ[0]) / (2 * 1.2816)
+const ROUTE_ERR = { cal: ROUTE_MEASURED, sdOf: (route, node) => RC.routeSdOf(route, node, ROUTE_MEASURED), kSd: K_SD }
+if (ROUTE_RULE === 'expected') econ.routeErr = ROUTE_ERR
 
 // --no-stanek: the gift is never accepted, and SF13 is inert again (exactly the pre-Stanek table)
 const NO_STANEK = has('--no-stanek')
@@ -705,6 +764,60 @@ if (!has('--phase1') && FLEET !== 'five') {
 }
 
 printPath(path1, start, mid, `OPTIMAL ORDER — mid world (every parameter at its median), from ${sig(start)}:`)
+
+// ---------------------------------------------------------------------------
+// THE ROUTE CALIBRATION BAND (routecal.js): the measured errors, the live table's CHECK, and every owed
+// clear's routes as distributions — the old rule (min point) against the new (min expected hours)
+// ---------------------------------------------------------------------------
+{
+  const f2 = (x) => (x === null || x === undefined || !isFinite(x) ? '   -' : x.toFixed(2))
+  console.log(`\nROUTE CHOICE UNDER MODEL ERROR (routecal.js) — rule ${ROUTE_RULE === 'expected' ? 'EXPECTED' : 'POINT (--route-rule point: the old rule)'}: ${RC.ROUTE_RULE_TEXT}`)
+  console.log(`  hacking family (hack, stanek, go): the ${discRes.length} CALIBRATION residuals above (the g model's leave-one-out, ln measured/predicted): pooled RMS ${f2(ROUTE_MEASURED.hacking.pooled)}; own ${Object.entries(ROUTE_MEASURED.hacking.nodes).map(([n, s]) => `BN${n} ${s.toFixed(2)}`).join(', ')}`)
+  console.log(`  Bladeburner family (blade, bladeStanek): ${BLADE_RES.length} clears out of sample (k withheld) since the Go farm's combat channel, the plan's route at each clear's entry state vs its hours (k ${BB_PARAMS.k.mid} mid, posterior p10/p90 ${kQ[0]}/${kQ[2]}: ${f2(K_SD)} in ln already drawn): pooled RMS ${f2(ROUTE_MEASURED.blade.pooled)}`)
+  console.log("    (blade+gift: accepted Stanek's Gift with no bladeStanek leg tabled at its SF13 — read against 'blade', the route the plan prices that state by)")
+  for (const b of BLADE_RES) console.log(`    ${b.clear.padEnd(8)} ${b.route.padEnd(11)} measured ${f1(b.T)}h  route ${f1(b.pred)}h  ln(measured/route) ${b.r >= 0 ? '+' : ''}${b.r.toFixed(2)}`)
+  if (BLADE_SKIP.length) console.log(`    not used: ${BLADE_SKIP.join('; ')}`)
+  {
+    // the live game decides on routecal.js's ROUTE_CAL: it must agree with this run's measurement
+    const tol = 0.05
+    const bad = []
+    for (const fam of ['hacking', 'blade']) {
+      const m = ROUTE_MEASURED[fam]
+      const t = RC.ROUTE_CAL[fam]
+      if (!(Math.abs((m.pooled ?? 0) - (t?.pooled ?? 0)) <= tol)) bad.push(`${fam} pooled ${f2(m.pooled)} vs table ${f2(t?.pooled)}`)
+      for (const n of new Set([...Object.keys(m.nodes), ...Object.keys(t?.nodes ?? {})])) {
+        const sm = RC.routeSdOf(fam, Number(n), ROUTE_MEASURED)
+        const st = RC.routeSdOf(fam, Number(n), RC.ROUTE_CAL)
+        if (!(Math.abs(sm - st) <= tol)) bad.push(`${fam} BN${n} s ${f2(sm)} vs table ${f2(st)}`)
+      }
+    }
+    console.log(`  CHECK the live table (routecal.js ROUTE_CAL, ${RC.ROUTE_CAL.measuredAt}) vs this run, every s within ${tol}: ${bad.length ? `FAIL — ${bad.join('; ')}: update ROUTE_CAL from these numbers (plan.decideBladeRouteGen decides on it)` : 'PASS'}`)
+  }
+  // the old rule on the same mid world, for the comparison (no band: min over the points)
+  const midOld = worldOf({ ...econ, routeErr: null }, {}, wOpts)
+  const Told = tableFor(L1, midOld)
+  const Vold = solveDP(L1, Told)
+  const pathOld = bestPath(L1, Told, Vold)
+  console.log(`  mid-world optimum: the expected-hours rule ${V1[0].toFixed(1)}h (E over each route's band) | the point rule ${Vold[0].toFixed(1)}h (its points, no band)`)
+  console.log('  every owed clear along the planned order (mid world, the state the order reaches it at): each route\'s point (the median), s, E = point x exp(s^2/2), p10-p90; the old rule took the min point, the new takes the min E')
+  console.log('    clear     route        point     s      E      p10 - p90        old    new')
+  let s = start
+  for (const st of path1) {
+    const lv = lvOf(s)
+    const c = clearTime(st.n, lv, mid, S)
+    const co = clearTime(st.n, lv, midOld, S)
+    const rows = Object.entries(c.by).filter(([id, h]) => id !== 'cov5' && h !== null && h !== undefined && isFinite(h))
+    const oldId = co.choice
+    rows.forEach(([id, h], j) => {
+      const sd = RC.routeSdOf(id, st.n, ROUTE_MEASURED)
+      const [lo, hi] = RC.bandOf(h, sd)
+      console.log(`    ${(j ? '' : clearLabel(st.n, s)).padEnd(9)} ${id.padEnd(11)} ${f1(h)}h  ${f2(sd)}  ${f1(h * RC.expectedFactorOf(sd))}h  ${f1(lo)} -${f1(hi)}h  ${id === oldId ? ' <-  ' : '     '}  ${id === c.choice ? ' <-' : ''}`)
+    })
+    if (c.by.cov5 !== undefined) console.log(`    ${''.padEnd(9)} + the 5th Covenant sleeve's purchase leg ${c.by.cov5.toFixed(1)}h (not banded)`)
+    s = plus(s, st.n)
+  }
+  printPath(pathOld, start, midOld, `  the POINT rule's order (the plan before 2026-10-23), mid world:`)
+}
 
 // nextnode's question, from the entry state, and the CHECK against its local search
 t0 = performance.now()

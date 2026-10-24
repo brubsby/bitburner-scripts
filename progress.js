@@ -2891,7 +2891,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       } catch (e) {
         mandate = { covenant: null, unpriced: true, why: `covenantMandateOf threw: ${String(e).slice(0, 160)}` }
       }
-      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, post: !!pc.post, gift, hold: routeHoldOf(info, pc), mandate })
+      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, node: info.currentNode, post: !!pc.post, gift, hold: routeHoldOf(info, pc), mandate })
       let simulacrum = null
       if (d?.key === 'blade' && typeof d.bladeH === 'number') {
         try {

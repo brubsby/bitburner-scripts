@@ -170,6 +170,8 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     cycleHours: cyc,
     profile: econ.profile,
     z,
+    // THE ROUTE CALIBRATION BAND (routecal.js; routes.mjs clearTime): null without econ.routeErr (plan.mjs sets it)
+    routeErr: econ.routeErr && !phase1 ? routeErrOf(econ, z, { sigmaPlayed, bbOff, phase1, stanekOff, stanekBn13Only, bladeStanekOff, w0Window, w0Live, fleet, covLegOf }) : null,
     // the discrepancy factor on node n's hacking-route hours (1 without one; discrepancy.mjs)
     disc: (n) => (econ.disc && !phase1 && econ.disc.applies(n) ? Math.exp(econ.disc.sd * (z[`delta${n}`] ?? 0)) : 1),
     go: {
@@ -187,6 +189,38 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
       // true: the bonus is worth only the climb's shortening (today's exitplan does not anticipate it)
       w0Live,
       memo: new Map(),
+    },
+  }
+}
+
+/**
+ * THE ROUTE CALIBRATION BAND in a world (routecal.js's rule; routes.mjs clearTime reads it).
+ * econ.routeErr = { sdOf(route, node) -> s (ln hours, the route's measured leave-one-out error), kSd (k's
+ * posterior sd in ln: what the draws already put on the Bladeburner route) }.
+ *   isChoice     the world with no draw (z = {}): the mid world, where the route is CHOSEN on E = point x exp(s^2/2)
+ *   choiceWorld  () -> that world for the same options (memoised on econ): a drawn world plays its choice
+ *   fullFactor   exp(s^2/2): the expectation over the whole band (the choice)
+ *   extraFactor  exp((s^2 - drawn^2)+ / 2): the band's part a drawn world does not already carry — the hacking
+ *                family on an unplayed node carries all of it (the g model's predictive + the discrepancy term
+ *                are fitted to the same leave-one-out residuals), on a played node its own g's sd; the
+ *                Bladeburner route k's posterior sd
+ */
+export function routeErrOf(econ, z, opts) {
+  const R = econ.routeErr
+  const isChoice = !z || Object.keys(z).length === 0
+  const fam = (id) => (id === 'blade' || id === 'bladeStanek' ? 'blade' : 'hack')
+  const drawnOf = (id, n) => (fam(id) === 'blade' ? R.kSd ?? 0 : econ.ownG.has(n) ? econ.gSd?.get(n) ?? opts.sigmaPlayed : Infinity)
+  const memo = (econ._routeChoice ??= new Map())
+  const key = JSON.stringify({ ...opts, covLegOf: typeof opts.covLegOf === 'function' ? 'fn' : null })
+  return {
+    isChoice,
+    sd: (id, n) => R.sdOf(id, n),
+    fullFactor: (id, n) => Math.exp(R.sdOf(id, n) ** 2 / 2),
+    extraFactor: (id, n) => Math.exp(Math.max(0, R.sdOf(id, n) ** 2 - Math.min(drawnOf(id, n), 1e3) ** 2) / 2),
+    choiceWorld: () => {
+      let w = memo.get(key)
+      if (!w) memo.set(key, (w = worldOf(econ, {}, opts)))
+      return w
     },
   }
 }

@@ -30,7 +30,10 @@
 //          5-infiltrator leg x the live fleet pick's leg ratio (surrogate BB_FLEET_N)
 //          available where the node has Bladeburner (BladeburnerRank > 0) and
 //          the player can join it (BN6/BN7, or SF6/SF7 held)
-//   C = min over available routes (the route is chosen per clear, knowing the world)
+//   C = the route chosen on its EXPECTED hours under its measured model error (routecal.js: E = point x
+//       exp(s^2/2), s = max(the family's pooled leave-one-out RMS, the node's own)) in the choice world (the
+//       mid world), and that route committed in every drawn world (world.routeErr, params.mjs routeErrOf);
+//       without world.routeErr (tests, --route-rule point): min over the available routes' points
 //
 //   blade's opening is scaled per node: open + (gym hours to combat 100 in the
 //          node - in BN6), both simulated by bbsim (the game's own skill
@@ -302,6 +305,36 @@ export function clearTime(node, lv, world, S, routes = ROUTES) {
     by = { ...by, [r.id]: h }
     if (h !== null && isFinite(h) && (best === null || h < best.h)) best = { h, via: r.id }
   }
+  // THE ROUTE CALIBRATION BAND (routecal.js; world.routeErr, params.mjs routeErrOf): the route is chosen on
+  // its EXPECTED hours under its measured model error — in the choice world (the mid world) E = point x
+  // exp(s^2/2); a drawn world plays the route the choice world chose (committed before the world is known,
+  // never the draw's own cheapest) at its drawn hours x the band's part the draws do not carry. Absent
+  // (tests, --route-rule point, phase 1): the minimum over the points, as before.
+  const re = !world.phase1 ? world.routeErr ?? null : null
+  const okH = (h) => h !== null && h !== undefined && isFinite(h)
+  const valOf = (id) => (re ? by[id] * (re.isChoice ? re.fullFactor(id, node) : re.extraFactor(id, node)) : by[id])
+  const chooseOf = (ids) => {
+    const live = ids.filter((id) => okH(by[id]))
+    if (!live.length) return null
+    if (re && !re.isChoice) {
+      // the choice world's choice, memoised on it per (node, every live SF level, the surrogate)
+      const cw = re.choiceWorld()
+      let k = node
+      for (const n of LIVE_SFS) k = k * 8 + lv(n)
+      const byS = (cw._choice ??= new WeakMap())
+      let m = byS.get(S)
+      if (!m) byS.set(S, (m = new Map()))
+      if (!m.has(k)) m.set(k, clearTime(node, lv, cw, S, routes).choice ?? null)
+      const id = m.get(k)
+      if (id && live.includes(id)) return id
+    }
+    const score = (id) => (re ? by[id] * re.fullFactor(id, node) : by[id])
+    return live.reduce((b, id) => (b === null || score(id) < score(b) ? id : b), null)
+  }
+  if (re) {
+    const id = chooseOf(Object.keys(by))
+    best = id ? { h: valOf(id), via: id } : null
+  }
   // THE 5TH COVENANT SLEEVE'S CLEAR (the user's invariant: plan.mjs --covenant5 10.2|10.3, world.fleet
   // 'cov2'|'cov3'): the BN10 clear that buys it is a hacking-route clear (hack or stanek; the Bladeburner
   // route never builds the economy — sleeves.mjs covenantLegHours) held for the purchase leg
@@ -310,10 +343,13 @@ export function clearTime(node, lv, world, S, routes = ROUTES) {
     if (typeof world.covLegOf !== 'function') throw new Error(`clearTime: fleet ${world.fleet} buys the 5th Covenant sleeve in BN10.${lv(10) + 1} but the world has no covLegOf (worldOf covLegOf)`)
     const leg = world.covLegOf(lv)
     let buy = null
-    for (const [id, h] of Object.entries(by)) if (id !== 'blade' && id !== 'bladeStanek' && h !== null && isFinite(h) && (buy === null || h + leg < buy.h)) buy = { h: h + leg, via: `${id}+cov5` }
-    return { ...(buy ?? { h: Infinity, via: null }), by: { ...by, cov5: leg } }
+    if (re) {
+      const id = chooseOf(Object.keys(by).filter((k) => k !== 'blade' && k !== 'bladeStanek'))
+      if (id) buy = { h: valOf(id) + leg, via: `${id}+cov5`, choice: id }
+    } else for (const [id, h] of Object.entries(by)) if (id !== 'blade' && id !== 'bladeStanek' && h !== null && isFinite(h) && (buy === null || h + leg < buy.h)) buy = { h: h + leg, via: `${id}+cov5`, choice: id }
+    return { ...(buy ?? { h: Infinity, via: null, choice: null }), by: { ...by, cov5: leg } }
   }
-  return best ? { ...best, by } : { h: Infinity, via: null, by }
+  return best ? { ...best, choice: best.via, by } : { h: Infinity, via: null, choice: null, by }
 }
 /** The SFs the routes other than stanek read (clearTime's memo key): every live SF but 13. */
 const CT_SFS = LIVE_SFS.filter((n) => n !== 13)

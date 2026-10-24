@@ -34,6 +34,7 @@ import { RW_PRIOR, rwShape } from 'traderw.js'
 // Pure: the Bladeburner exit model (decideBladeRouteGen).
 import { bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE } from 'bbplan.js'
 import { installVoidOf } from 'installgate.js'
+import { routeSdOf, expectedFactorOf, ROUTE_CAL, ROUTE_RULE_TEXT } from 'routecal.js'
 
 const fin = (x) => typeof x === 'number' && isFinite(x)
 
@@ -876,7 +877,7 @@ function noIncumbentOf(stats, committed, argmin, committedPrevH) {
  * rho}. Returns {choice, switched, stays, why, gainH, pWin, regretH, vowH,
  * stats, commit}.
  */
-export function decide({ samples, committed = null, switchCost = {}, theta = PLAN.theta, committedPrevH = null, rule = COMMIT.rule, widthMult = COMMIT.widthMult, rho = COMMIT.rho ?? COMMIT.rhoDefault } = {}) {
+export function decide({ samples, committed = null, switchCost = {}, theta = PLAN.theta, committedPrevH = null, rule = COMMIT.rule, widthMult = COMMIT.widthMult, rho = COMMIT.rho ?? COMMIT.rhoDefault, resolveZ = null } = {}) {
   const old = decideByPBetter({ samples, committed, switchCost, theta, committedPrevH })
   const { stats, filled, N, alts, regret } = pairedOf(samples, committed, switchCost)
   if (old.choice === null || committed === null || !filled[committed]) return { ...old, commit: { rule, switch: old.switched === true, agree: true, why: 'no incumbent to hold: the least expected exit under either rule' } }
@@ -885,7 +886,11 @@ export function decide({ samples, committed = null, switchCost = {}, theta = PLA
     const v = valueOfWaiting(a.D, { widthMult, rho })
     if (!best || v.netH > best.netH) best = { ...a, ...v }
   }
-  const newSwitch = !!best && best.netH > 0
+  // RESOLVED (resolveZ, the route decision's expected-points incumbent, routecal.js): the switch also needs
+  // the paired gain past resolveZ standard errors of its own mean — a Monte Carlo mean is an estimate
+  const seOf = (D) => (D.length > 1 ? Math.sqrt(D.reduce((a, v) => a + (v - D.reduce((s, x) => s + x, 0) / D.length) ** 2, 0) / (D.length - 1) / D.length) : Infinity)
+  const unresolved = !!best && fin(resolveZ) && best.netH > 0 && !(best.gainH > resolveZ * seOf(best.D))
+  const newSwitch = !!best && best.netH > 0 && !unresolved
   const oldSwitch = old.switched === true
   const commit = {
     rule,
@@ -895,6 +900,7 @@ export function decide({ samples, committed = null, switchCost = {}, theta = PLA
     new: best ? { switch: newSwitch, key: best.key, gainH: +best.gainH.toFixed(3), vowH: +best.vowH.toFixed(3), netH: +best.netH.toFixed(3), sdH: +best.sdH.toFixed(3), pWin: +best.pWin.toFixed(3) } : { switch: false, key: null },
     widthMult: +(+widthMult).toFixed(3),
     rho: +(+rho).toFixed(3),
+    ...(fin(resolveZ) ? { resolve: { z: resolveZ, seH: best ? +seOf(best.D).toFixed(3) : null, unresolved } } : {}),
   }
   if (rule === 'p-better') return { ...old, commit }
   const shadow = `[the P >= ${(100 * theta).toFixed(0)}% rule would ${oldSwitch ? `switch to ${old.choice}` : 'hold'}]`
@@ -912,7 +918,7 @@ export function decide({ samples, committed = null, switchCost = {}, theta = PLA
     pWin: best ? +best.pWin.toFixed(3) : null,
     regretH: +regret.toFixed(3),
     vowH: best ? +best.vowH.toFixed(3) : null,
-    why: best ? `stays on ${committed}: the best alternative ${best.key} is expected ${best.gainH.toFixed(2)}h ${best.gainH >= 0 ? 'sooner' : 'later'} net of a ${best.cost.toFixed(2)}h switch cost, ${best.gainH > 0 ? 'not more than' : 'against'} ${vowWhy(best)}; better in ${(100 * best.pWin).toFixed(0)}% of ${N} paired draws ${shadow}` : `stays on ${committed}: no alternative`,
+    why: best ? `stays on ${committed}: the best alternative ${best.key} is expected ${best.gainH.toFixed(2)}h ${best.gainH >= 0 ? 'sooner' : 'later'} net of a ${best.cost.toFixed(2)}h switch cost, ${unresolved ? `within ${resolveZ} standard errors of its mean (${seOf(best.D).toFixed(2)}h): unresolved` : `${best.gainH > 0 ? 'not more than' : 'against'} ${vowWhy(best)}`}; better in ${(100 * best.pWin).toFixed(0)}% of ${N} paired draws ${shadow}` : `stays on ${committed}: no alternative`,
     stats,
     commit,
   }
@@ -2473,7 +2479,7 @@ export function decideAmong(o = {}) {
   return drain(decideAmongGen(o))
 }
 /** The generator decideAmong drains (yields inside the Monte Carlo). */
-export function* decideAmongGen({ options, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), pointOf = () => null, clock: budgetClock = clock, ocba = PLAN.ocba, switchCost = {} } = {}) {
+export function* decideAmongGen({ options, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), pointOf = () => null, clock: budgetClock = clock, ocba = PLAN.ocba, switchCost = {}, resolveZ = null } = {}) {
   const keys = new Set((options ?? []).map((o) => o.key))
   const committedKey = prev?.key && keys.has(prev.key) ? prev.key : null
   const use = !redecide && committedKey ? options.filter((o) => o.key === committedKey) : options
@@ -2484,7 +2490,7 @@ export function* decideAmongGen({ options, prev = null, draws, redecide = true, 
   const rows = optionRows(use, stats, (o) => pointOf(o.key), pricedAt)
   const cpu = { n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
   if (!redecide && committedKey) return { key: committedKey, ...stats[committedKey], samples: samplesOf(ev.samples[committedKey]), ...heldFields(prev, rows, pricedAt), ...heldSanity(prev), ...cpu }
-  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: switchCost ?? {}, theta, committedPrevH: committedKey && fin(prev?.meanH) ? prev.meanH : null })
+  const d = decide({ samples: ev.samples, committed: committedKey, switchCost: switchCost ?? {}, theta, committedPrevH: committedKey && fin(prev?.meanH) ? prev.meanH : null, resolveZ })
   if (d.choice === null) return { key: null, why: d.why, decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
   return { key: d.choice, ...stats[d.choice], samples: samplesOf(ev.samples[d.choice]), held: false, switched: d.switched, stays: d.stays, gainH: d.gainH ?? null, pWin: d.pWin ?? null, vowH: d.vowH ?? null, margins: marginsOf(ev.samples, d.choice), ...(d.commit ? { commit: d.commit } : {}), why: d.why, ...(d.switchSanity ? { switchSanity: d.switchSanity } : {}), decidedAt: new Date(now).toISOString(), options: rows, pricedAt, ...cpu }
 }
@@ -3148,9 +3154,24 @@ export function unpricedHoldOf(d, { pointHack, pointBlade, prev = null, hold = n
  *                     blade route had the hacking route's economy) and whether it would flip the points.
  * The record carries `mandate` (hackH without, hackCovH, bladeExitH, contH, lowerH, flips).
  *
+ * THE ROUTE CALIBRATION BAND (`node`, routecal.js, 2026-10-23): each arm's hours carry its route family's
+ * measured model error, ln-normal with the model as the median: draw d prices the arm at its simulated
+ * hours x exp(s z), z its own per-route stream (seeded by the draw and the family, independent between the
+ * two arms — a route-specific error does not cancel in the paired comparison), s = routecal.routeSdOf(arm,
+ * node). So every arm's mean is its expected hours (model x exp(s^2/2) on average), the decision is on those
+ * means by the same commitment rule, and a switch needs P(win) >= theta through the band. Without a
+ * posterior the point comparison compares the expected points. `node` null: no band (published unpriced).
+ * The record carries `routeCal` (each arm's s, factor, expected point, and whether the band flips the points).
+ *
  * Returns the decideAmong record plus { hackH, bladeH } (the points).
  */
-export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now(), gift = null, hold = null, mandate = null } = {}) {
+/** The no-incumbent route switch away from the expected points needs its paired gain past this many standard errors. */
+export const ROUTE_RESOLVE_Z = 2
+export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now(), gift = null, hold = null, mandate = null, node = null, routeCal = ROUTE_CAL } = {}) {
+  // THE ROUTE CALIBRATION BAND (above): s per arm, and draw d's factor exp(s z) on its own per-family stream
+  const band = node !== null && node !== undefined ? { hacking: routeSdOf('hack', node, routeCal), blade: routeSdOf('blade', node, routeCal) } : null
+  const bandOf = (d, fam) => (band && band[fam] > 0 && d ? Math.exp(band[fam] * normalOf(rngOf((d.seed ^ hashOf(`routecal|${fam}`) ^ Math.imul((d.i ?? 0) + 1, 0x27d4eb2f)) >>> 0))) : 1)
+  const banded = (h, d, fam) => (fin(h) && h > 0 ? h * bandOf(d, fam) : h)
   // THE MANDATE (above): every hacking input carries the campaign; absent, the inputs unchanged
   const cov = mandate && mandate.covenant && typeof mandate.covenant === 'object' ? mandate.covenant : null
   const withCov = (x) => (cov && x ? { ...x, covenant: cov } : x)
@@ -3260,15 +3281,29 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     return hackMemo.get(d)
   }
   function* bladeDrawH(d) {
-    const b = yield* bladeH(applyDraw(base, d)?.cycleHours, memberOf(d))
+    const b = banded(yield* bladeH(applyDraw(base, d)?.cycleHours, memberOf(d)), d, 'blade')
     if (!cov) return b
-    const c = yield* hackDrawH(d)
+    // the mandate's continuation is the hacking route's: its band
+    const c = banded(yield* hackDrawH(d), d, 'hacking')
     return fin(b) && fin(c) ? b + c : null
   }
+  function* hackArmH(d) {
+    return banded(cov ? yield* hackDrawH(d) : yield* hackGen(applyDraw(hackBase, d), d), d, 'hacking')
+  }
   const options = [
-    { key: 'hack', noiseKey: noiseKeyOf(basis, hackBase), sim: (d) => (cov ? drain(hackDrawH(d)) : traj(applyDraw(hackBase, d), d)), simGen: (d) => (cov ? hackDrawH(d) : hackGen(applyDraw(hackBase, d), d)) },
+    { key: 'hack', noiseKey: noiseKeyOf(basis, hackBase), sim: (d) => (band ? drain(hackArmH(d)) : cov ? drain(hackDrawH(d)) : traj(applyDraw(hackBase, d), d)), simGen: (d) => (band ? hackArmH(d) : cov ? hackDrawH(d) : hackGen(applyDraw(hackBase, d), d)) },
     { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeDrawH(d)), simGen: (d) => bladeDrawH(d) },
   ]
+  // the expected points: the model's point is the median of its band (the cov blade arm: each part its own family's)
+  const fH = band ? expectedFactorOf(band.hacking) : 1
+  const fB = band ? expectedFactorOf(band.blade) : 1
+  const expHack = fin(pointHack) ? pointHack * fH : null
+  const expBlade = fin(pointBlade) ? (cov && fin(bladeExitH) ? bladeExitH * fB + pointHack * fH : pointBlade * fB) : null
+  const r3b = (x) => (fin(x) ? +x.toFixed(3) : null)
+  const pointKeyOf = (b, h) => (fin(b) && (!fin(h) || b < h) ? 'blade' : fin(h) ? 'hack' : null)
+  const routeCalRec = band
+    ? { priced: true, node, rule: ROUTE_RULE_TEXT, measuredAt: routeCal?.measuredAt ?? null, hacking: { sd: r3b(band.hacking), factor: r3b(fH), expectedH: r3b(expHack) }, blade: { sd: r3b(band.blade), factor: r3b(fB), expectedH: r3b(expBlade) }, flips: pointKeyOf(expBlade, expHack) !== pointKeyOf(pointBlade, pointHack) }
+    : { priced: false, why: 'no node given: the arms carry no route band (the points and the structural noise only)' }
   let mandateRec = null
   if (cov) {
     // the LOWER estimate, published only: the hacking arm's point WITHOUT the campaign (the same inputs, the gift's choice)
@@ -3293,11 +3328,36 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     }
   }
   const was = prev?.key === 'hack' || prev?.key === 'blade' ? prev : null
+  // THE GIFT MOVED (entry dry-run BN2.2, 2026-10-24): a route decided while the gift was a CHAIN option
+  // (unaccepted) was priced on other arms than the accepted gift's — held, it kept 'hack' at 23.3h against
+  // blade at 15.9h until the max age. A change of the gift's state is an event for the route: re-decide.
+  const giftMoved = !!was && !!giftRec && !!prev?.gift && typeof prev.gift === 'object' && (prev.gift.chain === true) !== (giftRec.chain === true)
+  // THE EXPECTED POINTS CROSSED since the decision (entry dry-run BN2.3, 2026-10-24): a route decided in the
+  // boot pass, before the Bladeburner fleet was chosen (blade priced 34.9h), held 'hack' at the entry pass
+  // against blade's 11.7h — a held decision re-prices only its own arm. Both points are priced every pass, so
+  // their expected order turning over against the held route is an event: re-decide once (the commitment
+  // rule then decides, with its hysteresis); the record carries the order it was decided on.
+  const prevExpKey = was && prev?.routeCal?.priced === true ? pointKeyOf(prev.routeCal.blade?.expectedH, prev.routeCal.hacking?.expectedH) : null
+  const pointsCrossed = !!was && !!band && prevExpKey !== null && !!pointKeyOf(expBlade, expHack) && pointKeyOf(expBlade, expHack) !== prevExpKey
+  // THE EXPECTED POINTS ARE THE INCUMBENT when nothing is committed (entry dry-run BN2.2, 2026-10-24): the
+  // Monte Carlo means of a handful of heavy-tailed draws (the hacking arm's 16-20 under OCBA: q10 3.6h, q90
+  // 80h around a 19.3h point) picked 'hack' at a BN2 entry against points of blade 11.6h, hack 16.2h — a
+  // choice the sampling noise made. With no committed route the expected points' route (the band's
+  // exp(s^2/2) on each point; the points without a band) holds unless the draws show the other wins by more
+  // than the commitment rule's value of waiting: prefer the better-priced route unless the alternative wins
+  // by more than its spread — the commitment rule's value of waiting AND ROUTE_RESOLVE_Z standard errors of
+  // the paired mean (a mean of 8-24 heavy-tailed draws is an estimate). No switch cost: nothing is committed.
+  const expKey = pointKeyOf(expBlade, expHack)
+  const pseudo = !was && expKey && fin(expHack) && fin(expBlade) ? { key: expKey, pseudo: true } : null
   // the route switch's floor with the gift (L4): the option that is not the committed route pays it
-  const switchCost = giftRec && fin(giftRec.switchCostH) ? { hack: giftRec.switchCostH, blade: giftRec.switchCostH } : {}
-  const d0 = post
-    ? yield* decideAmongGen({ options, prev: was, draws, redecide: redecide || !was, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade), switchCost })
+  // (the expected points' incumbent: no switch cost at all — nothing is committed yet)
+  const switchCost = pseudo ? { hack: 0, blade: 0 } : giftRec && fin(giftRec.switchCostH) ? { hack: giftRec.switchCostH, blade: giftRec.switchCostH } : {}
+  const d00 = post
+    ? yield* decideAmongGen({ options, prev: was ?? pseudo, draws, redecide: redecide || !was || giftMoved || pointsCrossed, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade), switchCost, resolveZ: pseudo ? ROUTE_RESOLVE_Z : null })
+    : band
+    ? { key: pointKeyOf(expBlade, expHack), why: `no posterior: the expected points (hack ${r3b(expHack)}h = ${r3b(pointHack)}h x ${r3b(fH)}, blade ${r3b(expBlade)}h, routecal.js band)` }
     : { key: fin(pointBlade) && (!fin(pointHack) || pointBlade < pointHack) ? 'blade' : fin(pointHack) ? 'hack' : null, why: 'no posterior: the point comparison' }
+  const d0 = post && pseudo && d00?.key ? { ...d00, incumbent: 'expected points', why: `no committed route: the expected points' ${pseudo.key} (hack ${r3b(expHack)}h, blade ${r3b(expBlade)}h) is the incumbent — ${d00.why}` } : post && giftMoved ? { ...d00, redecideWhy: `the gift moved (${prev.gift.chain === true ? 'chain' : 'accepted'} -> ${giftRec.chain === true ? 'chain' : 'accepted'}): re-decided`, why: `the gift moved: re-decided — ${d00?.why ?? ''}` } : post && pointsCrossed ? { ...d00, redecideWhy: `the expected points crossed (${prevExpKey} -> ${pointKeyOf(expBlade, expHack)}: hack ${r3b(expHack)}h, blade ${r3b(expBlade)}h): re-decided`, why: `the expected points crossed (now hack ${r3b(expHack)}h, blade ${r3b(expBlade)}h): re-decided — ${d00?.why ?? ''}` } : d00
   // a mandate that binds but cannot be priced leaves BOTH arms unpriced (never priced as if it did not bind)
   const mUnp = mandate?.unpriced === true
   const d = unpricedHoldOf(d0, { pointHack: mUnp ? null : pointHack, pointBlade: mUnp ? null : pointBlade, prev: was, hold, post })
@@ -3315,5 +3375,5 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     const pointKey = (h) => (fin(pointBlade) && (!fin(h) || pointBlade < h) ? 'blade' : fin(h) ? 'hack' : null)
     giftRec.awakeningBound = { hackH: fin(bh) ? +bh.toFixed(3) : null, flips: fin(bh) ? pointKey(bh) !== pointKey(pointHack) : null, why: 'the hacking arm with Awakening (x0.95) from its start: an upper bound, published, never in the decision' }
   }
-  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size, gift: giftRec ?? { priced: false, why: 'the gift is not accepted: both routes priced without it' }, mandate: mandateRec ?? { priced: false, ...(mUnp ? { unpriced: true } : {}), why: mandate?.why ?? 'no Covenant mandate binds here: both routes priced to their own exits' } }
+  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size, gift: giftRec ?? { priced: false, why: 'the gift is not accepted: both routes priced without it' }, mandate: mandateRec ?? { priced: false, ...(mUnp ? { unpriced: true } : {}), why: mandate?.why ?? 'no Covenant mandate binds here: both routes priced to their own exits' }, routeCal: routeCalRec }
 }

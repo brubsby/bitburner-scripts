@@ -43,6 +43,7 @@ process, 2GB heap is plenty (peak RSS ~0.6GB).
 | `../../../gameplan-obs.js` | the game-side writer of the in-run channel (`/tel/gameplan-obs.txt` on home) |
 | `surrogate.mjs` | the slow sims precomputed over the reachable grid, cached on disk, interpolated |
 | `routes.mjs` | the routes (hack, blade, and the node-special hooks) and `clearTime` = C(node, state, world) |
+| `../../../routecal.js` | the route calibration band (shared with the live route decision, plan.decideBladeRouteGen): each route family's measured leave-one-out error, s(route, node), E = point x exp(s^2/2); plan.mjs re-measures it every run and CHECKs the live table |
 | `search.mjs` | exact DP over the lattice; nextnode's local search ported for comparison; brute force for the tests |
 | `plan.mjs` | the CLI |
 | `stanek.mjs` | Stanek's Gift (SF13, BN13): the layout per grid (cached in `.cache/stanek-layouts.json`), the gift's factors on the hacking route (exit divisor W, g factor, favor-life factor) from `../../../stanekplan.js` (the pure model: catalogue, grid, effect, charge, placement optimiser, the per-life charging model) |
@@ -55,7 +56,8 @@ process, 2GB heap is plenty (peak RSS ~0.6GB).
 | `selftest.mjs` | the game-dependent half of `tools/test/gameplan.test.mjs` (GP2, GP3, GP4's simulation half), run in a child process |
 | `gotest.mjs` | GP4's game-source half: go.mjs against the game's own CalculateEffect / getMaxRep / endGoGame / favor (tools/sim bundle), its own child |
 
-C(node, state) is `min` over the routes that apply:
+C(node, state) is the route with the least EXPECTED hours under its family's measured error (routecal.js; the
+section below), committed in every draw; `--route-rule point` restores the `min` over the points. The routes that apply:
 
 - **hack**: `max(0.5 Hx, Hx - early)`, `Hx = max(min(H, .5), H - ln(W)/g) + favor(node, SF14) - favor_ref(node)`,
   `H` = `hackexit.hackExitHours` at `g = g(node) x prod gFactor(SF) x goG(GoPower x SF14 doubling)`,
@@ -432,6 +434,33 @@ route-level g, BN13.1 absorbs it, the transfer to BN8/BN2/BN10.3's stanek clears
 route (placeholder); the 5 Bladeburner clears since BN9.2 (k WITHHELD: observe.mjs CLEAR_LEGS note — under
 the grid's own 21.6k/h farm four of them ran faster than the model's whole leg; live Tetrads reads 38.9k/h);
 historic states are priced on direct sims with an un-phase-averaged post-Red-Pill climb.
+
+### 2026-10-23: the route calibration band (routecal.js) — routes chosen on expected hours (BN13.3 in progress)
+
+**The error.** The route of a clear was the minimum over the routes' POINTS, per draw (with hindsight of the
+draw's g and k), although the routes are not equally well known: BN2.2/2.3 went to the gift + hacking at ~9.2h
+against a Bladeburner clear at 9.3h, while the hacking route's g on BN2 carries the worst leave-one-out error in
+the plan (+163%: 58.8h predicted for BN2.1's measured 22.4h) and the played node's draws put only
+SIGMA_PLAYED (0.15) on it.
+
+**The rule** (routecal.js, the same in the live route decision): `ln(true) ~ N(ln(point), s^2)`, the point the
+median; `s(route, node) = max(the family's pooled RMS, the node's own residual)`; the route is the least
+`E = point x exp(s^2/2)` (risk-neutral), chosen in the mid world and COMMITTED in every draw (a draw prices the
+committed route at its own hours x the band's undrawn part: a played node's band less its g sd, an unplayed
+node's none — the g model's predictive and the discrepancy term already carry it — the Bladeburner band less
+k's posterior sd). Families: hacking (hack, stanek, go) = the 8 CALIBRATION residuals, pooled 0.42, BN2 0.96;
+Bladeburner (blade, bladeStanek) = the plan's route at the entry state of every Bladeburner clear whose k is
+out of sample (16 since the Go farm's combat channel), pooled 0.39 (BN11.2 25.7h and BN3.1 21.9h against 9.3h
+dominate; BN3.3, the BN3 replay and BN11.3 read -0.03..-0.11). plan.mjs prints the table, each clear's routes
+as distributions and both rules' orders, and CHECKs routecal.js's ROUTE_CAL against the run.
+
+Results (from the entry state, BN13.3 counted owed, 100 draws, seed 1): every route the same as the point rule
+except **BN2.2 and BN2.3: stanek -> blade** (stanek point 12.6h, E 20.1h, p10-p90 3.7-43.4h; blade point 9.3h,
+E 10.0h, 5.6-15.3h). BN5.2/5.3 blade (E 10.0h), BN8.2/8.3 stanek (E 42.4h/42.3h; BN8 has no Bladeburner),
+BN13.3 blade (E 32.9h). Order (mid world): BN2.2* BN2.3* BN5.2* BN5.3* BN8.2 BN8.3 BN13.3*, E 157.6h (robust
+E[T] 158.9h over the draws); the point rule's order BN5.2* BN5.3* BN8.2 BN8.3 BN13.3* BN2.2 BN2.3 totals 142.6h of
+POINTS (not comparable: it is the sum of medians). The gang is not a route: BN2.1's gang sits inside BN2's
+measured g (the hacking family), so it is priced only through that g and its band.
 
 ### A Bayes-adaptive outer loop: not built, sketched
 

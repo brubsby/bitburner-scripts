@@ -200,6 +200,10 @@ export async function run() {
     const I = T.inputsOf(PASS)
     const tg = P.trajectoryGenOf(null, {})
     const traj = P.trajectoryOf(null, {})
+    // the 4S-shaped section prices its OWN draws: exitplan's policy memo is module-wide, so on the route
+    // section's draws its searches were whatever the route decision had not already priced (all of them
+    // once the route decision prices the hacking arm on every draw, routecal.js's expected-points incumbent)
+    const DRAWS4 = P.makeDraws(post0, P.PLAN.N, P.seedOf(fx.plan.lastAugReset, 4))
     const withIn = { ...base, incomePerSec: base.incomePerSec * 1.05 }
     const cands = [1, 1.05, 1.1, 1.2].map((g, i) => ({ key: i ? `c${i}` : 'fresh', names: [`a${i}`], gains: { hacking: g, hacking_exp: g } }))
     const sections = [
@@ -211,7 +215,7 @@ export async function run() {
         yield
         const b = yield* tg(withIn)
         yield
-        return yield* P.decideAmongGen({ options: [{ key: 'none', noiseKey: 'n', sim: (dr) => traj(P.applyDraw(base, dr), dr), simGen: (dr) => tg(P.applyDraw(base, dr), dr) }, { key: 'now', noiseKey: 'n', sim: (dr) => traj(P.applyDraw(withIn, dr), dr), simGen: (dr) => tg(P.applyDraw(withIn, dr), dr) }], draws: DRAWS, redecide: true, budgetMs: 1e9, pointOf: (k) => (k === 'none' ? a : b) })
+        return yield* P.decideAmongGen({ options: [{ key: 'none', noiseKey: 'n', sim: (dr) => traj(P.applyDraw(base, dr), dr), simGen: (dr) => tg(P.applyDraw(base, dr), dr) }, { key: 'now', noiseKey: 'n', sim: (dr) => traj(P.applyDraw(withIn, dr), dr), simGen: (dr) => tg(P.applyDraw(withIn, dr), dr) }], draws: DRAWS4, redecide: true, budgetMs: 1e9, pointOf: (k) => (k === 'none' ? a : b) })
       })(), (d) => `${d.key}`],
     ]
     for (const [label, mk, say] of sections) {
@@ -247,7 +251,8 @@ export async function run() {
       [prog, /exitCmp = await paced\(gangArmsGen\(bestExitPolicyGen, /, "progress.js: the gang's point arms run in slices"],
       [prog, /countCtx \? yield\* bestExitPolicyGen\(withIn\)/, "progress.js: the graft decision's with-run policy is a generator under a count"],
       [plan, /export function trajectoryOf\(spec, ctx = \{\}\) \{[^}]*const g = trajectoryGenOf\(spec, ctx\)\s*return \(x, d = null\) => drain\(g\(x, d\)\)/, 'plan.js: trajectoryOf is trajectoryGenOf drained'],
-      [plan, /simGen: \(d\) => \(cov \? hackDrawH\(d\) : hackGen\(applyDraw\(hackBase, d\), d\)\)/, "plan.js: the route decision's hacking arm carries simGen"],
+      [plan, /simGen: \(d\) => \(band \? hackArmH\(d\) : cov \? hackDrawH\(d\) : hackGen\(applyDraw\(hackBase, d\), d\)\)/, "plan.js: the route decision's hacking arm carries simGen"],
+      [plan, /function\* hackArmH\(d\) \{\n\s*return banded\(cov \? yield\* hackDrawH\(d\) : yield\* hackGen\(applyDraw\(hackBase, d\), d\), d, 'hacking'\)/, "plan.js: the hacking arm under the route band (routecal.js) still prices through the generator"],
       [plan, /const hoursOf = function\* \(x\) \{\s*try \{\s*const h = yield\* hackGen\(x\)[\s\S]{0,4000}pointHack = yield\* hoursOf\(hackBase\)/, "plan.js: the route decision's hacking point is a generator"],
       [plan, /pointH = yield\* o\.pointGen\(\)/, "plan.js: the batch choice's points are generators"],
       [plan, /simGen: simGen\(byKey\.get\(k\)\)/, 'plan.js: the count route options carry simGen'],
