@@ -63,6 +63,13 @@
 //       over the exit; progress.js hands the accepted arm that charger. And the Simulacrum's money leg: SF7.3
 //       not joined -> it arrives at the join, no money leg; a money leg past the exit at today's income is
 //       published unpriced (null + cause), never an hours figure (moneyH 3805h at the entry).
+//   SG26 THE ALLOCATION f ON THE SAME CHARGER (backlog 0i; BN5.2 dry-run: the chain accepted at f 0.3 on the ramp,
+//       the accepted pass's decisions.stanek chose 0.1 on the fleet held at entry, ~0.6h). On one state the
+//       allocation's options (hackGiftInputsOf on the chain's charger) reproduce the chain's hack + gift inputs at
+//       every f of ONE grid (CHAIN_HACK_F = ALLOC_GRID's f > 0), so both argmins agree; progress.js stanekDecisionOf
+//       prices on chainHackChargerOf + hackGiftInputsOf (never chargeInputsOf on the held fleet), its incumbent
+//       before a decision of the life is the chain's f (plan.js gift.hackF), and routeGiftOf's fH falls back to it.
+//       RED: the decision back on chargeInputsOf, the charger dropped, the grids split, the chain's f unpublished.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -616,7 +623,7 @@ function sg5() {
   if (!/script: 'stanek\.js',\s*host: 'home',\s*args: \[\],\s*trigger: \(ns\) => canAccessFeature\(ns\.getResetInfo\(\), 13\)/.test(wd)) c.fail('watchdog.js must run stanek.js as a JOB on home triggered by canAccessFeature(13)')
   if (!/script: 'stanek\.js',\s*where: 'home',\s*kind: 'job'/.test(rd('boot.js'))) c.fail('boot.js must declare stanek.js (kind job) — the watchdog watches only what boot declares (B7.9)')
   const pr = rd('progress.js')
-  if (!/const h = yield\* tg\(chargeInputsOf\(base, ctx, f\)\)/.test(pr)) c.fail('progress.js stanekDecisionOf must price every option through chargeInputsOf and the trajectory simulator')
+  if (!/const h = r\.inputs \? yield\* tg\(r\.inputs\) : null/.test(pr)) c.fail('progress.js stanekDecisionOf must price every option through the trajectory simulator (SG26: on the shared charger)')
   const sd = pr.slice(pr.indexOf('async function stanekDecisionOf('), pr.indexOf('\n}\n', pr.indexOf('async function stanekDecisionOf(')))
   if (!/allocOptionsOf\(fleetGB, hosts\)/.test(sd) || !/st\?\.fleet\?\.gb/.test(sd) || /batch\.txt/.test(sd)) c.fail("progress.js stanekDecisionOf must price fractions of stanek.js's measured FLEET (st.fleet), not home and not /tel/batch.txt")
   if (!/basis: ALLOC_BASIS/.test(sd)) c.fail('progress.js stanekDecisionOf must stamp basis "fleet" on the decision (stanek.js follows only that basis)')
@@ -627,11 +634,11 @@ function sg5() {
   const basisKeys = ret.match(/\n\s+basis:/g)?.length ?? 0
   if (!ret || basisKeys !== 1) c.fail(`progress.js stanekDecisionOf's priced decision must carry exactly ONE basis key (basis: ALLOC_BASIS), has ${basisKeys} — a later duplicate overrides 'fleet' and stanek.js never follows the plan`)
   else {
-    const lit = Function('ALLOC_BASIS', 'c', 'without', 'priced', 'fleetGB', 'hosts', 'fNow', 'cycleH', 'ctx', 'basis', 't0', 'layout', 'info', 'lifeMin', 'LIFE_LAYOUT_WINDOW_MIN', `${ret.replace('return {', 'return ({')}\n    })`)
+    const lit = Function('ALLOC_BASIS', 'c', 'without', 'priced', 'fleetGB', 'hosts', 'fNow', 'cycleH', 'ctx', 'basis', 't0', 'layout', 'info', 'lifeMin', 'LIFE_LAYOUT_WINDOW_MIN', 'charger', 'chargerWhy', `${ret.replace('return {', 'return ({')}\n    })`)
     const lar = Date.now() - 3 * 60e3
     const alt = sp.LAYOUTS['6x5|2'] // legal on BN13.2's 6x6 grid
     const lay = { key: sp.layoutKeyOf(alt), placed: alt, lifeKey: lar, why: 'test', decidedAt: new Date().toISOString() }
-    const d = lit(sp.ALLOC_BASIS, { f: 0.1, hours: 100, why: 'w' }, 110, [], 756, [{}], 0, 0.5, { nodePower: 2 }, null, Date.now(), lay, { lastAugReset: lar }, 3, sp.LIFE_LAYOUT_WINDOW_MIN)
+    const d = lit(sp.ALLOC_BASIS, { f: 0.1, hours: 100, why: 'w' }, 110, [], 756, [{}], 0, 0.5, { nodePower: 2 }, null, Date.now(), lay, { lastAugReset: lar }, 3, sp.LIFE_LAYOUT_WINDOW_MIN, { ageH: 0.1, ramHours: 19, liveGB: 228 }, 'test')
     const plan = JSON.stringify({ at: new Date().toISOString(), lastAugReset: lar, decisions: { stanek: d } })
     const got = sp.planAllocOf(plan, lar)
     if (got?.f !== 0.1) c.fail(`stanek.js does not follow progress.js's own priced decision: planAllocOf -> ${JSON.stringify(got)} (decision basis ${JSON.stringify(d.basis)})`)
@@ -1658,6 +1665,61 @@ async function sg25() {
   return c
 }
 
+async function sg26() {
+  const c = new Check('SG26', "the charger's allocation f is priced on the chain's charger: the accepted pass and the chain pick the same f")
+  const rd = (f) => fs.readFileSync(path.join(REPO, f), 'utf8')
+  const se = await import('../../stanekepoch.js')
+  const { bestExitPolicy, expForLevel } = await import('../../exitplan.js')
+  const { bitNodeMults } = await import('../../bitNodeMultipliers.js')
+  const nm = bitNodeMults(5, 2)
+  const gs = sp.giftSize(nm.StaneksGiftExtraSize ?? 0, 3)
+  const np = nm.StaneksGiftPowerMultiplier
+  const L = sp.layoutForGrid(gs.width, gs.height, np, 'hack').placed.map((p) => ({ id: p.id, x: p.x, y: p.y, rot: p.rot ?? p.rotation }))
+  // the BN5.2 entry shape (SG24): a 228GB fleet, home 128GB / 1 core, a young node ramping over ~19h
+  const base = { money: 1e6, incomePerSec: 2.1e4, hacking: 50, hackingExp: expForLevel(50, 1.7), hackingMult: 1.7, expPerSec: 310, repPerSec: 4.2, exitRep: 0, exitFavor: 0, cycleHours: 2.6, multGainPerCycle: 1.3, exitLevel: 3000, joinMoney: 1e9, terminalRep: 2.5e6, donationCost: 1e12 }
+  const H = (inp) => (inp ? bestExitPolicy(inp, 6).best?.hours ?? null : null)
+  const charger = { lastNodeReset: 1, liveGB: 228, liveHome: { ram: 128, cores: 1 }, ageH: 0.1, ramHours: 19.2 }
+  const hosts = [{ host: 'home', cores: 1, maxRam: 128, capGb: 60 }, { host: 'n00dles', cores: 1, maxRam: 100, capGb: 100 }]
+  const st = { node: 5, layout: { placed: L, nodePower: np }, fleet: { gb: 228, hosts }, charger: { gb: 0 } }
+  const accepted = sp.penaltyStepInputsOf(base, 1, sp.PENALTY[1])
+  // one grid: the chain's fractions are the allocation's, f > 0
+  c.examined(1)
+  if (JSON.stringify([0, ...se.CHAIN_HACK_F]) !== JSON.stringify(sp.ALLOC_GRID)) c.fail('the chain and the allocation must price one f grid (CHAIN_HACK_F = ALLOC_GRID, f > 0)', JSON.stringify({ chain: se.CHAIN_HACK_F, alloc: sp.ALLOC_GRID }))
+  const opts = sp.allocOptionsOf(st.fleet.gb, hosts)
+  const alloc = []
+  const chain = []
+  for (const f of opts) {
+    const a = sp.hackGiftInputsOf(accepted, st, { node: 5, layout: L, f, sameLife: true, charger })
+    alloc.push({ f, hours: H(a.inputs) })
+    if (f > 0) chain.push({ f, hours: H(sp.hackChainGiftInputsOf(base, { ...charger, layout: L, nodePower: np, f }).inputs) })
+    c.examined(1)
+  }
+  const ca = sp.chooseAlloc(alloc, null)
+  const cc = chain.filter((x) => typeof x.hours === 'number').reduce((b, x) => (!b || x.hours < b.hours ? x : b), null)
+  if (!(ca.f > 0 && cc && ca.f === cc.f && Math.abs(ca.hours - cc.hours) < 1e-9)) c.fail(`the accepted pass's f must be the chain's on the same state: alloc f ${ca.f} (${ca.hours}h) vs chain f ${cc?.f} (${cc?.hours}h)`, ca.why)
+  else c.note(`BN5.2 shape: f ${ca.f} on both (${ca.why})`)
+  // the chain's f is the incumbent: within the 0.1h band it holds, so the first accepted pass keeps it
+  const inc = sp.chooseAlloc(alloc, cc?.f ?? null)
+  c.examined(1)
+  if (inc.f !== cc?.f) c.fail("with the chain's f as the incumbent the accepted pass must keep it", inc.why)
+  // the wiring
+  const pr = rd('progress.js')
+  const sd = pr.slice(pr.indexOf('async function stanekDecisionOf('), pr.indexOf("THE LIFE'S LAYOUT", pr.indexOf('async function stanekDecisionOf(')))
+  c.examined(5)
+  if (!/const charger = chainHackChargerOf\(ns, info\)/.test(sd)) c.fail("progress.js stanekDecisionOf must price on chainHackChargerOf (the route arms' charger)")
+  if (!/hackGiftInputsOf\(base, st, \{ node: info\.currentNode, layout: st\.layout\.placed, f, sameLife: live, charger \}\)/.test(sd)) c.fail('progress.js stanekDecisionOf must build every option with hackGiftInputsOf on that charger (one builder)')
+  if (/chargeInputsOf\(/.test(sd)) c.fail('progress.js stanekDecisionOf prices f on chargeInputsOf (the fleet held at entry) again')
+  if (!/chooseAlloc\(priced, typeof prev\?\.f === 'number' \? prev\.f : chainHackFOf\(info\)\)/.test(sd)) c.fail("progress.js stanekDecisionOf's incumbent before a decision of the life must be the chain's f (chainHackFOf)")
+  if (!/prevS\.f > 0 \? prevS\.f : chainHackFOf\(info\) \?\? DEFAULT_F/.test(pr)) c.fail("progress.js routeGiftOf's fH must fall back to the chain's f before DEFAULT_F")
+  if (!/function chainHackFOf\(info\) \{\n[^\n]*prevAny\?\.decisions\?\.bladeRoute\n[^\n]*charger\?\.lastNodeReset === info\?\.lastNodeReset \? g\?\.gift\?\.hackF : null/.test(pr)) c.fail("chainHackFOf must read this node's decisions.bladeRoute.gift.hackF")
+  // the chain publishes the f it chose (hack rows carry o.f; the chosen row's f is gift.hackF)
+  const pl = rd('plan.js')
+  c.examined(2)
+  if (!/hackRows\.push\(\{ src: o\.src, key: o\.key \?\? null, f: typeof o\.f === 'number' \? o\.f : null,/.test(pl)) c.fail('plan.decideBladeRouteGen: the hack rows must carry the option\'s f')
+  if (!/hackF: hb && hb\.withGift \? hb\.f : null,/.test(pl)) c.fail("plan.decideBladeRouteGen must publish the chosen hack + gift option's f (gift.hackF)")
+  return c
+}
+
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22(), await sg23(), await sg24(), await sg25()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22(), await sg23(), await sg24(), await sg25(), await sg26()]
 }

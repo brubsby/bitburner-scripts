@@ -2692,7 +2692,8 @@ function routeGiftOf(ns, info, base, s0) {
   const h = st?.layout?.height
   const np = st?.layout?.nodePower ?? 1
   const prevS = planCtx?.prevAny?.decisions?.stanek
-  const fH = prevS?.basis === ALLOC_BASIS && typeof prevS.f === 'number' && prevS.f > 0 ? prevS.f : DEFAULT_F
+  // the charger's f: the priced allocation, else the f the chain accepted at (the same charger model), else DEFAULT_F
+  const fH = prevS?.basis === ALLOC_BASIS && typeof prevS.f === 'number' && prevS.f > 0 ? prevS.f : chainHackFOf(info) ?? DEFAULT_F
   const hackOptions = []
   // the charger over the node: the SAME model and inputs the chain priced the accept on (chainHackChargerOf)
   const charger = chainHackChargerOf(ns, info)
@@ -2704,7 +2705,7 @@ function routeGiftOf(ns, info, base, s0) {
     if (tab?.placed?.length && !sameLayout(st.layout.placed.map((p) => ({ ...p, rotation: p.rot })), tab.placed)) layouts.push([`the hacking layout (${tab.source})`, tab.placed])
     for (const [src, L] of layouts) {
       const r = hackGiftInputsOf(base, st, { node: info.currentNode, layout: L, f: fH, sameLife, charger })
-      if (r.inputs) hackOptions.push({ src: `${src} at f ${fH}`.slice(0, 160), key: layoutKeyOf(L), inputs: r.inputs })
+      if (r.inputs) hackOptions.push({ src: `${src} at f ${fH}`.slice(0, 160), key: layoutKeyOf(L), f: fH, inputs: r.inputs })
     }
   }
   const ep = readJson(ns, EPOCH_FILE)
@@ -2753,6 +2754,12 @@ function chainHackChargerOf(ns, info) { // ramHours: the last pass's hackBareH (
   const kept = prev?.charger?.lastNodeReset === info?.lastNodeReset && prev.charger.ramHours > 0 ? prev.charger.ramHours : null
   const ramHours = typeof bare === 'number' && bare > 0 && prevAt > 0 && info?.lastNodeReset > 0 ? (prevAt - info.lastNodeReset) / 3.6e6 + bare : kept ?? HACK_CHARGER_RAMP.fallbackH
   return { lastNodeReset: info?.lastNodeReset ?? null, liveGB: typeof liveGB === 'number' && liveGB > 0 ? liveGB : 0, liveHome: hu?.homeRam > 0 ? { ram: hu.homeRam, cores: hu.cores > 0 ? hu.cores : 1 } : null, ageH: ageH ?? 0, ramHours: ageH === null ? null : Math.max(ramHours, ageH) }
+}
+/** The f the chain's chosen hack + gift option was priced at (decisions.bladeRoute.gift.hackF of this node), or null. */
+function chainHackFOf(info) {
+  const g = planCtx?.prevAny?.decisions?.bladeRoute
+  const f = g?.charger?.lastNodeReset === info?.lastNodeReset ? g?.gift?.hackF : null
+  return typeof f === 'number' && f > 0 ? f : null
 }
 /** The fleet the BLADEBURNER route would run is re-chosen at most this often (the chooser: every configuration, one exit each). */
 const ROUTE_FLEET_MS = 30 * 60e3
@@ -3228,15 +3235,15 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
  * f of the FLEET's RAM (chargeFragment charges from any server; stanek.js
  * places it on the rooted hosts, stanekplan.chargerPlanOf) that the batcher
  * then cannot use. Each option f in stanekplan.ALLOC_GRID that the fleet's
- * room (stanek.js's /tel/stanek.txt `fleet`) can hold is a trajectory: the SAME exit inputs (exitInputsOf, one builder) scaled by what
- * f does to them — the gift's life-average multipliers at f's threads (the
- * charges clear at every install and regrow, so every life repeats them) and
- * the batcher's RAM lost — relative to the f the inputs were measured under,
- * then the exit simulator (trajectoryGenOf on the committed install basis).
- * The decision is the fastest exit (stanekplan.chooseAlloc: the incumbent kept
- * within 0.1h); stanek.js sizes the charger from decisions.stanek.f.
+ * room (stanek.js's /tel/stanek.txt `fleet`) can hold is a trajectory: the SAME exit inputs (exitInputsOf, one builder) moved by what
+ * f does to them ON THE CHARGER OVER THE NODE — stanekplan.hackGiftInputsOf on chainHackChargerOf, the
+ * builder and charger the route's hacking arm prices the gift on before and after the accept (the ramp at
+ * the node's age floored at the live fleet; each life's calibrated life-average from zero; the batcher's
+ * RAM lost) — from the gift's live charge and fNow, then the exit simulator (trajectoryGenOf on the
+ * committed install basis). The decision is the fastest exit (stanekplan.chooseAlloc: the incumbent — this
+ * life's last f, else the f the chain accepted at — kept within 0.1h); stanek.js sizes the charger from decisions.stanek.f.
  * Re-priced at most every STANEK_REPRICE_MS within a life (each option is a
- * policy search). NOT SIMULATED (published): home growing within the node,
+ * policy search). NOT SIMULATED (published):
  * the Church's rep -> Awakening/Serenity, bonus time, batcher income not
  * linear in its RAM. Never throws (planDecide records a throw).
  */
@@ -3318,7 +3325,7 @@ async function stanekDecisionOf(ns, info, inputsFn, route = null, verdict = null
       withoutH: p?.withoutH ?? null,
       deltaH: p?.d ?? null,
       why: `${gift.accepted ? 'accepted' : gift.want ? 'ACCEPT (stanek.js accepts on its next pass)' : gift.hold ? 'HELD open' : 'never'}: ${gift.wantWhy ?? gift.why}`.slice(0, 400),
-      charger: 'stanek.js: the biggest rooted host (stanekplan.bladeChargeFOf, at most BLADE_F_MAX of the fleet)',
+      charger: "stanek.js: the biggest rooted host (stanekplan.bladeChargeFOf, at most BLADE_F_MAX of the fleet) — the charger both route arms price on (bladeChargerThrOf: the BLADE_HOST ramp floored at the live H). f trades only the batcher's money on that host, which the Bladeburner exit does not model (bbplan: money not binding): a bigger charger never prices worse there, so f is the policy, not a priced option (stated)",
       calibration: 'NOT CALIBRATED: no Bladeburner node has run with the gift (bbsim both arms; the charger BLADE_HOST mid; money on the charger host not priced)',
       decidedAt: new Date().toISOString(),
     }
@@ -3353,13 +3360,22 @@ async function stanekDecisionOf(ns, info, inputsFn, route = null, verdict = null
     const ctx = { layout: st.layout.placed, nodePower: st.layout.nodePower, fleetGB, hosts, fNow, cycleH }
     const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
     const tg = trajectoryGenOf(basis, { count: null, repPoint: pc.repPoint ?? null })
+    // EVERY f ON THE CHARGER OVER THE NODE (backlog 0i): the SAME builder and charger the route's hacking arm
+    // prices the gift on, before the accept (the chain: hackChainGiftInputsOf) and after it (routeGiftOf:
+    // hackGiftInputsOf on chainHackChargerOf) — the ramp at the node's age floored at the live fleet, from the
+    // gift's live charge. The fleet held at entry (chargeInputsOf) picked another f than the chain (BN5.2 0.1 vs 0.3).
+    const charger = chainHackChargerOf(ns, info)
     const priced = []
+    let chargerWhy = null
     for (const f of allocOptionsOf(fleetGB, hosts)) {
-      const h = yield* tg(chargeInputsOf(base, ctx, f))
+      const r = hackGiftInputsOf(base, st, { node: info.currentNode, layout: st.layout.placed, f, sameLife: live, charger })
+      chargerWhy = chargerWhy ?? r.why
+      const h = r.inputs ? yield* tg(r.inputs) : null
       priced.push({ f, hours: typeof h === 'number' && isFinite(h) ? +h.toFixed(3) : null })
       yield
     }
-    const c = chooseAlloc(priced, typeof prev?.f === 'number' ? prev.f : null)
+    // no decision of this life yet: the f the chain accepted at is the incumbent (one charger model)
+    const c = chooseAlloc(priced, typeof prev?.f === 'number' ? prev.f : chainHackFOf(info))
     // THE LIFE'S LAYOUT (stanekplan.liveLayout*): once per life, while it is young enough that a
     // re-lay deletes ~no charge (an install zeroes it). Weights = this exit's marginal hours per unit
     // ln of each fragment type at the chosen f; options (incumbent, tabled, the live-weights layout)
@@ -3417,9 +3433,10 @@ async function stanekDecisionOf(ns, info, inputsFn, route = null, verdict = null
       deltaH: typeof c.hours === 'number' && typeof without === 'number' ? +(c.hours - without).toFixed(3) : null,
       priced,
       ctx: { fleetGB, hosts: hosts.length, roomGb: +hosts.reduce((s, h) => s + (h.capGb ?? 0), 0).toFixed(2), fNow: +fNow.toFixed(4), cycleH: +cycleH.toFixed(3), nodePower: ctx.nodePower },
+      charger: { model: 'stanekplan.hackChargerPathOf on chainHackChargerOf (the route arms\' charger)', ageH: +(charger.ageH ?? 0).toFixed(3), ramHours: typeof charger.ramHours === 'number' ? +charger.ramHours.toFixed(3) : null, liveGB: charger.liveGB, why: String(chargerWhy ?? '').slice(0, 300) },
       installBasis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null } : { kind: 'default policy (no committed install)' },
       decidedAt: new Date().toISOString(),
-      notSimulated: 'the fleet growing within the node (more threads later), the Church rep -> Awakening/Serenity, bonus time, batcher income not linear in its RAM — the first two favour charging',
+      notSimulated: 'the Church rep -> Awakening/Serenity (favours charging), bonus time, batcher income not linear in its RAM; the fleet\'s growth is the charger MODEL (the gameplan ramp, floored at the live fleet)',
       layout: layout ?? { key: null, lifeKey: info.lastAugReset, why: `no layout decision of this life: ${lifeMin > LIFE_LAYOUT_WINDOW_MIN ? `${lifeMin.toFixed(0)} min in, past the ${LIFE_LAYOUT_WINDOW_MIN} min install window (a re-lay would delete the charge: L2)` : 'the grid size is not in /tel/stanek.txt yet'}` },
       ms: Date.now() - t0,
     }

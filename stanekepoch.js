@@ -59,7 +59,7 @@
 // clear of the charge inside the exit (the Bladeburner route never installs), and the hacking route
 // (its exit model is life-averaged — L1 decides per life at the install epoch, L2 prices the in-life
 // switch: none wins).
-import { PENALTY, giftSize, bladeThrAt, layoutMults, chargeTrackOf, relayDiffOf, fragKeyOf, sameLayout, layoutKeyOf, layoutFits, layoutForGrid, fragmentById, canPlace, orientations, layoutValue, chargeFactor, coreBonus, threadsOf, bladeHostGbAt, TYPE, FRAGMENTS, BLADE_LAYOUTS, BLADE_PHASE_PRICED, BLADE_HOST, BLADE_WEIGHTS, LAYOUT_MULT_KEYS, hackChainGiftInputsOf, bladeChargerThrOf } from 'stanekplan.js'
+import { PENALTY, giftSize, bladeThrAt, layoutMults, chargeTrackOf, relayDiffOf, fragKeyOf, sameLayout, layoutKeyOf, layoutFits, layoutForGrid, fragmentById, canPlace, orientations, layoutValue, chargeFactor, coreBonus, threadsOf, bladeHostGbAt, TYPE, FRAGMENTS, BLADE_LAYOUTS, BLADE_PHASE_PRICED, BLADE_HOST, BLADE_WEIGHTS, LAYOUT_MULT_KEYS, hackChainGiftInputsOf, bladeChargerThrOf, ALLOC_GRID } from 'stanekplan.js'
 import { bladeExitGen, bladeMemberOf, BLADE_ENSEMBLE } from 'bbplan.js'
 
 export const EPOCH_FILE = '/tel/stanekepoch.txt'
@@ -486,8 +486,9 @@ export const bladeGiftMakerOf = ({ live, target = null, duty = BLADE_HOST.duty, 
 /**
  * THE CHAIN's options (L4; progress.js routeGiftChainOf calls it, tools/sim/routegift.mjs too): see there.
  */
-/** The hacking charger's fractions the chain prices hack + gift at (stanekplan.ALLOC_GRID's middle; the best is the arm). */
-export const CHAIN_HACK_F = [0.05, 0.1, 0.2, 0.3]
+/** The hacking charger's fractions the chain prices hack + gift at: stanekplan.ALLOC_GRID's, f > 0 — the grid the accepted
+ * pass's allocation (progress.js stanekDecisionOf) prices on the same charger, so both can reach the same f (the best is the arm). */
+export const CHAIN_HACK_F = ALLOC_GRID.filter((f) => f > 0)
 // bladeCharger {ageH, H} (optional): the Bladeburner charger's place on its ramp (stanekplan.bladeChargerThrOf, the
 // model the accepted pass re-prices on); absent: the node's start, nothing charging
 export function routeGiftChainOptionsOf({ gift: g, nodeMults: nm, base, install = null, hackCharger = null, bladeCharger = null }) {

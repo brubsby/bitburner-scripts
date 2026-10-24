@@ -297,9 +297,12 @@ publishes `/tel/stanek.txt` (+ every host's heartbeat gathered into
 `/tel/charge.txt`). act.js's
 `runActor` and order loop refuse every non-NFG buyaug / graft / install while
 the gift is unaccepted (`stanekplan.giftOrderGate`, fresh getResetInfo).
-progress.js prices f by the exit (`decisions.stanek`, basis `fleet`,
-`chargeInputsOf` per option on stanek.js's measured fleet; DEFAULT_F labelled
-UNPRICED until then); the accepted gift is an INPUT to the route decision, never a pin (L4,
+progress.js prices f by the exit (`decisions.stanek`, basis `fleet`: every
+ALLOC_GRID f through `hackGiftInputsOf` on `chainHackChargerOf`, the builder and
+charger the route's hacking arm prices the gift on before and after the accept — the
+ramp at the node's age floored at the live fleet; the chain prices the same grid,
+`CHAIN_HACK_F`, and its chosen f (`gift.hackF`) is the incumbent and routeGiftOf's
+fallback; SG26; DEFAULT_F labelled UNPRICED until then); the accepted gift is an INPUT to the route decision, never a pin (L4,
 below). Charges clear at every install and regrow, so the
 life length decision prices each option L at the gift's life-average over L
 (`giftLifeInputsOf`, carried as `inputs.giftLife` from the committed length;

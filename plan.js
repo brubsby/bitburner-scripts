@@ -3229,7 +3229,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     const hackRows = []
     for (const o of gift.hackOptions ?? []) {
       if (!o?.inputs) continue
-      hackRows.push({ src: o.src, key: o.key ?? null, inputs: withCov(o.inputs), withGift: o.withGift !== false, hours: yield* hoursOf(withCov(o.inputs)) })
+      hackRows.push({ src: o.src, key: o.key ?? null, f: typeof o.f === 'number' ? o.f : null, inputs: withCov(o.inputs), withGift: o.withGift !== false, hours: yield* hoursOf(withCov(o.inputs)) })
       yield
     }
     noGiftRowH = hackRows.find((r) => r.withGift === false)?.hours ?? null
@@ -3259,9 +3259,11 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
       priced: !!(hb && bb),
       chain: gift.chain === true,
       hackWithGift: hb ? hb.withGift : null,
+      // the hacking charger's fraction the chosen hack option was priced at (the chain: the accept's f; progress.js stanekDecisionOf's incumbent)
+      hackF: hb && hb.withGift ? hb.f : null,
       bladeWithGift: bb ? bb.withGift : null,
       why: hb && bb ? null : `${gift.chain ? 'the gift is acceptable' : 'the gift is accepted'} but ${!hb ? 'the hacking arm' : ''}${!hb && !bb ? ' and ' : ''}${!bb ? 'the Bladeburner arm' : ''} could not be priced with it${gift.why ? `: ${gift.why}` : ''}`,
-      hack: { chosen: hb ? hb.src : null, options: hackRows.map((r) => ({ src: r.src, key: r.key, withGift: r.withGift, hours: r3(r.hours) })), why: hb ? null : 'no hacking option priced with the gift: the arm is the live inputs as measured (the gift as it is)' },
+      hack: { chosen: hb ? hb.src : null, options: hackRows.map((r) => ({ src: r.src, key: r.key, f: r.f, withGift: r.withGift, hours: r3(r.hours) })), why: hb ? null : 'no hacking option priced with the gift: the arm is the live inputs as measured (the gift as it is)' },
       blade: { chosen: bb ? bb.src : null, options: bladeRows.map((r) => ({ src: r.src, key: r.key, withGift: r.withGift, hours: r3(r.hours), members: r.members.map(r3) })), why: bb ? null : 'no Bladeburner gift path priced: the arm holds the multipliers the player has now' },
       switchCostH: fin(gift.switchCostH) ? gift.switchCostH : null,
       notSimulated: gift.notSimulated ?? null,

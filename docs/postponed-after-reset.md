@@ -132,8 +132,9 @@ before starting each subagent.
 0h. **Exit inputs drift between passes** (c249a8f's author): the hack arm moved 14.3h -> 18.2h one pass after a
     blade accept in BN5.2 — eRep 0.11 -> 0 and the income formula evaluated at a different age (1.67h vs 2.08h).
     exitInputsOf should give the same inputs for the same state.
-0i. **Stanek allocation f is still priced on the fleet held at entry**, not the charger ramp — the accepted pass
-    picks a different f than the chain (BN5.2: 0.1 vs 0.3; ~0.6h drift).
+0i. ~~**Stanek allocation f is still priced on the fleet held at entry**~~ DONE 2026-10-24: decisions.stanek prices
+    every f on the route arms' charger (hackGiftInputsOf on chainHackChargerOf), one grid with the chain; BN5.2's
+    accepted state replayed: f 0.1 -> 0.3, the chain's (SG26).
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
