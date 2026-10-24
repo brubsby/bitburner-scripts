@@ -50,7 +50,7 @@ import { reporter, describe, record } from 'status.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { slotClaim, SLOT_FILES } from 'bbslot.js'
 import { hacknetLast, isHacknetServerHost } from 'hacknetplan.js'
-import { POLICY, BBC, joinedAtOf } from 'bbplan.js'
+import { POLICY, BBC, joinedAtOf, skillEveryOf } from 'bbplan.js'
 import { LITE_FILE, BB_FILE, LITE_PORT, ACTOR, LITE_ACTOR_GB, reserveHostOf, fullTakingOverOf, joinableOf, liteRecordOf, carriedOf, passWaitMs, rankPerHourOf, leanViewOf } from 'bbliteplan.js'
 
 const ACTOR_WAIT_MS = 15e3
@@ -312,7 +312,8 @@ async function loop(ns, { info, host, mults, say: say0, sayBB, setOwns }) {
     }
 
     // ---- 5. skills, hourly ----------------------------------------------------
-    if (Date.now() - lastSkills > POLICY.skillEveryS * 1000 && stamina !== null) {
+    // bbplan.skillEveryOf: the bootstrap's cadence before the first black op and its rank (reads.done, rank), then POLICY.skillEveryS
+    if (Date.now() - lastSkills > skillEveryOf(POLICY, Number.isFinite(reads.done) ? reads.done : Infinity, rank ?? Infinity) * 1000 && stamina !== null) {
       const r = await act(ACTOR.skill, { person, reads, stamina, maxStamina, rank, bnRank, costMult })
       if (r.ok) {
         levels = r.out.levels

@@ -446,10 +446,14 @@ export function runBladeburner(o) {
     // o.setup (a run from a LIVE state, tools/sim/bb14.mjs): the caller sets the
     // player's exp and multipliers, joins, and writes the division's state and the
     // fleet onto the game's objects; no join gym, no default fleet.
+    // o.preJoinDuty (0..1, default 1): the share of the opening the work slot spends at the gym (the
+    // rest on crime for the gym's fees, as the live openings do: history.jsonl currentWork) — the
+    // start state's join time, set from the node's measured combat-100 time (tools/sim/bbboot.mjs).
+    const preDuty = Math.min(1, Math.max(1e-3, o.preJoinDuty ?? 1))
     while (!o.setup && COMBAT.some((s) => P.skills[s] < 100) && t < 48 * 3600) {
       goStep(t)
       stanekStep(t)
-      gymStep(P, 60)
+      gymStep(P, 60 * preDuty)
       t += 60
     }
     const joinH = t / 3600
@@ -549,7 +553,7 @@ export function runBladeburner(o) {
       // pol.teamOps false: the team on black ops only (operations at 0, no casualties there).
       for (const a of Object.values(bb.operations)) a.teamCount = pol.teamOps === false ? 0 : bb.teamSize
       for (const a of bb.blackOperationArray) a.teamCount = bb.teamSize
-      if (t - lastSkillT >= (pol.skillEveryS ?? sharedPol.skillEveryS ?? 600)) {
+      if (t - lastSkillT >= (pol.skillEveryS ?? bp.skillEveryOf(sharedPol, bb.numBlackOpsComplete, bb.rank) ?? 600)) {
         const plan = (pol.planSkills ?? bp.planSkills)(viewOf(), bb.skillPoints, sharedPol, g.currentNodeMults.BladeburnerSkillCost, sharedPol.skillChunks ?? 20, { t, bb, P })
         for (const b of plan) bb.upgradeSkill(b.name, b.count)
         lastSkillT = t
@@ -686,6 +690,8 @@ export function runBladeburner(o) {
         }
       }
     }
+    const hashBuys = Array.isArray(o.hashBuys) ? [...o.hashBuys].sort((a, b) => a.tH - b.tH) : []
+    let hashI = 0
     decide()
     while (t < maxS && bb.numBlackOpsComplete < bb.blackOperationArray.length) {
       if (t >= nextInstall) {
@@ -726,9 +732,20 @@ export function runBladeburner(o) {
         }
       } else if (!gymming && (restGym || simOn)) {
         // resting at the gym, or the Simulacrum's class beside the action: the lowest listed stat below
-        // the bar first (an install's retrain), then the lowest listed stat
+        // the bar first (an install's retrain), then the lowest listed stat. pol.gymDuty (0..1, default
+        // 1): the share of the time the class holds the body slot beside the actions — the slot lent to
+        // other work (faction work, crime), as live BN13.3 did in its first hours (history.jsonl currentWork).
         const s = lowestOf(P, COMBAT, gymTarget()) ?? lowestOf(P, trainStats)
-        if (s) gymStep(P, STEP, s)
+        const duty = restGym ? 1 : Math.min(1, Math.max(0, pol.gymDuty ?? 1))
+        if (s && duty > 0) gymStep(P, STEP * duty, s)
+      }
+      // o.hashBuys ([{tH, kind: 'rank'|'sp'}], node hours): the hacknet's exchanges, replayed —
+      // HacknetHelpers.tsx:539-555: changeRank(Player, 100) per rank level (no node multiplier;
+      // skill points follow maxRank), +10 skill points per SP level (hashspend.js decides them live)
+      while (hashI < hashBuys.length && t >= hashBuys[hashI].tH * 3600) {
+        if (hashBuys[hashI].kind === 'rank') bb.changeRank(P, 100)
+        else if (hashBuys[hashI].kind === 'sp') bb.skillPoints += 10
+        hashI++
       }
       if (o.perTick) o.perTick({ t, P, bb, g })
       goStep(t)

@@ -56,7 +56,7 @@ import { liteAliveOf } from 'bbliteplan.js'
 import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
-import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, envOf, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, unreadPopOf, anchorAfter, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf, divisionCarryOf } from 'bbplan.js'
+import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, envOf, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, unreadPopOf, anchorAfter, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf, divisionCarryOf, skillEveryOf } from 'bbplan.js'
 
 const STATUS = '/tel/bladeburner.txt'
 /** bb-lite.js's heartbeat: while it is alive this daemon does not act (the handover, bbliteplan.liteAliveOf). */
@@ -431,9 +431,12 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
 
     // ---- 3. skills: no slot needed ----------------------------------------
     let sp = bb.getSkillPoints()
-    // On the model's cadence (POLICY.skillEveryS, chunks POLICY.skillChunks): the exit prices this policy,
-    // on this clock (skillsAt: the model's hourly spends fall where these do).
-    if (sp >= 1 && Date.now() - lastSkills > POLICY.skillEveryS * 1000) {
+    // On the model's cadence (bbplan.skillEveryOf: POLICY.bootSkillEveryS while booting — before the
+    // first black op and its rank — then POLICY.skillEveryS; chunks POLICY.skillChunks): the exit prices this policy, on this clock
+    // (skillsAt: the model's spends fall where these do).
+    const nextBo = sp >= 1 ? bb.getNextBlackOp() : null
+    const boDone = nextBo ? (dataOf(nextBo.name)?.n ?? Infinity) : sp >= 1 ? BLACK_OPS.length : Infinity
+    if (sp >= 1 && Date.now() - lastSkills > skillEveryOf(POLICY, boDone, rank) * 1000) {
       const v = readEnv()
       for (const b of planSkills(v, sp, POLICY, costMult, POLICY.skillChunks)) {
         const before = bb.getSkillLevel(b.name)

@@ -51,7 +51,7 @@ const now = Date.parse(fx.at)
 const retrainSecsOf = BP.retrainSecsOfFor({ node: nm, trainingMult: br.start.trainingMult ?? 1, flatPerSec: fx.inputs.flatIncomePerSec, holdS: BB.POLICY.retrainLegS, start: { cash: fx.inputs.money ?? P.money, city: P.city }, install: { cash: 1000, city: 'Sector-12' } })
 const committed = { kind: 'wait', waitH: Math.max(0, (fx.install.installAt - now) / 3.6e6), blade: fx.install.spec.blade }
 const startFor = (spec, goCombat) =>
-  BB.bladeStartOf({ tel: fx.tel, person, sleeves: br.sleeves, gymExpPerSec: br.start.gymExpPerSec, bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: BB.bladeInstallOfSpec(spec), simulacrum: false, rankScale: br.calibration.rank.applied, successScale: br.calibration.success.applied, rankSdLn: br.calibration.rank.sdLn, successSdLn: br.calibration.success.sdLn, leanUntilH: br.lean?.untilH ?? null, retrainSecsOf, goCombat, now })
+  BB.bladeStartOf({ tel: fx.tel, person, sleeves: br.sleeves, gymExpPerSec: br.start.gymExpPerSec, bnRank: nm.BladeburnerRank, skillCostMult: nm.BladeburnerSkillCost, install: BB.bladeInstallOfSpec(spec), simulacrum: false, rankScale: br.calibration.rank.applied, successScale: br.calibration.success.applied, rankSdLn: br.calibration.rank.sdLn, successSdLn: br.calibration.success.sdLn, leanUntilH: br.lean?.untilH ?? null, retrainSecsOf, goCombat, now, policy: BB.POLICY_V3 }) // the live pass priced the policy before the bootstrap phase (POLICY_V3)
 const meanOf = (spec, goCombat) => drain(BB.bladeExitMeanGen(startFor(spec, goCombat)))
 // go.js's record of 21:51Z (Daedalus) and the same record on Tetrads (21:45Z's arm): only the arm differs.
 const recOn = (opponent) => ({ ...fx.go, at: fx.at, opponent })

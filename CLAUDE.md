@@ -402,6 +402,18 @@ blade, accept. Test SG22. An UNPRICED decision (an arm unpriced, the route held)
 of training now and the final window's measured leg (BN10.1: 2.4h); a leg over 200h is ABSURD, never priced
 (live BN10.3 node start read 1.4e16h at the x0.4 level multipliers and left both arms unpriced). Test SG23, MC6.
 
+**The Bladeburner bootstrap is its own phase** (2026-10-24, `tools/sim/bbboot.mjs`): node start to the
+first black op was 37-45% of every clean node. While booting (`bbplan.bootingOf`: the first black op not
+done and rank below its 2.5k) the chooser and the skill objective use `bootMinP` 0.15 (Raid `bootRaidMinP`
+0.25: every Raid attempt costs population and chaos the EV score does not see) instead of minP 0.4
+(`phasePolicyOf`, resolved from the view, so bladeburner.js, bb-lite.js, the exit model and bbsim all play
+it) and skill points are spent every `bootSkillEveryS` 120s (`skillEveryOf`). bbsim, fresh paired seeds:
+exit -0.37h BN5.2, -0.73h BN2.2, +0.06 +- 0.24h BN13.3 (first black op -0.5..-0.9h). The exit model prices
+it with Raid at minP (its low-chance Raid dynamics are uncalibrated: +21h vs bbsim's -1.2h in BN13 without
+the gift). `bbboot.mjs --calib` checks bbsim's opening against history.jsonl (start state = the node's
+measured gym share; charger = live H 400); it runs SLOW in BN13 after ~2.5h (rank -23% at 5h). Tests
+BBOOT1-5.
+
 **Early-game Singularity: act.js.** progress.js refuses to run until home spares
 its whole acting block (1,305GB at SF4.1). `act.js` (~6GB, anywhere) decides with
 `actplan.js` and runs ONE single-call actor at a time — `act-join/work/crime/gym/

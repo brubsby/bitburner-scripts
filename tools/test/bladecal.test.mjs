@@ -137,7 +137,8 @@ export async function run() {
     const c = new Check('BC4', "STAMINA IS A STATE: the start is banked or owed rest at the chamber's rate, not a full bar")
     checks.push(c)
     const t = TRUE(TEL)
-    const s = (st) => BB.bladeExit({ ...BB.bladeStartOf({ tel: { ...t, stamina: st }, person: F.player, sleeves: SL5, gymExpPerSec: 30, bnRank: 1 }), maxH: 0.5, pathEveryS: 300 })
+    // the policy before the bootstrap phase (POLICY_V3): the fixture's 13:22Z state is below the first black op's rank
+    const s = (st) => BB.bladeExit({ ...BB.bladeStartOf({ tel: { ...t, stamina: st }, person: F.player, sleeves: SL5, gymExpPerSec: 30, bnRank: 1, policy: BB.POLICY_V3 }), maxH: 0.5, pathEveryS: 300 })
     const low = s(0.55 * TEL.maxStamina)
     const high = s(0.95 * TEL.maxStamina)
     const v0 = BB.staminaGainOf(F.player, BB.skillMultsOf(TEL.levels), TEL.maxStamina)

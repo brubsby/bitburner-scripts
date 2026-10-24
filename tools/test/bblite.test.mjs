@@ -148,9 +148,11 @@ export async function run() {
     if (!(bb?.rank > 25)) c.fail(`rank only ${bb?.rank} after 6 game hours`)
     if (bb?.rank >= 25 && !g.Factions['Bladeburners'].isMember) c.fail('rank >= 25 and not in the Bladeburners faction')
     if (!(skillLv > 0)) c.fail('no skill bought in 6 game hours')
-    // The skill clock is the model's: spends at least POLICY.skillEveryS apart.
+    // The skill clock is the model's: spends at least bbplan.skillEveryOf apart — POLICY.bootSkillEveryS
+    // before the first black op (the bootstrap), POLICY.skillEveryS after.
     const spendHours = [...new Set(skillCalls.map((x) => x.t))].sort((x, y) => x - y)
-    for (let i = 1; i < spendHours.length; i++) if (spendHours[i] - spendHours[i - 1] < bp.POLICY.skillEveryS - 120) c.fail(`skills spent ${spendHours[i] - spendHours[i - 1]}s apart (the model's clock is ${bp.POLICY.skillEveryS}s)`)
+    const clock = Math.min(bp.skillEveryOf(bp.POLICY, 0, 0), bp.POLICY.skillEveryS) // the boot's clock below the first black op's rank
+    for (let i = 1; i < spendHours.length; i++) if (spendHours[i] - spendHours[i - 1] < clock - Math.min(120, clock / 5)) c.fail(`skills spent ${spendHours[i] - spendHours[i - 1]}s apart (the model's clock is ${clock}s)`)
     if (s?.health === 'error' || rec?.health === 'error') c.fail(`health error: ${s?.detail}`)
     if (rec?.daemon !== 'bb-lite' || rec?.joined !== true || !(rec?.rank > 0) || !rec?.counts || !rec?.maxLevels) c.fail('bladeburner.txt must carry the lean record the plan reads (joined, rank, counts, maxLevels)', JSON.stringify(rec).slice(0, 300))
     // The plan's start builder reads it.

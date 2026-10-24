@@ -616,6 +616,26 @@ export const POLICY = {
   // policy the daemon runs (the greedy's path depends on it).
   skillEveryS: 600,
   skillChunks: 1,
+  // THE BOOTSTRAP (node start -> the first black op, 37-45% of every clean Bladeburner node): while
+  // booting (bootingOf: fewer than bootBlackOps black ops done AND rank below that op's reqdRank) the
+  // candidate bar is bootMinP, Raid's bootRaidMinP (phasePolicyOf: the chooser AND the skill
+  // objective), and skill points are spent every bootSkillEveryS (skillEveryOf). At low stats the best
+  // EV/s actions sit below minP 0.4 for hours while their EV — failure loss and stamina included —
+  // already beats the contracts that clear it; and the first points compound. Raid gets its own,
+  // higher bar: every attempt cuts the city's population and raises its chaos, success or not
+  // (Bladeburner.ts:831-845), a cost the EV/s score does not see — at bootMinP the low-chance Raids
+  // cost BN13 without the gift +2.6 +- 0.9h.
+  // tools/sim/bbboot.mjs --levers (bbsim, the game's classes; calibrated start: --calib), 8 sleeves
+  // i4s4, gift on, chosen on seeds 1-48 / 401-432, evaluated on fresh 501-540 (d = with - without,
+  // exit hours): BN5.2 -0.37 +- 0.04 (1st black op -0.51), BN2.2 -0.73 +- 0.07 (-0.86), BN13.3
+  // +0.06 +- 0.24 (-0.61); without the gift BN5.2 -0.72 +- 0.08, BN13.3 -1.17 +- 0.64. Raid at 0.15
+  // too: -0.59 / -0.86 / -0.19 but +2.59 +- 0.89 in BN13 without the gift; Raid at minP -0.09 / -0.37.
+  // The cadence alone -0.04 / -0.01h; with the bars it adds -0.19 / -0.14h.
+  // NOT CALIBRATED as a ratio (no live node has played it); the base model's error is --calib's.
+  bootMinP: 0.15,
+  bootRaidMinP: 0.25,
+  bootSkillEveryS: 120,
+  bootBlackOps: 1,
   // Skills the planner may buy. Hands of Midas (money), Datamancer (estimate
   // accuracy only) and Hyperdrive (exp) do not enter the rank objective.
   skills: ["Blade's Intuition", 'Digital Observer', 'Short-Circuit', 'Cloak', 'Reaper', 'Evasive System', 'Overclock', 'Tracer', "Cyber's Edge"],
@@ -626,13 +646,18 @@ export const POLICY = {
  * BN14.1 to ~14:30Z): the replays and calibrations of those runs price it
  * (bladeStartOf policy), since the exit model must price the policy that ran.
  */
-export const POLICY_V1 = { skillBlackFrom: 'eligible', skillObjective: 'sum', skillEveryS: 3600, skillChunks: 8, blackRule: 'threshold', raidChaos: 45 }
+export const POLICY_V1 = { skillBlackFrom: 'eligible', skillObjective: 'sum', skillEveryS: 3600, skillChunks: 8, blackRule: 'threshold', raidChaos: 45, bootMinP: null, bootSkillEveryS: null }
 /**
  * THE POLICY THE DAEMON PLAYED 2026-10-04 ~14:30Z to 2026-10-05 ~01:00Z (BN14.1):
  * the re-tuned skill policy (POLICY) with the fixed black-op bar (blackThr
  * 0.8) and Raid guarded at chaos 45. A replay of a capture from that window prices it.
  */
-export const POLICY_V2 = { blackRule: 'threshold', raidChaos: 45 }
+export const POLICY_V2 = { blackRule: 'threshold', raidChaos: 45, bootMinP: null, bootSkillEveryS: null }
+/**
+ * THE POLICY EVERY LIVE RUN PLAYED BEFORE 2026-10-24 (to BN13.3): POLICY without the bootstrap phase
+ * (bootMinP / bootSkillEveryS). A replay of a capture from before then prices it (bladeStartOf policy).
+ */
+export const POLICY_V3 = { bootMinP: null, bootSkillEveryS: null }
 
 /**
  * The view every policy call reads. Built by bladeburner.js from the API, by
@@ -680,7 +705,9 @@ export function bestLevel(a, v, pol = POLICY, f = 1) {
   const core = coreCmOf(v, d)
   const top = a.maxLevel ?? 1
   // p(L) >= minP  <=>  difficulty(L) <= K*core/minP  — a closed form for the highest level.
-  const cap = (K * core) / pol.minP
+  // (pol.raidMinP: Raid's own bar, set by the bootstrap phase — phasePolicyOf)
+  const minP = d.name === 'Raid' && Number.isFinite(pol.raidMinP) ? pol.raidMinP : pol.minP
+  const cap = (K * core) / minP
   const hi = d.baseDifficulty > cap ? 0 : Math.min(top, 1 + Math.floor(Math.log(cap / d.baseDifficulty) / Math.log(d.difficultyFac) + 1e-9))
   if (hi < 1) return null
   // pol.pinTop: the action runs at its max level and no other — the game's
@@ -836,7 +863,37 @@ export function blackOpWorth(v, pol, R, p) {
 }
 
 /** Which action next. Returns { type, name, level?, city?, why, ev, p, blackOp? }. */
+/**
+ * THE BOOTSTRAP PHASE: while fewer than `bootBlackOps` black ops are done AND rank is below the
+ * bootBlackOps-th op's reqdRank, the candidate bar is `bootMinP` instead of minP (POLICY note). It
+ * ends on RANK as well as on the op: the priced black-op rule may hold a rank-gated op for hours (the
+ * burst), and a boot that waited for the op kept its low bars through all of it (bbsim, BN13
+ * without the gift: a 20h boot; the exit model 54h -> 84h). Resolved from the view
+ * (v.blackOp.d.n = the next op's index, v.rank), so every caller of chooseAction / skillScore —
+ * bladeburner.js, bb-lite.js, the exit model, bbsim — plays and prices the same phase. A policy
+ * without bootMinP is returned unchanged.
+ */
+export const bootingOf = (pol, blackOpsDone, rank) => {
+  const k = pol.bootBlackOps ?? 1
+  return Number.isInteger(blackOpsDone) && blackOpsDone < k && !(rank >= (BLACK_OPS[k - 1]?.reqdRank ?? 0))
+}
+const BOOT_POLS = new WeakMap()
+export function phasePolicyOf(v, pol = POLICY) {
+  if (!Number.isFinite(pol.bootMinP) || pol.booting) return pol
+  if (!bootingOf(pol, v?.blackOp?.d?.n, v?.rank)) return pol
+  let b = BOOT_POLS.get(pol)
+  // Raid's own bar while booting (bootRaidMinP; absent: bootMinP): every Raid attempt cuts the city's
+  // population 0.5-1% and multiplies its chaos 1.01-1.05 success or not (Bladeburner.ts:831-845), a
+  // cost to every later action the EV/s score does not see — at a low chance most attempts are that.
+  if (!b) BOOT_POLS.set(pol, (b = { ...pol, minP: pol.bootMinP, ...(Number.isFinite(pol.bootRaidMinP) ? { raidMinP: pol.bootRaidMinP } : {}), booting: true }))
+  return b
+}
+
+/** The skill cadence in force: bootSkillEveryS while booting (bootingOf: the black ops done, the rank), else skillEveryS. */
+export const skillEveryOf = (pol = POLICY, blackOpsDone = Infinity, rank = Infinity) => (Number.isFinite(pol.bootSkillEveryS) && bootingOf(pol, blackOpsDone, rank) ? pol.bootSkillEveryS : pol.skillEveryS)
+
 export function chooseAction(v, pol = POLICY) {
+  pol = phasePolicyOf(v, pol)
   const held = {}
   const pick = chooseActionOf(v, pol, held)
   // A rank-eligible black op the priced rule holds: its verdict rides on the pick (bladeburner.js publishes it).
@@ -899,6 +956,7 @@ export function bestCity(cities) {
  */
 export const blackFromRankOf = (pol = POLICY) => (pol.skillBlackFrom === 'daedalus' ? BLACK_OPS[BLACK_OPS.length - 1].reqdRank : Number.isFinite(pol.skillBlackFrom) ? pol.skillBlackFrom : 0)
 export function skillScore(v, pol = POLICY) {
+  if (pol.bootSkills !== false) pol = phasePolicyOf(v, pol)
   const bo = v.blackOp
   if (bo && v.rank >= bo.d.reqdRank) {
     const p = pFrom(bo.K, bo.d, 1, v.person, v.sm)
@@ -1341,6 +1399,15 @@ export function bladeExit(s0, pol = POLICY) {
 export function* bladeExitGen(s0, pol = POLICY) {
   // s0.policy: the policy as the daemon RAN it (bladeStartOf policy) — a replay of an older run prices its own policy.
   if (s0.policy) pol = { ...pol, ...s0.policy }
+  // THE BOOTSTRAP'S RAIDS, A DELIBERATE MODEL TRADE: this model's city dynamics under many low-chance
+  // Raids (population 0.5-1% and chaos x1.03 per failed attempt, in expectation) are not calibrated
+  // against the game — no node to 2026-10-24 raided below minP. Played at bootRaidMinP it prices the
+  // shipped bootstrap at -1.89h in BN5.2 without the gift where bbsim (the game's classes, 40 paired
+  // seeds) measures -0.72 +- 0.08h, and +21h in BN13 without the gift where bbsim measures
+  // -1.17 +- 0.64h. Played with Raid at minP it gives -0.69h and +0.12h: the daemon's other boot terms,
+  // with no Raid credit (tools/sim/bbboot.mjs; test BBOOT5). So the model prices the boot without its
+  // Raid bar: conservative where the daemon's Raids pay, never the BN13 sign error.
+  if (Number.isFinite(pol.bootRaidMinP) && pol.bootRaidMinP < pol.minP) pol = { ...pol, bootRaidMinP: pol.minP }
   const dt = s0.dt ?? 300
   const maxS = (s0.maxH ?? 400) * 3600
   const person = { skills: { ...s0.person.skills }, exp: { ...s0.person.exp }, mults: { ...s0.person.mults } }
@@ -1934,7 +2001,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
       t += h
       continue
     }
-    if (t - lastSkill >= (s0.skillEveryS ?? pol.skillEveryS ?? 3600) && st.sp >= 1) {
+    if (t - lastSkill >= (s0.skillEveryS ?? skillEveryOf(pol, st.bo, st.rank) ?? 3600) && st.sp >= 1) {
       for (const b of yield* planSkillsGen(viewOf(), st.sp, polNow(), costMult, s0.skillChunks ?? pol.skillChunks ?? 8)) {
         st.levels[b.name] = (st.levels[b.name] ?? 0) + b.count
         st.sp -= b.cost
