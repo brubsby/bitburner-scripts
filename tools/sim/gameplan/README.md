@@ -86,6 +86,8 @@ section below), committed in every draw; `--route-rule point` restores the `min`
   the live augplan prices by the exit), sleeves and the IPvGO farm (NOT PRICED), factions past the hacking /
   city / gang ones (megacorps, Syndicate, Illuminati: a floor on what a life buys).
 - **corp (BN3)**: placeholder, returns null — NOT CALIBRATED.
+  Corporations everywhere (SF3.3, 2026-10-24): `tools/sim/corpcheck.mjs` prices 0h in every owed node — disabled in BN8
+  (CorporationSoftcap 0), and on the Bladeburner route money (grafts) saturates below the corp's own $150b price.
 
 ### The IPvGO model (go.mjs) — what is measured, from source, assumed
 
