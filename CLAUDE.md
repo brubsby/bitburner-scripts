@@ -809,8 +809,10 @@ components, and nobody was running it anyway. Two rules follow:
   - EXIT UNPRICED
   - EXIT NOT APPROACHING (the projected exit must fall by at least half the
     wall time that passed)
-  - NO INSTALL (after 3× the plan's own window)
-  - PLANNER IDLE
+  - NO INSTALL (after 3× the plan's own window; a note when no install is planned:
+    The Red Pill installed, the committed install 'never', the gate holding)
+  - PLANNER IDLE (windowed: the newest stored sample >= 30 min old, so a 15-min
+    runner sees it; histories reset at the node's entry, `lastNodeReset`)
   - income null while the trader publishes a return
   - PLAYER IDLE
 

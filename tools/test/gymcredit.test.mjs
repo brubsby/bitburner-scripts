@@ -157,7 +157,7 @@ export async function run() {
     const pj = SRC('progress.js')
     const aj = SRC('act.js')
     c4.examined(5)
-    if (!/const bodyStep = \(\(\) => \{\s*const st = bodyStepRaw\s*if \(!st \|\| st\.kind !== 'gym' \|\| st\.priced\) return st[\s\S]{0,400}combatBarPlanOf\(/.test(pj)) c4.fail('progress.js must price every unpriced gym leg with combatBarPlanOf')
+    if (!/const bodyStep = \(\(\) => \{\s*const st = bodyStepRaw\s*if \(!st \|\| st\.kind !== 'gym' \|\| st\.priced(?: \|\| st\.lendPriced)?\) return st[\s\S]{0,400}combatBarPlanOf\(/.test(pj)) c4.fail('progress.js must price every unpriced gym leg with combatBarPlanOf')
     if (!/if \(!bodyStep\.priced && !already && !feeFundable\(/.test(pj)) c4.fail('the 120s fee floor must gate only an unpriced gym leg')
     if (!/credit: slotOwner === 'body' \? bodyCredit : null/.test(pj)) c4.fail('progress.txt slot.credit must carry the priced debt')
     if (!/credit: bodyCreditOf\(readJson\(ns, '\/tel\/progress\.txt'\), info\.lastAugReset, now\)/.test(aj) || !/trend: raiseState\.softTrend/.test(aj)) c4.fail('act.js must give the escape the credit and the trend')

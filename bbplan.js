@@ -1596,6 +1596,23 @@ export function* bladeExitGen(s0, pol = POLICY) {
     person.exp[low] = (person.exp[low] ?? 0) + gymRate * ((person.mults[`${low}_exp`] ?? 1) / startExpMult) * secs
     relevel()
   }
+  // THE SLOT LENT (s0.slotLend {expPerSec}, bladeLendGen): with the Simulacrum the work slot beside
+  // the actions does the lent work (a crime) instead of the class — its exp per stat at the start's
+  // multipliers, rescaled as they move (installs, grafts, the Go farm), as the class is.
+  const lend = s0.slotLend && s0.slotLend.expPerSec ? s0.slotLend : null
+  const lendM0 = { ...person.mults }
+  // frac (0..1, default 1): the part of the slot's time lent; the class holds the rest.
+  const lendFrac = lend ? (Number.isFinite(lend.frac) ? Math.min(1, Math.max(0, lend.frac)) : 1) : 0
+  const slotParallel = (secs) => {
+    if (lendFrac < 1) gymParallel(secs * (1 - lendFrac))
+    if (!(lendFrac > 0)) return
+    for (const c of ['strength', 'defense', 'dexterity', 'agility']) {
+      const r = lend.expPerSec[c]
+      const m0 = lendM0[`${c}_exp`] ?? 1
+      if (r > 0) person.exp[c] = (person.exp[c] ?? 0) + r * ((person.mults[`${c}_exp`] ?? 1) / (m0 > 0 ? m0 : 1)) * secs * lendFrac
+    }
+    relevel()
+  }
   let retrainIdleS = 0 // a retrain at the start: the division's world goes on meanwhile (applied below, once its helpers exist)
   if (!s0.joined) {
     const h = gymTo(JOIN_COMBAT, 'start')
@@ -2034,7 +2051,7 @@ export function* bladeExitGen(s0, pol = POLICY) {
       st.bo++
       continue
     }
-    if (simOn && !gRun) gymParallel(dt) // a graft holds the work slot: no class beside the actions
+    if (simOn && !gRun) slotParallel(dt) // a graft holds the work slot: no class beside the actions
     let left = dt
     for (let k = 0; k < 3 && left > 1e-9; k++) {
       const c = k === 0 ? pick : chooseAction(viewOf(), polNow())
@@ -3003,5 +3020,72 @@ export function* bladeGraftsGen({ s0, candidates = [], wealth = 0, moneyPerH = 0
     entropyFactor: +Math.pow(ENTROPY_EFFECT, (congruity ? 0 : entropy) + nStack).toFixed(5),
     sim,
     why: `graft ${sched.map((g) => g.name).join(', ')} ($${(spent / 1e9).toFixed(2)}b, ${sched.reduce((a, g) => a + (g.slotH ?? 0), 0).toFixed(2)}h of work slot): the exit ${curH.toFixed(2)}h against ${withoutH.toFixed(2)}h without (${gainH.toFixed(2)}h sooner; entropy x${Math.pow(ENTROPY_EFFECT, nStack).toFixed(3)} on every multiplier costs ${noEntH === null ? '?' : (curH - noEntH).toFixed(2)}h of it)`,
+  }
+}
+
+/**
+ * THE WORK SLOT LENT AFTER THE JOIN (backlog 0e). With The Blade's Simulacrum the action runs beside
+ * the work slot (Bladeburner.ts:179, :1355), so what a lend DISPLACES is the slot's own use there: the
+ * class beside the actions (bladeExitGen gymParallel; a running or due graft holds the slot in both
+ * arms and goes first in progress.js). Two trajectories on one start, differing only in the slot:
+ *   without  the class, its fee ($/s, ClassWork.tsx:57-72) out of the money the graft schedule spends;
+ *   with     the money crime for `frac` of the time (its exp per stat, bodyplan.crimeRates, and its
+ *            money into the graft schedule's money), the class for the rest.
+ * The decision is withH - withoutH on the Q members (paired); it lends only when that is at most
+ * -minGainH. Without the Simulacrum the slot IS the action: a lend stops it, never priced as free.
+ * NOT SIMULATED, named: faction work as the lent work (its reputation buys augmentations only at an
+ * install, priced by bladeInstallCompareOf, not here) — never lent to on this basis; the crime's money
+ * where no graft schedule spends it (the exit has no other money use): that arm prices the exp alone.
+ * bbsim (tools/sim/bbboot.mjs) measured a 29% lend +0.19h BN5.2, +0.63h BN13.3 (-0.03h BN2.2).
+ */
+export const BLADE_LEND = { minGainH: 0.02, everyMs: 30 * 60e3 }
+/** The lend's rule on the paired members' differences `ds` (lent - class, h): lend when the mean
+ * difference `deltaH` is at most -minGainH AND below zero by two standard errors of `ds`; one
+ * member (no spread to measure) on the gain alone. {lend, seH}. */
+export function bladeLendRuleOf(deltaH, ds, minGainH = BLADE_LEND.minGainH) {
+  const n = Array.isArray(ds) ? ds.length : 0
+  const m = n ? ds.reduce((a, d) => a + d, 0) / n : 0
+  const seH = n > 1 ? Math.sqrt(ds.reduce((a, d) => a + (d - m) ** 2, 0) / (n - 1) / n) : null
+  const lend = Number.isFinite(deltaH) && n > 0 && deltaH <= -minGainH && (seH === null || deltaH + 2 * seH < 0)
+  return { lend, seH }
+}
+export function bladeLend(o) {
+  return drain(bladeLendGen(o))
+}
+export function* bladeLendGen({ s0, crime = null, gymFeePerSec = 0, frac = 1, Q = BLADE_ENSEMBLE.Q, minGainH = BLADE_LEND.minGainH } = {}) {
+  const r3 = (x) => (Number.isFinite(x) ? +x.toFixed(3) : null)
+  const none = { lend: false, withH: null, withoutH: null, deltaH: null }
+  if (!s0) return { ...none, why: 'no Bladeburner start: unpriced, not lent' }
+  if (s0.simulacrum !== true) return { ...none, why: "without The Blade's Simulacrum the work slot IS the action (Bladeburner.ts:1355): a lend stops it — not lent" }
+  if (!crime || !crime.expPerSec || !(crime.moneyPerSec >= 0)) return { ...none, why: 'no money crime prices at these stats: nothing to lend the slot to' }
+  const sh = Number.isFinite(frac) ? Math.min(1, Math.max(0, frac)) : 1
+  const fee = Number.isFinite(gymFeePerSec) && gymFeePerSec > 0 ? gymFeePerSec : 0
+  const gr = s0.grafts && Array.isArray(s0.grafts.schedule) && s0.grafts.schedule.length ? s0.grafts : null
+  const R = gr && Number.isFinite(gr.moneyPerH) && gr.moneyPerH > 0 ? gr.moneyPerH : 0
+  const money = (perH) => (gr ? { grafts: { ...gr, moneyPerH: Math.max(0, perH) } } : {})
+  const gymS0 = { ...s0, ...money(R - fee * 3600) }
+  const lendS0 = { ...s0, ...money(R + sh * crime.moneyPerSec * 3600 - (1 - sh) * fee * 3600), slotLend: { crime: crime.name ?? null, expPerSec: crime.expPerSec, frac: sh } }
+  const w0 = yield* bladeExitMeanGen(gymS0, { Q })
+  const w1 = yield* bladeExitMeanGen(lendS0, { Q })
+  const withoutH = Number.isFinite(w0?.hours) ? w0.hours : null
+  const withH = Number.isFinite(w1?.hours) ? w1.hours : null
+  if (withoutH === null || withH === null) return { ...none, crime: crime.name ?? null, frac: sh, withH: r3(withH), withoutH: r3(withoutH), why: `the exit ${withoutH === null ? 'with the class' : `lent to ${crime.name}`} is unpriced: not lent` }
+  const deltaH = withH - withoutH
+  // PAIRED: member m of each arm shares its draw, so the per-member differences carry the noise
+  // (the model's skill-spend timing moves an exit by ~0.1h either way); lend only where the gain
+  // clears minGainH AND two standard errors of those differences (as stanekepoch.epochChoiceOf).
+  const ds = (w0.members ?? []).map((h, i) => (Number.isFinite(h) && Number.isFinite(w1.members?.[i]) ? w1.members[i] - h : null)).filter((d) => d !== null)
+  const { lend, seH } = bladeLendRuleOf(deltaH, ds, minGainH)
+  const moneyNote = gr ? `its $${Math.round(crime.moneyPerSec)}/s into the graft schedule, the class's fee $${Math.round(fee)}/s out of it` : 'no graft schedule spends money on this exit: the exp alone'
+  return {
+    lend,
+    crime: crime.name ?? null,
+    frac: sh,
+    withH: r3(withH),
+    withoutH: r3(withoutH),
+    deltaH: r3(deltaH),
+    seH: r3(seH),
+    grafts: !!gr,
+    why: `the slot lent to ${crime.name ?? 'the crime'} ${Math.round(sh * 100)}% of the time: the black-op exit ${withH.toFixed(2)}h against ${withoutH.toFixed(2)}h with the class beside the actions (${deltaH >= 0 ? '+' : ''}${deltaH.toFixed(2)}h${seH === null ? '' : ` +- ${seH.toFixed(2)}`} over ${ds.length} paired member(s); ${moneyNote}) — ${lend ? 'lent' : 'the class keeps the slot'}`,
   }
 }

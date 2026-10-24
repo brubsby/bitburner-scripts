@@ -38,7 +38,7 @@ import { autoPushVerdict } from "./pushwatch.mjs";
 import { bladeburnerHealth, installLoopOf } from "./bbhealth.mjs";
 import { raisedHealth } from "./raisehealth.mjs";
 import { goNodeHealth, goVerdictOf } from "./gohealth.mjs";
-import { orderHeldVerdict, exitUnpricedVerdict, homeNextOf } from "./lifehealth.mjs";
+import { orderHeldVerdict, exitUnpricedVerdict, homeNextOf, exitHistOf, exitApproachVerdict, noInstallVerdict, plannerIdleVerdict, pushHist } from "./lifehealth.mjs";
 
 // Root modules import each other by bare name ('bayes.js'), as the game
 // resolves them; this hook resolves those under node (plan.js below).
@@ -278,6 +278,8 @@ const now = {
   // it to ~0, so a DROP is an install.
   lifeMs: num(state.playtimeSinceLastAug) ? state.playtimeSinceLastAug : null,
   bitNode: state.bitNode ?? null,
+  // the node's entry (BN3.1 and BN3.2 are both BitNode 3): the movement histories reset on it
+  nodeReset: num(state.lastNodeReset) ? state.lastNodeReset : null,
   gangFaction: tel["gang.txt"]?.faction ?? null,
   gangRespect: tel["gang.txt"]?.respect ?? null,
   gangMembers: tel["gang.txt"]?.members ?? null,
@@ -914,7 +916,7 @@ if (!sleevesExpected) {
   const bbRec = tel["bladeburner.txt"] ?? readTel("bladeburner.txt");
   const bbRunning = !!(bbRec?.running?.name && ageMin(bbRec?.at) !== null && ageMin(bbRec.at) < 5);
   now.working = !!(state.currentWork && (state.currentWork.type ?? state.currentWork.data?.type)) || bbRunning;
-  const sameNode = prev && prev.bitNode === now.bitNode;
+  const sameNode = prev && prev.bitNode === now.bitNode && (prev.nodeReset == null || now.nodeReset == null || prev.nodeReset === now.nodeReset);
   // Entries carry their node, so a node change can never leak an old node's
   // exit into the comparison (BN1's 0.1h vs BN9's 327.8h, 2026-09-28).
   //
@@ -929,10 +931,21 @@ if (!sleevesExpected) {
       return null;
     }
   })();
-  const nodeHist = (sameNode && Array.isArray(prev.etaHist) ? prev.etaHist : []).filter((h) => num(h.exitH) && h.node === now.bitNode);
-  const hist = nodeHist.filter((h) => (h.ver ?? null) === modelVer);
-  if (hist.length < nodeHist.length) note(`exit history restarted: the exit model changed (${modelVer ?? "untagged"}); ${nodeHist.length - hist.length} older sample(s) priced on another model are not compared`);
-  now.etaHist = [...hist, ...(now.exitH !== null ? [{ at: now.at, exitH: now.exitH, node: now.bitNode, ver: modelVer }] : [])].slice(-48);
+  // THE NODE'S ENTRY AND THE EXIT'S BASIS (lifehealth.exitHistOf): BN3.1 and BN3.2 are both
+  // BitNode 3, so the number alone compared BN3.1's last exit with BN3.2's first (2026-10-21);
+  // an install that moved the exit to another route's model (blade black ops / hack World
+  // Daemon) restarts it too.
+  const exitBasis = (() => {
+    try {
+      const p = readTel("plan.txt");
+      return p?.decisions?.bladeRoute?.key === "blade" || p?.decisions?.install?.route === "blade" ? "blade" : p ? "hack" : null;
+    } catch {
+      return null;
+    }
+  })();
+  const eh = exitHistOf({ prevHist: prev?.etaHist, now: { at: now.at, exitH: now.exitH, node: now.bitNode, nodeReset: now.nodeReset, life: num(state.lastAugReset) ? state.lastAugReset : null, ver: modelVer, basis: exitBasis } });
+  for (const d of eh.dropped) note(`exit history restarted: ${d} are not compared`);
+  now.etaHist = eh.hist;
 
   const inBootstrap = (() => { const t = now.homeRam !== null ? stackTierFromBoot(readTel("boot.txt"), now.homeRam) : null; return t !== null && now.homeRam < t; })();
   if (now.exitH === null && inBootstrap) note(`exit not priced yet: home ${now.homeRam}GB is below the stack tier, progress.js is not placed`);
@@ -946,11 +959,9 @@ if (!sleevesExpected) {
 
   // F1: the exit must approach. Over at least an hour of samples in this node,
   // the projected exit should fall by at least half the wall time that passed.
-  const oldest = now.etaHist.find((h) => (Date.parse(now.at) - Date.parse(h.at)) / 3.6e6 >= 1);
-  if (oldest && now.exitH !== null) {
-    const elapsedH = (Date.parse(now.at) - Date.parse(oldest.at)) / 3.6e6;
-    const gainedH = oldest.exitH - now.exitH;
-    if (gainedH < 0.5 * elapsedH) fail(`EXIT NOT APPROACHING: projected exit ${oldest.exitH.toFixed(1)}h -> ${now.exitH.toFixed(1)}h over ${elapsedH.toFixed(1)}h of wall time`, "the run is spending time without getting closer to the end — find which leg is stuck (progress.txt todo, installgate plan)");
+  {
+    const v = exitApproachVerdict({ hist: now.etaHist, now: { at: now.at, exitH: now.exitH } });
+    if (v.fail) fail(v.fail.what, v.fail.detail);
   }
   // F1b: the exit's money legs price income from the state (exitplan
   // incomeModelOf: level, home RAM bought on the way, later batches' money
@@ -984,8 +995,22 @@ if (!sleevesExpected) {
   // only resets the combat they are priced on, and the install decision (on
   // that exit, progress.js bladeInstallCompareOf) installs only a batch that pays.
   const pricedHold = gate?.countDecidedBy === "exit-sim" || gate?.countDecidedBy === "plan" || planInstall?.install === false || planDecisions?.bladeRoute?.key === "blade";
-  if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0 && pricedHold) note(`install held by the simulated exit (life ${lifeH.toFixed(1)}h): ${String(gate?.countTimingWhy ?? "").slice(0, 120)}`);
-  else if (lifeH !== null && num(windowH) && lifeH > 3 * windowH && now.queued === 0) fail(`NO INSTALL: this life is ${lifeH.toFixed(1)}h old, 3x the ${windowH.toFixed(1)}h window the plan assumes, and nothing is queued`, `installgate planned=${gate?.planned}, plan=${gate?.plan === null ? "null" : "set"} — capital that is never converted into augmentations is not progress`);
+  // THE FINAL WINDOW (lifehealth.noInstallVerdict): no install is planned — The Red Pill
+  // installed, the committed install 'never', the gate holding or saving for the Covenant
+  // sleeve — so the window prior is not a deadline (BN10.3 2026-10-19 0.7h into the final life).
+  {
+    const planRec = (() => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(TEL, "plan.txt"), "utf8"));
+      } catch {
+        return null;
+      }
+    })();
+    const augNames = Array.isArray(state.augmentations) ? state.augmentations.map((a) => (typeof a === "string" ? a : a?.name)) : [];
+    const v = noInstallVerdict({ lifeH, windowH, queued: now.queued, augs: augNames, plan: planRec, gate, lastAugReset: num(state.lastAugReset) ? state.lastAugReset : null, pricedHold, holdWhy: gate?.countTimingWhy ?? "" });
+    if (v.fail) fail(v.fail.what, v.fail.detail);
+    else if (v.note) note(v.note);
+  }
   // F2b: INSTALL LOOP — on the Bladeburner route every install resets combat
   // and retrains it, so a life the planner ends within an hour of its start is
   // a retrain bought and thrown away (live BN4.3 2026-10-03: installs 14:38Z
@@ -998,7 +1023,14 @@ if (!sleevesExpected) {
     if (loop.short.length) fail(`INSTALL LOOP: ${loop.why}`, "an install on the Bladeburner route resets the combat the black ops are priced on; installgate.bladeLoopGuardOf must hold it (installgate.txt bladeLoopGuard, plan.txt bladeInstallJumps)");
   }
   // F3: the planner must act, or change what it is waiting on.
-  if (prev && sameNode && dtMin >= 30 && now.didCount === 0 && prev.didCount === 0 && now.todo0 !== null && now.todo0 === prev.todo0) fail(`PLANNER IDLE: progress.js did nothing across ${dtMin.toFixed(0)} min, still waiting on: ${now.todo0.slice(0, 160)}`);
+  // Windowed (lifehealth.plannerIdleVerdict): against the newest stored sample 30+ min old, so it
+  // fires at a 15-min cadence (watch-run.sh 900, bitburner-notify.timer) — the last sample alone never was.
+  {
+    const ph = Array.isArray(prev?.plannerHist) ? prev.plannerHist : [];
+    const v = plannerIdleVerdict({ hist: ph, now: { node: now.bitNode, nodeReset: now.nodeReset, didCount: now.didCount, todo0: now.todo0 }, nowMs: Date.parse(now.at) });
+    if (v.fail) fail(v.fail.what, v.fail.detail);
+    now.plannerHist = pushHist(ph, { at: now.at, node: now.bitNode, nodeReset: now.nodeReset, didCount: now.didCount, todo0: now.todo0 }, Date.parse(now.at));
+  }
   // F4: a measured income the planner cannot see.
   if (prog && prog.income == null) {
     const st = readTel("stock.txt");

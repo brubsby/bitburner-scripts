@@ -166,7 +166,7 @@ import { goExitInputsOf, w0Eligible } from 'goplan.js'
 // Pure: the best money crime at current stats, for the work-slot comparison.
 import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRate, bestGym, retrainGymOf, combatBarPlanOf, hoursToStat, retrainSecsOfFor } from 'bodyplan.js'
 // Pure: the Bladeburner route's exit model and its start builder (bbplan.js header).
-import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, chooseSleeveConfigGen, sleeveConfigKey, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf, bladeGraftsGen, bladeGraftSpecOf, BLADE_GRAFT, BLADE_GRAFT_SPECIAL, CONGRUITY } from 'bbplan.js'
+import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, chooseSleeveConfigGen, sleeveConfigKey, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf, bladeGraftsGen, bladeGraftSpecOf, BLADE_GRAFT, BLADE_GRAFT_SPECIAL, CONGRUITY, bladeLendGen, BLADE_LEND } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen, routeFullAtOf, hackHomeArmOf, waitingResidentsOf, fleetForUnlockOf } from 'homeplan.js'
 import { leanUntilOf, FULL_TIER, LEAN_PLACE_H, bladeSlotStallOf, LITE_FILE, BB_FILE } from 'bbliteplan.js'
 // Pure (0GB): sleeve-lite.js's record — the live sleeve count before sleeve.js has run in this node.
@@ -3003,6 +3003,16 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
           hashExchange = { at: new Date().toISOString(), why: `the exchange pricing threw: ${String(e).slice(0, 160)}` }
         }
       }
+      // THE SLOT LENT AFTER THE JOIN (bbplan.bladeLendGen, backlog 0e): the money crime vs the class
+      // beside the actions, on this start with the graft schedule's money — lent only where it wins.
+      let lend = null
+      if (d?.key === 'blade' && tel?.joined === true) {
+        try {
+          lend = yield* bladeRouteLendGen({ info, pc, person, s0: startFor(bladeBasis), grafts, gym, wealth, moneyPerH: (moneyPerSec ?? 0) * 3600, owned, player, mults })
+        } catch (e) {
+          lend = { lend: false, at: new Date().toISOString(), lastAugReset: info.lastAugReset, error: true, why: `the lend pricing threw: ${String(e).slice(0, 160)}` }
+        }
+      }
       return {
         ...d,
         joined: tel?.joined === true,
@@ -3030,6 +3040,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         simulacrum,
         grafts,
         hashExchange,
+        lend,
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
       }
     })
@@ -3096,6 +3107,28 @@ function* bladeRouteGraftsGen({ info, pc, player, sing, s0, owned, queued = [], 
   const cands = raw.map((a) => bladeGraftSpecOf(a, int, { focus: true, neuroreceptor: installed.has('Neuroreceptor Management Implant') })).filter(Boolean)
   const v = yield* bladeGraftsGen({ s0, candidates: cands, wealth, moneyPerH, entropy, congruity: installed.has(CONGRUITY), owned: installed })
   return { ...base, ...v, key, candidates: cands.length, inFaction, entropyNow: entropy, wealth: Math.round(wealth), moneyPerH: Math.round(moneyPerH), model: 'bbplan.bladeGraftsGen on the route decision\'s start (paired members); NOT CALIBRATED live (no Bladeburner life has grafted); checked against the game\'s classes by tools/sim/bbgraft.mjs' }
+}
+/**
+ * THE SLOT LENT ON THE COMMITTED BLADEBURNER EXIT (bbplan.bladeLendGen, backlog 0e): the best money
+ * crime (bodyplan.bestCrimeFor at the levelled person) in the slot vs the Simulacrum's class (the
+ * retrain gym's fee), each the black-op exit from the route's start with the graft schedule still to
+ * graft spending the money. Re-priced every BLADE_LEND.everyMs, at once when the life, the installed
+ * set, the crime or the schedule changes. Published as decisions.bladeRoute.lend; bladeGymStep acts on it.
+ */
+function* bladeRouteLendGen({ info, pc, person, s0, grafts, gym, wealth = 0, moneyPerH = 0, owned, player, mults }) {
+  const base = { at: new Date().toISOString(), lastAugReset: info.lastAugReset }
+  const installed = owned instanceof Map ? new Set(owned.keys()) : owned instanceof Set ? owned : new Set(owned ?? [])
+  const money = bestCrimeFor('money', person, mults, { focus: 1 })
+  const sched = grafts?.graft === true && Array.isArray(grafts.schedule) ? grafts.schedule.filter((g) => g?.name && !installed.has(g.name) && Number.isFinite(g.slotH)) : []
+  const key = `${info.lastAugReset}|${installed.size}|${money?.crime ?? '-'}|${sched.map((g) => g.name).join(',')}|${s0?.simulacrum === true ? 1 : 0}`
+  const prev = pc.prevAny?.decisions?.bladeRoute?.lend ?? null
+  if (prev && !prev.error && prev.key === key && prev.lastAugReset === info.lastAugReset && Date.now() - Date.parse(prev.at ?? '') < BLADE_LEND.everyMs) return { ...prev, carried: true }
+  const entropy = Number.isFinite(player?.entropy) && player.entropy > 0 ? player.entropy : 0
+  const s = sched.length ? { ...s0, grafts: { schedule: sched.map((g) => ({ ...g, slotS: g.slotH * 3600 })), wealth, moneyPerH, entropy, congruity: installed.has(CONGRUITY) } } : s0
+  const fee = CLASS_BASE_FEE.gym * (gym?.costMult ?? Math.max(...GYMS.map((g) => g.costMult)))
+  const crime = money ? { name: money.crime, moneyPerSec: money.rates.money, expPerSec: money.rates.exp } : null
+  const v = yield* bladeLendGen({ s0: s, crime, gymFeePerSec: fee })
+  return { ...base, ...v, key, model: 'bbplan.bladeLendGen on the route decision\'s start (paired members); the lend\'s ratio NOT CALIBRATED live' }
 }
 /** The route held when an arm is unpriced: the committed (last acted) route of this node, else the one the accepted gift serves (stanekplan.giftStateOf basis), else null. */
 function routeHoldOf(info, pc) {
@@ -8126,7 +8159,8 @@ async function act(ns, canJoin, info, note) {
     // exit models price it (bbplan.bladeExitGen gymParallel; bbsim, whose SF7.3 cells the gameplan
     // prices — SF7.3 grants it at the join). Without this the slot idled while the plan credited
     // the exp. One leg per pass: the lowest stat, a step past where it is.
-    if (!Object.keys(short).length && installedCount?.has?.(SIMULACRUM)) {
+    const postBar = !Object.keys(short).length && installedCount?.has?.(SIMULACRUM)
+    if (postBar) {
       const low = ['strength', 'defense', 'dexterity', 'agility'].reduce((a, k) => ((player.skills?.[k] ?? 0) < (player.skills?.[a] ?? 0) ? k : a))
       short = { [low]: (player.skills?.[low] ?? 0) + 1 }
     }
@@ -8134,6 +8168,17 @@ async function act(ns, canJoin, info, note) {
     const person = levelledPerson(player, info)
     const legs = gymLegs(short, person, ns.hacknet.getTrainingMult())
     const leg = legs?.legs?.[0] ?? null
+    // THE LEND IS PRICED (backlog 0e, decisions.bladeRoute.lend: bbplan.bladeLendGen): past the bar the
+    // class beside the actions keeps the slot unless the black-op exit with the slot lent to the money
+    // crime is the shorter one — never the combat-bar plan's +1 leg, which priced the crime as free
+    // (bbsim: a 29% lend +0.19h BN5.2, +0.63h BN13.3). Unpriced, absent or another life's: the class.
+    // The fee floor still holds the gym (the body step's fallback crime is cash, not a lend).
+    if (postBar) {
+      const lv = bladeRoute?.lend ?? null
+      if (lv?.lend === true && lv.crime && lv.lastAugReset === info?.lastAugReset) return { kind: 'crime', type: lv.crime, hours: 0, forFaction: 'Bladeburners', fund: true, lend: true, why: lv.why }
+      if (!legs || !leg) return null
+      return { kind: 'gym', gym: legs.gym, city: legs.city, forFaction: 'Bladeburners', stat: leg.stat, to: leg.to, hours: leg.hours, plan: lv?.why ?? 'the lend is unpriced: the class keeps the slot', lendPriced: true }
+    }
     // THE FEE IS PRICED (bodyplan.combatBarPlanOf): gym only, crime only, or
     // the gym while cash pays a pass of its fee and the best money crime
     // otherwise — the fastest to the bar. Live 2026-10-02 17:42Z the gym leg
@@ -8196,7 +8241,7 @@ async function act(ns, canJoin, info, note) {
   // claimed slot sat idle.
   const bodyStep = (() => {
     const st = bodyStepRaw
-    if (!st || st.kind !== 'gym' || st.priced) return st
+    if (!st || st.kind !== 'gym' || st.priced || st.lendPriced) return st
     const plan = (() => {
       try {
         return combatBarPlanOf({ [st.stat]: st.to }, { ...levelledPerson(player, info), city: cityAfterOrders ?? player.city }, bitNodeMults(info), { cash: ledger.balance(), incomePerSec: econNow?.incomePerSec ?? 0, trainingMult: ns.hacknet.getTrainingMult(), holdS: BB_POLICY.retrainLegS })
@@ -8422,9 +8467,9 @@ async function act(ns, canJoin, info, note) {
           // commitCrime returns the crime's duration in ms and starts ONE
           // attempt; the game repeats it (CrimeWork.process loops) until the
           // work is replaced, so this is a start, not a per-attempt call.
-          const reason = bodyStep.fund ? `combat to the bar for ${bodyStep.forFaction}, the gym fee unpayable now: ${bodyStep.why}` : `${bodyStep.karmaShort ? 'karma' : 'kills'} short for ${scheduleTarget}`
+          const reason = bodyStep.lend ? `the Bladeburner slot lent (priced): ${bodyStep.why}` : bodyStep.fund ? `combat to the bar for ${bodyStep.forFaction}, the gym fee unpayable now: ${bodyStep.why}` : `${bodyStep.karmaShort ? 'karma' : 'kills'} short for ${scheduleTarget}`
           const ms = order('crime', [bodyStep.type], reason.slice(0, 300)) ? 1 : 0
-          if (ms > 0) did.push(bodyStep.fund ? `ordered ${bodyStep.type} for the ${bodyStep.forFaction} combat bar — ${bodyStep.why}` : `ordered ${bodyStep.type} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation — ${bodyStep.karmaShort ? 'karma' : 'kills'} short`)
+          if (ms > 0) did.push(bodyStep.lend ? `ordered ${bodyStep.type}: ${bodyStep.why}` : bodyStep.fund ? `ordered ${bodyStep.type} for the ${bodyStep.forFaction} combat bar — ${bodyStep.why}` : `ordered ${bodyStep.type} (~${bodyStep.hours.toFixed(2)}h) for the ${scheduleTarget} invitation — ${bodyStep.karmaShort ? 'karma' : 'kills'} short`)
           else todo.push(`commitCrime(${bodyStep.type}) did not start`)
         } catch (e) {
           todo.push(`crime step failed: ${String(e).slice(0, 80)}`)

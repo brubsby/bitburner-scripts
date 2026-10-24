@@ -115,10 +115,10 @@ export async function run() {
     const bp = SRC('bbplan.js')
     c.examined(2)
     // both exit models credit the class beside the action (bladeExitGen gymParallel when simOn; bbsim simOn)
-    if (!/if \(simOn\) gymParallel\(dt\)/.test(bp)) c.note('bladeExitGen no longer gyms beside the action: this check guards an actor for a credit that is gone')
+    if (!/if \(simOn && !gRun\) slotParallel\(dt\)/.test(bp)) c.note('bladeExitGen no longer gyms beside the action: this check guards an actor for a credit that is gone')
     const step = pr.slice(pr.indexOf('const bladeGymStep = (() => {'), pr.indexOf('const covenantStep = (() => {'))
     if (!step.length) c.fail('progress.js has no bladeGymStep')
-    else if (!/if \(!Object\.keys\(short\)\.length && installedCount\?\.has\?\.\(SIMULACRUM\)\) \{[\s\S]{0,300}short = \{ \[low\]:/.test(step)) c.fail("bladeGymStep idles the slot with the Simulacrum installed while both exit models credit the class beside the action")
+    else if (!/const postBar = !Object\.keys\(short\)\.length && installedCount\?\.has\?\.\(SIMULACRUM\)\s*if \(postBar\) \{[\s\S]{0,300}short = \{ \[low\]:[\s\S]{0,1600}if \(postBar\) \{[\s\S]{0,400}return \{ kind: 'gym', gym: legs\.gym/.test(step)) c.fail("bladeGymStep idles the slot with the Simulacrum installed while both exit models credit the class beside the action")
   }
   {
     // BG7 THE SIMULACRUM FREES THE ACTOR FROM THE SLOT (bbslot.slotClaim): Bladeburner actions run beside

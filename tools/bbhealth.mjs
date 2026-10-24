@@ -29,6 +29,8 @@
 // state = the save digest (/state: bitNode, currentWork, home.ram,
 // playtimeSinceLastAug), prev = this function's own `snap` from the last run.
 
+import { windowBaseOf, pushHist } from './lifehealth.mjs'
+
 const num = (x) => typeof x === 'number' && isFinite(x)
 const ageMinOf = (iso, nowMs) => {
   const t = Date.parse(iso ?? '')
@@ -84,7 +86,12 @@ export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null
   const age = ageMinOf(bb?.at, nowMs)
   const lifeStart = num(state?.playtimeSinceLastAug) ? nowMs - state.playtimeSinceLastAug : null
   const ours = !!bb && bbNode === node
-  const snap = { at: new Date(nowMs).toISOString(), bitNode: node, rank: ours && num(bb.rank) ? bb.rank : null, owned: false, acting: false, fullAbsentSince: null }
+  // THE RANK WINDOW (lifehealth.windowBaseOf): rank samples of this node's entry, carried through
+  // every return; a run without one (an older snap) seeds it with that snap.
+  const nodeReset = num(state?.lastNodeReset) ? state.lastNodeReset : null
+  const prevSame = prev && prev.bitNode === node
+  const rankHist0 = !prevSame ? [] : Array.isArray(prev.rankHist) ? prev.rankHist : prev.at ? [{ at: prev.at, rank: prev.rank ?? null, owned: !!prev.owned, nodeReset: null }] : []
+  const snap = { at: new Date(nowMs).toISOString(), bitNode: node, rank: ours && num(bb.rank) ? bb.rank : null, owned: false, acting: false, fullAbsentSince: null, rankHist: rankHist0 }
 
   // ---- the full daemon's placement (watchdog.js fullPlace) ----------------
   // Where the tier admits bladeburner.js (home >= 128GB) and the route is not
@@ -165,12 +172,17 @@ export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null
   }
 
   // ---- rank -------------------------------------------------------------
-  if (prev && prev.bitNode === node && prev.owned && snap.owned && num(prev.rank) && num(snap.rank) && !bb.exitReady) {
-    const dt = ageMinOf(prev.at, nowMs)
-    if (dt !== null && dt >= MIN_INTERVAL_MIN) {
-      if (!(snap.rank > prev.rank)) fail(`NO RANK PROGRESS: rank ${prev.rank} -> ${snap.rank} over ${dt.toFixed(0)} min with the slot on Bladeburner`, `action ${bb.action?.name ?? '?'} (${bb.action?.why ?? ''}); outcomes observed ${bb.outcomes?.observed ?? '?'} vs expected ${bb.outcomes?.expected ?? '?'}`)
-      else notes.push(`bladeburner: rank ${prev.rank} -> ${snap.rank} in ${dt.toFixed(0)} min (${(((snap.rank - prev.rank) / dt) * 60).toFixed(1)}/h)`)
+  // Windowed: against the newest stored sample >= MIN_INTERVAL_MIN old (not the last one), so a
+  // 15-min runner whose samples land 14.x min apart still compares — the slot ours at both ends.
+  {
+    const rh = rankHist0.filter((h) => nodeReset === null || h.nodeReset === null || h.nodeReset === nodeReset)
+    const base = windowBaseOf(rh, nowMs, MIN_INTERVAL_MIN)
+    if (base && base.owned && snap.owned && num(base.rank) && num(snap.rank) && !bb.exitReady) {
+      const dt = ageMinOf(base.at, nowMs)
+      if (!(snap.rank > base.rank)) fail(`NO RANK PROGRESS: rank ${base.rank} -> ${snap.rank} over ${dt.toFixed(0)} min with the slot on Bladeburner`, `action ${bb.action?.name ?? '?'} (${bb.action?.why ?? ''}); outcomes observed ${bb.outcomes?.observed ?? '?'} vs expected ${bb.outcomes?.expected ?? '?'}`)
+      else notes.push(`bladeburner: rank ${base.rank} -> ${snap.rank} in ${dt.toFixed(0)} min (${(((snap.rank - base.rank) / dt) * 60).toFixed(1)}/h)`)
     }
+    snap.rankHist = pushHist(rh, { at: snap.at, rank: snap.rank, owned: snap.owned, nodeReset }, nowMs)
   }
 
   // ---- stamina ----------------------------------------------------------

@@ -112,13 +112,21 @@ before starting each subagent.
     ctauto/go-cheat, run endgame.js --next N). Fix: endgame.js must exit whatever home holds — e.g. run
     the destroy from any rooted host with >= 37.2GB free (Singularity works from any host), or have the
     launchers of transient residents (ctauto.js, go-cheat.js) honour /tel/reserve-endgame.txt.
-0c. **NO INSTALL false positive in a saving final window** (2026-10-19 BN10.3): fired at 0.7h into the
+0c. ~~**NO INSTALL false positive in a saving final window**~~ DONE 2026-10-24 (lifehealth.noInstallVerdict, LH5): no install
+    planned (The Red Pill installed, the committed install 'never', the gate's holdForever or Covenant saving, this life) is a note;
+    EXIT NOT APPROACHING watches it. Original: (2026-10-19 BN10.3): fired at 0.7h into the
     final life ("3x the 0.2h window") while cash grew $7e13 -> $7e14 in 20 min toward the $1e17 Covenant
     sleeve. The check should read the plan's final-window money leg (no install planned) instead of the window.
-0d. **EXIT NOT APPROACHING spans a node change** (2026-10-21 17:11Z): compared BN3.1's last exit (4.3h) with BN3.2's
+0d. ~~**EXIT NOT APPROACHING spans a node change**~~ DONE 2026-10-24 (lifehealth.exitHistOf, LH4): samples carry lastNodeReset,
+    the life and the exit's basis (blade/hack); the history resets at the node's entry and at an install that changes the basis.
+    PLANNER IDLE / NO RANK PROGRESS are windowed on the newest sample N min old (LH6/LH7: they never fired at a 15-min cadence). Original: (2026-10-21 17:11Z): compared BN3.1's last exit (4.3h) with BN3.2's
     first (10.3h) 0.5h after the entry and fired. The window must reset at lastNodeReset (and at installs if the
     model's basis changes).
-0e. **Body slot lent to crime/faction work after the Bladeburner join costs time** (bbboot.mjs, f49e76b):
+0e. ~~**Body slot lent to crime/faction work after the Bladeburner join costs time**~~ DONE 2026-10-24 (bbplan.bladeLendGen,
+    decisions.bladeRoute.lend, BL1-BL5): with the Simulacrum the lend displaces the class beside the actions (a due graft goes first);
+    priced as the black-op exit with the money crime in the slot (its exp, its money into the graft schedule) vs the class (its fee out),
+    paired members, lent only past -0.02h and 2 se. BN7.3 fixture: the whole slot +0.17 +- 0.07h, 29% +0.00 +- 0.06h (class keeps it).
+    Faction work is never a priced lend (its rep pays only at an install). Original: (bbboot.mjs, f49e76b):
     in bbsim the 29% post-join lend measured +0.19h BN5.2, +0.63h BN13.3 (−0.03h BN2.2). progress.js owns the
     slot policy; price the lend as a trajectory on the Bladeburner exit rather than assuming it free.
 0g. **BN8: the live exit's growth is not the trader's money** (bn8 calibration 2026-10-23, the dry run of
