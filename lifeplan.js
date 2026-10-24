@@ -34,9 +34,12 @@
  * (bestExitPolicy with cycleHours L, multGainPerCycle exp(mean)); the soonest
  * exit is the cadence.
  *
- * NOT MODELLED, and named in the result: donations (favour >= 150 buys
- * reputation with money — no faction here is there yet), the player's
- * faction_rep multiplier rising across lives (the rate rises with the level
+ * DONATIONS ARE PRICED (lifeBatch `donate`, donateOf): where a faction's
+ * favour reaches floor(150 x FavorToDonateToFaction) — from the first join in
+ * BitNode 8 — its reputation is bought with the life's money, not ground.
+ * NOT MODELLED, and named in the result: the player's faction_rep
+ * multiplier rising across lives (the donation's price is today's: a floor;
+ * the rate rises with the level
  * each life's multiplier reaches, lifeGrowthOf, not with faction_rep — a
  * floor), sleeves working factions, joining new factions, the count gate's
  * value of a distinct augmentation (only hacking is valued), augmentations
@@ -45,11 +48,11 @@
  * to the earnings ledger's completed lives (moneyScaleOf, printed); the
  * reputation rate is the published one (the formula estimate early in a life).
  */
-import { favorToRep, repToFavor } from 'favor.js'
+import { favorToRep, repToFavor, donationForRep } from 'favor.js'
 import { levelAt, expRateShape } from 'exitplan.js'
 import { planHacknetBatch, hashRate, DOLLARS_PER_HASH } from 'hacknetplan.js'
 import { formulaErrorPosterior } from 'bayes.js'
-import { capitalOf, capitalGain } from 'traderw.js'
+import { capitalOf, capitalGain, ageKneeQ } from 'traderw.js'
 import { drain } from 'coop.js'
 import { giftLifeInputsOf } from 'stanekplan.js'
 
@@ -181,7 +184,14 @@ export function* freshLifeMoneyGen(inputs, L, scale = 1, rec = null, { steps = 2
   const r = pos(inputs.capitalReturnPerSec) ? inputs.capitalReturnPerSec : 0
   const cap = pos(inputs.capitalCap) ? inputs.capitalCap : Infinity
   const warmH = pos(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0
-  const capC = capitalOf(inputs)
+  let capC = capitalOf(inputs)
+  // A FRESH MARKET (inputs.capitalAge, traderw.capitalAgeInputsOf — BitNode 8): an install re-initialises the
+  // market (Prestige.ts:166-170), so the life's knee is W*(a) = W1 max(a, aMin)^beta at the life's own age a,
+  // from 0 — not today's market's (exitplan.hoursToMoney's kneeQ: the same 10% quantisation, shared tables).
+  // Absent: the one knee, as before.
+  const ageK = r > 0 && inputs.capitalAge && pos(inputs.capitalAge.W1) && (pos(inputs.capitalScaleW) || inputs.capitalShape) ? inputs.capitalAge : null
+  const kneeAt = ageK ? (a) => ageKneeQ(ageK, a) : null
+  let kneeNow = null
   const xps = pos(inputs.expPerSec) ? inputs.expPerSec : 0
   // The exp rate rising with the level (exitplan.expRateShape), as the exit
   // integrates it, when the inputs say so; else constant.
@@ -227,6 +237,10 @@ export function* freshLifeMoneyGen(inputs, L, scale = 1, rec = null, { steps = 2
       yield
     }
     const lvl = levelAt(exp, inputs.hackingMult)
+    if (kneeAt && kneeAt(h) !== kneeNow) {
+      kneeNow = kneeAt(h)
+      capC = capitalOf({ ...inputs, capitalScaleW: kneeNow })
+    }
     // The book's return at its own size (traderw.capitalGain: the curve r(W), or the flat r x min(W, cap)).
     const cg = r > 0 && h >= warmH ? capitalGain(money, dt, capC) : 0
     const hackStep = fh ? Math.max(0, fhAt(h + dt / 3600) - fhAt(h)) : ((lvlIncome * (lvl + 50)) / 51) * dt
@@ -337,67 +351,139 @@ export function* moneyScaleOfGen(earnings, node, inputs, { recent = 4 } = {}) {
  * ONE LIFE of L hours: what it buys. `state` {owned: Set, favor: {f: n},
  * nfgLevel: 0-based levels bought since the catalogue's NeuroFlux price}.
  * `repPerHour0` the base rate (favour 0). Returns {chosen, gain, lnGain,
- * nfgLevels, hours: {f: h}, rep: {f: r}, cost, money}.
+ * nfgLevels, hours: {f: h}, rep: {f: r}, cost, donation, money}.
+ *
+ * REPUTATION IS A PURCHASE WHERE DONATION IS OPEN (`donate` {need, perRep,
+ * no}, donateOf): a faction whose favour is at least `need` = floor(150 x
+ * FavorToDonateToFaction) (donation.ts:16-18, Singularity.ts:921) sells
+ * reputation at `perRep` = 1e6 / (faction_rep x FactionWorkRepGain) dollars a
+ * point (donation.ts:12 donationForRep) — except `no` (the gang's, the
+ * factions without work: Singularity.ts:904-911). Its requirement costs no
+ * hours: the life's work earns what it can at the open factions (fastest
+ * first: a point of work saves the same perRep wherever it lands) and the
+ * rest is DONATED from the same money as the augmentations, unescalated by
+ * the 1.9x. BitNode 8 (FavorToDonateToFaction 0, BitNode.tsx:776) is where
+ * it decides: every faction is open from the first join, and a model that
+ * ground every point bought ~one augmentation a 2.7h life (backlog 0g: the
+ * live exit 118h on 37 installs against the gameplan's 30.4h; the gameplan's
+ * bn8.mjs buyAndInstall donates). A faction whose banked favour crosses
+ * `need` in a later life opens from that life on. Absent or closed: the grind,
+ * exactly as before.
  */
-export function lifeBatch({ items, nfg, state, L, money, repPerHour0 }) {
+export function lifeBatch({ items, nfg, state, L, money, repPerHour0, donate = null }) {
   const rate = (f) => repPerHour0 * (1 + (state.favor?.[f] ?? 0) / 100)
   const owned = state.owned
   const chosen = []
-  const hours = {}
-  const usedH = () => Object.values(hours).reduce((a, b) => a + b, 0)
   const prices = []
-  const hoursFor = (it) => {
-    // The cheapest faction (in hours) that sells it, given what this life already works there.
-    let best = null
-    for (const f of it.factions) {
-      const need = it.repReq / rate(f)
-      const extra = Math.max(0, need - (hours[f] ?? 0))
-      if (!best || extra < best.extra) best = { f, extra, need }
+  const dpr = donate && pos(donate.perRep) && num(donate.need) && donate.need >= 0 ? donate.perRep : null
+  const noDon = new Set(donate?.no ?? [])
+  const open = (f) => dpr !== null && !noDon.has(f) && (state.favor?.[f] ?? 0) >= donate.need
+  // The batch's largest requirement per faction.
+  const req = {}
+  // WHAT A SET OF REQUIREMENTS COSTS: hours at the closed factions (ground),
+  // the hours left worked at the open ones fastest first, the rest donated.
+  const repCost = (rq) => {
+    const hours = {}
+    let fixedH = 0
+    const opens = []
+    for (const [f, r] of Object.entries(rq)) {
+      if (open(f)) opens.push(f)
+      else {
+        hours[f] = r / rate(f)
+        fixedH += hours[f]
+      }
     }
-    return best
+    let spare = Math.max(0, L - fixedH)
+    let owe = 0
+    for (const f of opens.sort((a, b) => rate(b) - rate(a))) {
+      const h = Math.min(spare, rq[f] / rate(f))
+      if (h > 0) hours[f] = h
+      spare -= h
+      owe += Math.max(0, rq[f] - h * rate(f))
+    }
+    return { hours, fixedH, donation: dpr !== null ? owe * dpr : 0 }
   }
+  let cur = repCost(req)
   const prereqOk = (it) => (it.prereq ?? []).every((p) => owned.has(p) || chosen.some((c) => c.name === p))
   for (let guard = 0; guard < 200; guard++) {
     let pick = null
-    const baseCost = batchCost(prices)
+    const baseCost = batchCost(prices) + cur.donation
     for (const it of items) {
       if (owned.has(it.name) || chosen.some((c) => c.name === it.name) || !(it.hackMult > 1) || !prereqOk(it)) continue
-      const h = hoursFor(it)
-      if (!h || usedH() + h.extra > L + 1e-9) continue
-      const cost = batchCost([...prices, it.price])
-      if (cost > money) continue
-      const use = h.extra / L + (cost - baseCost) / money
-      const score = Math.log(it.hackMult) / Math.max(1e-9, use)
-      if (!pick || score > pick.score) pick = { it, h, cost, score }
+      const price = batchCost([...prices, it.price])
+      // The cheapest faction that sells it (hours ground, money donated), given what this life already owes there.
+      let best = null
+      for (const f of it.factions) {
+        const c = repCost({ ...req, [f]: Math.max(req[f] ?? 0, it.repReq) })
+        if (c.fixedH > L + 1e-9) continue
+        const cost = price + c.donation
+        if (cost > money) continue
+        const use = Math.max(0, c.fixedH - cur.fixedH) / L + (cost - baseCost) / money
+        if (!best || use < best.use) best = { f, c, use }
+      }
+      if (!best) continue
+      const score = Math.log(it.hackMult) / Math.max(1e-9, best.use)
+      if (!pick || score > pick.score) pick = { it, ...best, score }
     }
     if (!pick) break
     chosen.push(pick.it)
     prices.push(pick.it.price)
-    hours[pick.h.f] = Math.max(hours[pick.h.f] ?? 0, pick.h.need)
+    req[pick.f] = Math.max(req[pick.f] ?? 0, pick.it.repReq)
+    cur = pick.c
   }
+  const hours = { ...cur.hours }
+  const usedH = Object.values(hours).reduce((a, b) => a + b, 0)
   // The unused hours at the fastest NeuroFlux faction (favour for later
   // lives, and NeuroFlux's own requirement).
   const nfgFactions = nfg?.factions?.length ? nfg.factions : Object.keys(state.favor ?? {})
   let fastest = null
   for (const f of nfgFactions) if (!fastest || rate(f) > rate(fastest)) fastest = f
-  const spare = Math.max(0, L - usedH())
+  const spare = Math.max(0, L - usedH)
   if (fastest && spare > 0) hours[fastest] = (hours[fastest] ?? 0) + spare
+  // A faction's reputation at the install: its work, or its requirement where the rest was donated (banked as favour too).
   const rep = Object.fromEntries(Object.entries(hours).map(([f, h]) => [f, h * rate(f)]))
-  const repBest = Math.max(0, ...nfgFactions.map((f) => rep[f] ?? 0))
+  for (const [f, r] of Object.entries(req)) if (open(f)) rep[f] = Math.max(rep[f] ?? 0, r)
+  let donation = cur.donation
+  // NeuroFlux's requirement: met by the best reputation at a NeuroFlux
+  // faction, else donated at the best OPEN one (the donation is reputation
+  // there, so the next level owes only its increment).
+  const nfBest = () => Math.max(0, ...nfgFactions.map((f) => rep[f] ?? 0))
+  const nfOpen = nfgFactions.filter(open).sort((a, b) => (rep[b] ?? 0) - (rep[a] ?? 0))[0] ?? null
   let levels = 0
   if (nfg && pos(nfg.price)) {
     for (;;) {
       const k = state.nfgLevel + levels
       const p = nfg.price * Math.pow(NFG_LEVEL_MULT, k)
       const rq = nfg.repReq * Math.pow(NFG_LEVEL_MULT, k)
-      if (rq > repBest || batchCost([...prices, p]) > money || levels > 200) break
+      const short = rq > nfBest()
+      const don = short && nfOpen !== null ? (rq - (rep[nfOpen] ?? 0)) * dpr : 0
+      if ((short && nfOpen === null) || batchCost([...prices, p]) + donation + don > money || levels > 200) break
       prices.push(p)
+      if (don > 0) {
+        donation += don
+        rep[nfOpen] = rq
+      }
       levels++
     }
   }
   const gain = chosen.reduce((g, it) => g * it.hackMult, 1) * Math.pow(nfg?.hackMult ?? 1.01, levels)
-  return { chosen: chosen.map((c) => c.name), gain, lnGain: Math.log(gain), nfgLevels: levels, hours, rep, cost: batchCost(prices), money }
+  return { chosen: chosen.map((c) => c.name), gain, lnGain: Math.log(gain), nfgLevels: levels, hours, rep, cost: batchCost(prices) + donation, donation, money }
 }
+
+/**
+ * THE DONATION TERMS a life prices reputation at (lifeBatch `donate`), or
+ * null where no faction can take one (the node's threshold unreadable, the
+ * price not finite). `need` floor(150 x FavorToDonateToFaction)
+ * (nodeecon.favorToDonateOf); `perRep` donationForRep of one point (favor.js,
+ * donation.ts:12) at today's faction_rep — a floor, the multiplier rises
+ * across lives; `no` the factions that never take one (nodeecon
+ * NO_DONATION_FACTIONS, the gang's).
+ */
+export function donateOf(need, factionRep, nodeWorkRep, no = []) {
+  const perRep = donationForRep(1, pos(factionRep) ? factionRep : 1, num(nodeWorkRep) ? nodeWorkRep : 0)
+  return num(need) && need >= 0 && pos(perRep) && isFinite(perRep) ? { need, perRep, no: (no ?? []).filter((f) => typeof f === 'string') } : null
+}
+
 
 /**
  * A LATER LIFE AT THE MULTIPLIER IT HAS REACHED. Every life restarts at level
@@ -460,7 +546,7 @@ export function lifeGrowthOf(inputs, L, money0, scale = 1, { steps = 200 } = {})
  * not in the catalogue's price (the next install's batch: the lives start
  * after it).
  */
-export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repPerHour0, nfgLevel0 = 0, growth = null, lnM0 = 0 }) {
+export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repPerHour0, nfgLevel0 = 0, growth = null, lnM0 = 0, donate = null }) {
   const state = { owned: new Set(owned ?? []), favor: { ...(favor ?? {}) }, nfgLevel: Number.isInteger(nfgLevel0) && nfgLevel0 > 0 ? nfgLevel0 : 0 }
   const out = []
   const money0 = moneyAt(L)
@@ -472,7 +558,7 @@ export function lifeSequence({ items, nfg, favor, owned, L, lives, moneyAt, repP
     const k = typeof growth === 'function' ? growth(lnM) : null
     const money = k && pos(k.money) ? k.money : money0
     const rate = k && pos(k.repK) ? repPerHour0 * k.repK : repPerHour0
-    const b = lifeBatch({ items, nfg, state, L, money, repPerHour0: rate })
+    const b = lifeBatch({ items, nfg, state, L, money, repPerHour0: rate, donate })
     lnM += Math.max(0, b.lnGain)
     out.push({ lnGain: b.lnGain, chosen: b.chosen, nfgLevels: b.nfgLevels, lnM, money: Math.round(money), repK: k ? +k.repK.toFixed(4) : 1 })
     for (const n of b.chosen) state.owned.add(n)
@@ -506,13 +592,13 @@ export const LIFE_GRID = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24]
 /** The purchase sequence's reach (lifeTableGen `seq`): the exit's later lives, one by one, out to here. */
 export const SHAPE_H = 240
 export const SHAPE_LIVES = 480
-export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, bestExitPolicyGen = null, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0 }) {
+export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, bestExitPolicy, bestExitPolicyGen = null, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0, donate = null }) {
   if (!catalogue || !pos(repPerHour0) || (typeof bestExitPolicy !== 'function' && typeof bestExitPolicyGen !== 'function')) return null
   // eslint-disable-next-line require-yield
   const policyGen = typeof bestExitPolicyGen === 'function' ? bestExitPolicyGen : function* (x) {
     return bestExitPolicy(x)
   }
-  const rows = yield* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale, grid, horizonH, maxLives, nfgLevel0 })
+  const rows = yield* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale, grid, horizonH, maxLives, nfgLevel0, donate })
   if (!rows) return null
   const table = []
   let best = null
@@ -538,7 +624,7 @@ export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPer
     multGainPerCycle: best.g,
     exitH: best.H,
     table,
-    why: `life length chosen by the exit over what each length buys: ${best.L}h lives (x${best.g.toFixed(3)} a life, ${(best.mean / best.L).toFixed(4)} ln(M)/h) exit ${best.H.toFixed(1)}h — reputation reset at every install (base ${(repPerHour0 / 3600).toFixed(2)}/s x (1 + favor/100)), favour banked, 1.9x money escalation (money x${moneyScale.toFixed(2)} calibrated); not modelled: donations, rising faction_rep, sleeves, new joins, the count's value`,
+    why: `life length chosen by the exit over what each length buys: ${best.L}h lives (x${best.g.toFixed(3)} a life, ${(best.mean / best.L).toFixed(4)} ln(M)/h) exit ${best.H.toFixed(1)}h — reputation reset at every install (base ${(repPerHour0 / 3600).toFixed(2)}/s x (1 + favor/100)), favour banked, 1.9x money escalation (money x${moneyScale.toFixed(2)} calibrated); reputation donated where open (${donate ? `favour >= ${donate.need}, $${donate.perRep.toExponential(2)} a point` : 'none open'}); not modelled: rising faction_rep, sleeves, new joins, the count's value`,
   }
 }
 
@@ -557,7 +643,7 @@ export function* cadenceByPurchasesGen({ inputs, catalogue, favor, owned, repPer
 export function lifeTable(o = {}) {
   return drain(lifeTableGen(o))
 }
-export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0, shapeH = SHAPE_H, maxShapeLives = SHAPE_LIVES, withGrowth = true }) {
+export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, moneyScale = 1, grid = LIFE_GRID, horizonH = 48, maxLives = 100, nfgLevel0 = 0, shapeH = SHAPE_H, maxShapeLives = SHAPE_LIVES, withGrowth = true, donate = null }) {
   if (!catalogue || !pos(repPerHour0)) return null
   // Memoised per length: lifeSequence and the table row both ask, and with a
   // hacknet rebuild each answer is a small simulation.
@@ -588,9 +674,9 @@ export function* lifeTableGen({ inputs, catalogue, favor, owned, repPerHour0, mo
     const N = Math.max(n, Math.min(maxShapeLives, Math.round(shapeH / L)))
     const growth = withGrowth ? lifeGrowthOf(IL, L, moneyAt(L), moneyScale) : null
     const lnM0 = pos(inputs?.installGains?.hacking) && inputs.installGains.hacking > 1 ? Math.log(inputs.installGains.hacking) : 0
-    const seqAll = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: N, moneyAt, repPerHour0: rph, nfgLevel0, growth, lnM0 })
+    const seqAll = lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: N, moneyAt, repPerHour0: rph, nfgLevel0, growth, lnM0, donate })
     yield
-    const seq = growth ? lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0: rph, nfgLevel0 }) : seqAll.slice(0, n)
+    const seq = growth ? lifeSequence({ items: catalogue.items, nfg: catalogue.nfg, favor, owned, L, lives: n, moneyAt, repPerHour0: rph, nfgLevel0, donate }) : seqAll.slice(0, n)
     const mean = seq.reduce((a, s) => a + s.lnGain, 0) / seq.length
     const last = seqAll[seqAll.length - 1]
     // `seq`: each life's own ln gain, in order — the catalogue DEPLETES, so

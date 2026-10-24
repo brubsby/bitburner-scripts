@@ -41,7 +41,7 @@
 // compounded, the same model the exit's money legs use.
 
 import { drain, callGen } from 'coop.js'
-import { capitalOf, isShaped, capitalRateAt, capitalGain, capitalEarnAt } from 'traderw.js'
+import { capitalOf, isShaped, capitalRateAt, capitalGain, capitalEarnAt, ageKneeQ } from 'traderw.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -66,7 +66,9 @@ export function gainsOf(mults) {
  * its money price this life (`price`: base + donation for the reputation short
  * now) and in a later life (`laterPrice`: base + the whole requirement bought,
  * null when that cannot be bought), and its hacking multiplier. Sorted by
- * this-life price ascending.
+ * this-life price ascending. Each row also carries its parts — `base`, the
+ * selling `faction`, the donation now (`don`) and in a later life (`laterDon`)
+ * — so a batch pays a faction's reputation ONCE (bankBatch).
  */
 export function ticketLadder(offers, owned, { nfgName = 'NeuroFlux Governor', laterDonation = null } = {}) {
   const have = owned instanceof Set ? owned : new Set(owned ?? [])
@@ -77,7 +79,7 @@ export function ticketLadder(offers, owned, { nfgName = 'NeuroFlux Governor', la
     const price = short > 0 ? (num(o.donationCost) ? o.baseCost + o.donationCost : null) : o.baseCost
     if (price === null) continue
     const later = typeof laterDonation === 'function' ? laterDonation(o) : null
-    const row = { name: o.name, price, laterPrice: num(later) ? o.baseCost + later : o.baseCost, ...gainsOf(o.mults) }
+    const row = { name: o.name, price, laterPrice: num(later) ? o.baseCost + later : o.baseCost, ...gainsOf(o.mults), base: o.baseCost, faction: o.faction ?? null, don: price - o.baseCost, laterDon: num(later) ? later : 0 }
     const cur = byName.get(o.name)
     if (!cur || row.price < cur.price) byName.set(o.name, row)
   }
@@ -85,38 +87,99 @@ export function ticketLadder(offers, owned, { nfgName = 'NeuroFlux Governor', la
 }
 
 /**
- * One install's batch from `budget`: up to `n` tickets (the n cheapest), bought
- * most expensive first, then NeuroFlux levels. `nfg` {price (next level's
- * current base, no queue multiplier), level}. Returns {count, cost, gain,
- * nfgLevels, spent}.
+ * What a set of tickets costs, as the game charges it: the augmentations' base
+ * prices most expensive first at 1.9^j (AugmentationHelpers.ts:133-138), and
+ * each faction's reputation ONCE — its largest donation among them, unescalated
+ * (donation.ts: reputation is the faction's, not the augmentation's; a donation
+ * is not a purchase). Rows without the parts (`base`, `faction`): their whole
+ * price escalated, each on its own, as before.
+ */
+const ticketParts = (t, later) => (num(t.base) && t.faction ? { b: t.base, d: Math.max(0, (later ? t.laterDon : t.don) ?? 0), f: t.faction } : { b: later ? t.laterPrice : t.price, d: 0, f: null })
+export function batchMoney(tickets, later = false) {
+  const bases = []
+  const don = new Map()
+  for (const t of tickets) {
+    const p = ticketParts(t, later)
+    bases.push(p.b)
+    if (p.f !== null) don.set(p.f, Math.max(don.get(p.f) ?? 0, p.d))
+  }
+  bases.sort((a, b) => b - a)
+  let c = 0
+  for (let i = 0; i < bases.length; i++) c += bases[i] * Math.pow(PRICE_MULT, i)
+  for (const d of don.values()) c += d
+  return c
+}
+
+/**
+ * One install's batch from `budget`: up to `n` tickets, then NeuroFlux
+ * levels. `nfg` {price (next level's current base, no queue multiplier),
+ * level}. The tickets are added one at a time, each the one that adds least
+ * to the batch's money (batchMoney: a second ticket at a faction already
+ * donated to pays only its base) while the batch fits — on rows without
+ * donation parts exactly the n cheapest, bought most expensive first. Returns
+ * {count, cost, gain, nfgLevels, spent}.
+ *
+ * The donation was charged per ticket and escalated with it: five CyberSec
+ * tickets paid CyberSec's reputation five times, the fifth at 1.9^4. In
+ * BitNode 8, where every point is donated, a life's budget bought ~2-5 tickets
+ * where the game sells it the batch the gameplan buys (bn8.mjs batchCost).
  */
 export function bankBatch({ budget, ladder, n, nfg = null, later = false }) {
-  const priceOf = (t) => (later ? t.laterPrice : t.price)
-  // A `must` ticket (the route being priced, bestCountRoute) is taken first
-  // whenever it fits; the rest are the cheapest.
-  const cheapest = (ladder ?? []).slice().sort((a, b) => (b.must === true) - (a.must === true) || priceOf(a) - priceOf(b))
-  let take = 0
-  let chosen = []
-  // The largest k <= n whose most-expensive-first cost fits the budget.
-  for (let k = Math.min(n, cheapest.length); k >= 1; k--) {
-    const pick = cheapest.slice(0, k).sort((a, b) => priceOf(b) - priceOf(a))
-    let c = 0
-    for (let i = 0; i < pick.length; i++) c += priceOf(pick[i]) * Math.pow(PRICE_MULT, i)
-    if (c <= budget) {
-      take = k
-      chosen = pick
-      break
-    }
-  }
+  const rows = (ladder ?? []).slice()
+  const chosen = []
   let spent = 0
+  // A `must` ticket (the route being priced, bestCountRoute) is taken first
+  // whenever it fits (and nothing is, when it does not); the rest by least added money.
+  const must = rows.find((t) => t.must === true)
+  let pool = rows
+  if (must) {
+    const c = batchMoney([must], later)
+    if (n >= 1 && c <= budget) {
+      chosen.push(must)
+      spent = c
+      pool = rows.filter((t) => t !== must)
+    } else pool = []
+  }
+  // Incremental (this runs per install, per composition, per life length, per route): the bases sorted
+  // descending with their escalated suffix sums, so a ticket of base b at position p adds
+  // b 1.9^p + 0.9 x (the escalated bases after p), and its donation what exceeds its faction's.
+  const bases = chosen.map((t) => ticketParts(t, later).b).sort((a, b) => b - a)
+  const don = new Map()
+  for (const t of chosen) {
+    const q = ticketParts(t, later)
+    if (q.f !== null) don.set(q.f, Math.max(don.get(q.f) ?? 0, q.d))
+  }
+  while (chosen.length < n && pool.length) {
+    const suf = new Array(bases.length + 1).fill(0)
+    for (let i = bases.length - 1; i >= 0; i--) suf[i] = suf[i + 1] + bases[i] * Math.pow(PRICE_MULT, i)
+    let best = null
+    for (const t of pool) {
+      const q = ticketParts(t, later)
+      let lo = 0
+      let hi = bases.length
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (bases[mid] >= q.b) lo = mid + 1
+        else hi = mid
+      }
+      const add = q.b * Math.pow(PRICE_MULT, lo) + (PRICE_MULT - 1) * suf[lo] + (q.f !== null ? Math.max(0, q.d - (don.get(q.f) ?? 0)) : q.d)
+      if (spent + add <= budget * (1 + 1e-12) && (best === null || add < best.add)) best = { t, q, add, at: lo }
+    }
+    if (!best) break
+    chosen.push(best.t)
+    spent += best.add
+    bases.splice(best.at, 0, best.q.b)
+    if (best.q.f !== null) don.set(best.q.f, Math.max(don.get(best.q.f) ?? 0, best.q.d))
+    pool = pool.filter((t) => t !== best.t)
+  }
+  const take = chosen.length
   let gain = 1
   let expGain = 1
   let repGain = 1
-  for (let i = 0; i < chosen.length; i++) {
-    spent += priceOf(chosen[i]) * Math.pow(PRICE_MULT, i)
-    gain *= pos(chosen[i].hacking) ? chosen[i].hacking : 1
-    expGain *= pos(chosen[i].exp) ? chosen[i].exp : 1
-    repGain *= pos(chosen[i].rep) ? chosen[i].rep : 1
+  for (const t of chosen) {
+    gain *= pos(t.hacking) ? t.hacking : 1
+    expGain *= pos(t.exp) ? t.exp : 1
+    repGain *= pos(t.rep) ? t.rep : 1
   }
   let levels = 0
   if (nfg && pos(nfg.price)) {
@@ -133,8 +196,14 @@ export function bankBatch({ budget, ladder, n, nfg = null, later = false }) {
   return { count: take, cost: spent, gain, expGain, repGain, nfgLevels: levels, chosen: chosen.map((t) => t.name) }
 }
 
-/** Money in hand after `hours` from `money0`: capital r x min(money, cap) — or the curve r(W) W (traderw.js) — compounding plus a flat rate. */
-export function moneyAfter(money0, hours, o = {}) {
+/**
+ * Money in hand after `hours` from `money0`: capital r x min(money, cap) — or the curve r(W) W (traderw.js) —
+ * compounding plus a flat rate. `ageH0`: the market's age at the start where the inputs carry the age model
+ * (o.capitalAge, BitNode 8: traderw.capitalAgeInputsOf) — the knee W*(a) moves with it, from 0 after an
+ * install (the market re-initialised, Prestige.ts:166-170), as exitplan's money legs and lifeplan's fresh life
+ * move it. Null: today's market's age (o.capitalAge.ageNowH). Without the age model: the one knee, as before.
+ */
+export function moneyAfter(money0, hours, o = {}, ageH0 = null) {
   const { capitalReturnPerSec = 0, capitalCap = Infinity, flatPerSec = 0 } = o
   const T = Math.max(0, hours) * 3600
   let m = Math.max(0, money0)
@@ -144,10 +213,17 @@ export function moneyAfter(money0, hours, o = {}) {
   // the flat income arriving as it goes (steps of <= 5% growth). Absent, the
   // closed form below.
   if (r > 0 && isShaped(o)) {
-    const c = capitalOf(o)
+    let c = capitalOf(o)
+    const ageK = o.capitalAge && pos(o.capitalAge.W1) ? o.capitalAge : null
+    const a0 = num(ageH0) ? ageH0 : num(ageK?.ageNowH) ? ageK.ageNowH : 0
+    let knee = null
     const f = pos(flatPerSec) ? flatPerSec : 0
     let t = 0
     for (let i = 0; i < 2000 && t < T; i++) {
+      if (ageK && ageKneeQ(ageK, a0 + t / 3600) !== knee) {
+        knee = ageKneeQ(ageK, a0 + t / 3600)
+        c = capitalOf({ ...o, capitalScaleW: knee })
+      }
       const gate = c.sh?.Wmin > 0 ? c.sh.Wmin * 1.0001 : 0
       const rn = capitalRateAt(Math.max(m, gate), c) // below the commission threshold: bounded as just past it
       // <= 5% growth from the capital, <= 10% from the income (the capital
@@ -193,7 +269,7 @@ export function countPhase(o) {
     const budget =
       i === 0
         ? moneyAfter(inputs.money ?? 0, firstInstallH, inputs)
-        : moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), inputs) // the trader's warm-up after each install earns nothing
+        : moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), inputs, 0) // the trader's warm-up after each install earns nothing; a fresh market
     const b = bankBatch({ budget, ladder: remaining, n: Math.min(n, left), nfg: nfg ? { price: nfg.price * Math.pow(NFG_LEVEL_MULT, level - (nfg.level ?? 0)) } : null, later: i > 0 })
     if (b.count === 0) return { installs: null, why: `install ${i + 1} cannot afford one ticket ($${Math.round(budget)} in hand)`, perInstall: per }
     per.push({ ...b, budget })
@@ -211,7 +287,7 @@ export function countPhase(o) {
   // nothing about what a compounded book buys once the count is banked.
   const post = []
   for (let j = 0; j < postInstalls; j++) {
-    const budget = moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), inputs)
+    const budget = moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), inputs, 0)
     const b = bankBatch({ budget, ladder: [], n: 0, nfg: nfg ? { price: nfg.price * Math.pow(NFG_LEVEL_MULT, level - (nfg.level ?? 0)) } : null, later: true })
     post.push({ gain: b.gain, nfgLevels: b.nfgLevels, budget })
     level += b.nfgLevels
@@ -271,7 +347,14 @@ export function* countExitAtGen(bestExitPolicy, inp, short, ladder, n, firstInst
   const byInstall = [...ph.perInstall.map((b, j) => (j === 0 ? 1 : b.gain / gL)), ...(ph.post ?? []).map((b) => Math.max(1, b.gain / gL))]
   const r = yield* callGen(
     bestExitPolicy,
-    { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain), exp: Math.max(1, ph.perInstall[0].expGain ?? 1), rep: Math.max(1, ph.perInstall[0].repGain ?? 1) }, nextInstallGain: null, perCycleExtra: { byInstall } },
+    // cadenceShape: null — THE COUNT PHASE PRICES ITS LIVES ITSELF (byInstall: each ticket life's gain is its
+    // batch's, b.gain / gL x gL). exitplan multiplies every later life by the purchase sequence's shape too
+    // (cadenceShapeOf: the catalogue's front bought first, a factor < 1 on the lives after it), so the ticket
+    // lives were charged the depletion of a catalogue they did not buy from — and the more the purchase model
+    // buys up front, the worse: with reputation donated (lifeplan, backlog 0g) the BN8.2 entry's count exit
+    // went 80.7h -> 336.7h on the same inputs (tools/sim/gameplan/bn8live.mjs). After the count, the cadence's
+    // mean, as this model was written.
+    { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain), exp: Math.max(1, ph.perInstall[0].expGain ?? 1), rep: Math.max(1, ph.perInstall[0].repGain ?? 1) }, nextInstallGain: null, perCycleExtra: { byInstall }, cadenceShape: null },
     400,
     ph.installs,
   )

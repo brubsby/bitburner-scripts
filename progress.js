@@ -146,7 +146,7 @@ import { splitControl, splitConditioned, splitRaw, committedRouteOf, routeJoinCl
 import { bestCountExitGen, bestCountRouteGen, commitRoute, countRoutes, ticketLadder } from 'countexit.js'
 // Long searches run as generators in slices that give the page back (coop.js).
 import { makePacer, drain, stepMemoryStore, pageStorage, LoopCapError } from 'coop.js'
-import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, batchLedgerOf, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
+import { exitRootRequired, batchFits, batchReach, raisable, RAISE_MARGIN, batchOutcomeLine, wealthOf, INSTALL_HOLD_FILE, STOCK_HIST_FILE, realisedCapital, exitDrift, EXIT_TOL_PRIOR_PER_H, joinReadyButCash, withCashRaise, batchLedgerOf, programSpendAllowed, feeFundable, FEE_FLOOR_S, CLASS_BASE_FEE, incomeOf, stockRecordOf, hacknetRecordOf, HACKNET_FILE, postInstallMoney, startingMoneySurvives, favorToDonateOf, canDonateTo, NO_DONATION_FACTIONS, STOCK_FILE, TRAVEL_FARE } from 'nodeecon.js'
 import { gangVerdict, gangExit, gangExitGen, gangArms, gangArmsGen, withRepEstimate, gangIncomeSchedule, gangIsPending, rememberedGangIncome, gangChannelsDead, gangCarriedSchedule, gangRepLevels } from 'gangworth.js'
 import { expPerSecWithFleet, repPerSecWithFleet, fleetKarmaGrindGen, covenantActive, covenantSleeveCost, sleevesFromCovenant, COVENANT, COVENANT_MANDATE, covenantMandated, covenantTarget, covenantCombatHours, covenantCombatLegOf, combatBatch, afterCombatInstall, CLASSES, UNIVERSITIES, preJoinFleetObjectiveOf } from 'sleeveplan.js'
 import { humanOnHome } from 'human.js'
@@ -190,7 +190,7 @@ import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formula
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
 import { simulateFreshLife, calibrationResiduals, scoreRecordedLife, freshLagH, compactPts, expandPts, homeReserveGb, incomeSliceOf, worldOf } from 'freshlife.js'
-import { catalogueFromOffers, ownedAfterBatch, moneyScaleOfGen, lifeTableGen, lifeInputsOf, lifeCadenceAt, nodeFactionsOf, freshLifeMoney, freshHacknetStreamsGen } from 'lifeplan.js'
+import { catalogueFromOffers, ownedAfterBatch, moneyScaleOfGen, lifeTableGen, lifeInputsOf, donateOf, lifeCadenceAt, nodeFactionsOf, freshLifeMoney, freshHacknetStreamsGen } from 'lifeplan.js'
 
 /** This file's static price as a function of the Singularity RAM multiplier.
  *  RAISE_CEILING(0) is every non-singularity call in the file; the second term
@@ -5492,8 +5492,8 @@ function* purchaseCadenceGen(ns, info, base, offers, owned0, batch = []) {
     const rph = typeof base.repPerSec === 'number' && base.repPerSec > 0 ? base.repPerSec * 3600 : null
     if (catal.items.length && rph) {
       const ms = yield* moneyScaleOfGen(readJson(ns, '/tel/earnings.txt'), info?.currentNode, base)
-      const table = yield* lifeTableGen({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, nfgLevel0 })
-      value = table?.length ? { table, moneyScale: ms.scale, moneyCalibration: ms.why, afterBatch: { augs: owned.size - new Set(owned0 ?? []).size, nfgLevels: nfgLevel0 }, why: `what a life of each length buys (lifeplan.lifeTable): reputation reset at every install (base ${(rph / 3600).toFixed(2)}/s x (1 + favor/100)), favour banked, 1.9x money escalation (money x${ms.scale.toFixed(2)} calibrated); not modelled: donations, rising faction_rep, sleeves, new joins, the count's value` } : null
+      const table = yield* lifeTableGen({ inputs: base, catalogue: catal, favor: catal.favor, owned: [...owned], repPerHour0: rph, moneyScale: ms.scale, nfgLevel0, donate: base.repDonate ?? null })
+      value = table?.length ? { table, moneyScale: ms.scale, moneyCalibration: ms.why, afterBatch: { augs: owned.size - new Set(owned0 ?? []).size, nfgLevels: nfgLevel0 }, why: `what a life of each length buys (lifeplan.lifeTable): reputation reset at every install (base ${(rph / 3600).toFixed(2)}/s x (1 + favor/100)), favour banked, 1.9x money escalation (money x${ms.scale.toFixed(2)} calibrated); reputation donated where open (${base.repDonate ? `favour >= ${base.repDonate.need}, $${base.repDonate.perRep.toExponential(2)} a point` : 'none open'}); not modelled: rising faction_rep, sleeves, new joins, the count's value` } : null
     }
   } catch (e) {
     value = { error: String(e).slice(0, 120) }
@@ -5952,6 +5952,12 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // work shrinks what is owed while the money is saved — exitplan prices the
     // rep leg that way, and gangworth charges the karma grind the slot hours.
     workWhileDonating: favorToDonateOf(bitNodeMults(info)) === 0,
+    // THE LIFE MODEL'S DONATION TERMS (lifeplan.donateOf -> lifeTableGen): a
+    // faction at floor(150 x FavorToDonateToFaction) favour sells reputation
+    // at 1e6 / (faction_rep x FactionWorkRepGain) a point (donation.ts:12-18),
+    // so a life buys its requirements there with money — BitNode 8 from the
+    // first join (backlog 0g: ground, BN8.2's start priced ~118h on 37 lives).
+    repDonate: donateOf(favorToDonateOf(bitNodeMults(info)), player?.mults?.faction_rep ?? 1, bitNodeMults(info)?.FactionWorkRepGain, [...NO_DONATION_FACTIONS, ...(ns.gang.inGang() ? [readJson(ns, '/tel/gang.txt')?.faction] : [])]),
     // The install cadence's posterior (own lives, their weight, stalls excluded).
     cadence: cadence ? { source: cadence.source, node: cadence.node, lives: cadence.lives, stalls: cadence.stalls, weight: cadence.weight, rateMedian: cadence.stats?.lnPerHour ?? null, why: cadence.why } : null,
     // THE COMMITTED GRAFTS (graftDecisionOf / carriedGraftsOf): legs of the

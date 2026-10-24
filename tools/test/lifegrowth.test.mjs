@@ -202,11 +202,11 @@ export async function run() {
       const lp = code("lifeplan.js");
       const pr = code("progress.js");
       const need = [
-        [lp, /withGrowth = true \}\) \{/, "lifeplan.js: lifeTableGen grows by default"],
-        [lp, /growth, lnM0 \}\)/, "lifeplan.js: lifeTableGen buys each life at the multiplier reached"],
+        [lp, /withGrowth = true(, donate = null)? \}\) \{/, "lifeplan.js: lifeTableGen grows by default"],
+        [lp, /growth, lnM0(, donate)? \}\)/, "lifeplan.js: lifeTableGen buys each life at the multiplier reached"],
         [lp, /\{ n: row\.lives \}/, "lifeplan.js: the shape carries the mean's horizon"],
         [lp, /\{ mean: row\.lnMean \}/, "lifeplan.js: the shape carries the model's mean"],
-        [pr, /lifeTableGen\(\{ inputs: base, catalogue: catal, favor: catal\.favor, owned: \[\.\.\.owned\], repPerHour0: rph, moneyScale: ms\.scale, nfgLevel0 \}\)/, "progress.js: the table on the defaults"],
+        [pr, /lifeTableGen\(\{ inputs: base, catalogue: catal, favor: catal\.favor, owned: \[\.\.\.owned\], repPerHour0: rph, moneyScale: ms\.scale, nfgLevel0(, donate: base\.repDonate \?\? null)? \}\)/, "progress.js: the table on the defaults"],
       ];
       c.examined(need.length);
       for (const [src, re, what] of need) if (!re.test(src)) c.fail(what);

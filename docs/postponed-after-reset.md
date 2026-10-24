@@ -119,6 +119,11 @@ before starting each subagent.
     lifeplan's purchase model buys rep by work only ("NOT MODELLED: donations"), where in BN8 (FavorToDonate 0)
     every rep point is money. Make lifeplan.lifeBatch donate the rep shortfall at $1e6/faction_rep where the
     threshold is 0, and price freshLifeMoney on a fresh market (capitalAge age 0). Risk: BN8.1's one-aug lives.
+    DONE 2026-10-24 (tools/sim/gameplan/bn8live.mjs, tests LD1-LD5): lifeBatch donates wherever a faction is at
+    the threshold (progress.js repDonate); the count exit (the plan's BN8 trajectory) paid each faction's rep per
+    ticket at 1.9^j, took the purchase shape on its ticket lives and budgeted on today's market — fixed. BN8.2's
+    entry on the dry-run's inputs: 80.7h on 9 installs -> 38.6h on 3 (gameplan 31.7h never / 30.4h gift).
+    Left: with nothing installed the life length decision prices basis null without the count (9.5h).
 0h. **Stale source guards red at HEAD** (2026-10-23): bn8.test B8w flags `readJson(ns, STATUS)` (a read) as a
     writer; B8af's regex wants `placeTrader(ns, all, hosts)` (seed.js passes liteHold). Both FAIL at b60e48e, so a
     real regression in either would be masked. Also planperf PP3/PP3c CPU guards (1217ms vs 800ms, loaded machine).

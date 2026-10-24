@@ -106,7 +106,7 @@ export const FOCUS = 1
 /** MEASURED on BN8.1 (calibrate(), printed): the exp model and the trader's BN8 factor. */
 export const BN8_CAL = { EXP_K0: 1.822, EXP_B: 0.021, KAPPA8: RW_BN8.kappa, RHO8: RW_BN8.rho, INT_REF: 112, source: 'bn8.mjs 2026-10-23 on BN8.1 (history.jsonl): exp 520 segments, trader the two clean endpoints' }
 
-const FACTION_BARS = [
+export const FACTION_BARS = [
   { name: 'CyberSec', hack: 60 },
   { name: 'Tian Di Hui', hack: 50 },
   { name: 'Netburners', hack: 80 },
@@ -116,7 +116,7 @@ const FACTION_BARS = [
   { name: 'Slum Snakes', hack: 0 },
   { name: 'Tetrads', hack: 0 },
 ]
-const CITY_GROUPS = [['Chongqing', 'New Tokyo', 'Ishima'], ['Sector-12', 'Aevum'], ['Volhaven']]
+export const CITY_GROUPS = [['Chongqing', 'New Tokyo', 'Ishima'], ['Sector-12', 'Aevum'], ['Volhaven']]
 const NFG = 'NeuroFlux Governor'
 const SPECIAL = new Set([NFG, 'The Red Pill', "Stanek's Gift - Genesis", "Stanek's Gift - Awakening", "Stanek's Gift - Serenity"])
 

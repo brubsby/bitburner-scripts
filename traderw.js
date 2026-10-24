@@ -130,6 +130,16 @@ export const rwBn8Kappa = (homeGB) => RW_BN8.kappa * Math.pow(Math.min(RW_BN8.ho
  * market age (a fresh market after every install). { capitalReturnPerSec, capitalScaleW, capitalShape,
  * capitalAge: { W1, beta, aMin, ageNowH, fourS } }.
  */
+/**
+ * The knee at market age `a` hours for an inputs' capitalAge {W1, beta, aMin}, quantised to 10% steps so the
+ * shape tables (shapeTable, cached per knee) are shared — exitplan.hoursToMoney's kneeQ, for the money models
+ * outside it (lifeplan.freshLifeMoney, countexit.moneyAfter). Null without an age model.
+ */
+export function ageKneeQ(ageK, a) {
+  if (!ageK || !pos(ageK.W1)) return null
+  return Math.exp(Math.round(Math.log(ageK.W1 * Math.pow(Math.max(num(a) ? a : 0, pos(ageK.aMin) ? ageK.aMin : 0.5), num(ageK.beta) ? ageK.beta : 0)) / 0.1) * 0.1)
+}
+
 export function capitalAgeInputsOf({ regime = 'pre-long', ageNowH = 0, homeGB = null, bn8 = true } = {}) {
   const reg = RW_AGE[regime] ? regime : 'pre-long'
   const p = RW_AGE[reg]
