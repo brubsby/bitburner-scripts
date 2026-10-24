@@ -2694,6 +2694,8 @@ function routeGiftOf(ns, info, base, s0) {
   const prevS = planCtx?.prevAny?.decisions?.stanek
   const fH = prevS?.basis === ALLOC_BASIS && typeof prevS.f === 'number' && prevS.f > 0 ? prevS.f : DEFAULT_F
   const hackOptions = []
+  // the charger over the node: the SAME model and inputs the chain priced the accept on (chainHackChargerOf)
+  const charger = chainHackChargerOf(ns, info)
   if (st && Array.isArray(st.layout?.placed) && st.layout.placed.length) {
     const gk = `${w}x${h}|${np}`
     if (typeof w === 'number' && !HACK_LAYOUT_MEMO.has(gk)) HACK_LAYOUT_MEMO.set(gk, layoutForGrid(w, h, np, 'hack'))
@@ -2701,7 +2703,7 @@ function routeGiftOf(ns, info, base, s0) {
     const layouts = [['the placed layout', st.layout.placed]]
     if (tab?.placed?.length && !sameLayout(st.layout.placed.map((p) => ({ ...p, rotation: p.rot })), tab.placed)) layouts.push([`the hacking layout (${tab.source})`, tab.placed])
     for (const [src, L] of layouts) {
-      const r = hackGiftInputsOf(base, st, { node: info.currentNode, layout: L, f: fH, sameLife })
+      const r = hackGiftInputsOf(base, st, { node: info.currentNode, layout: L, f: fH, sameLife, charger })
       if (r.inputs) hackOptions.push({ src: `${src} at f ${fH}`.slice(0, 160), key: layoutKeyOf(L), inputs: r.inputs })
     }
   }
@@ -2713,8 +2715,9 @@ function routeGiftOf(ns, info, base, s0) {
     hackOptions,
     bladeOptions,
     switchCostH: ROUTE_GIFT.switchCostH,
+    charger,
     boundInputsOf: awakeningBoundInputsOf,
-    notSimulated: "Awakening/Serenity (an install's; the hacking arm's bound is published), the charger's host growing within the node, the hacking route's first life on the placed layout (each life priced at the life-average from zero)",
+    notSimulated: "Awakening/Serenity (an install's; the hacking arm's bound is published), the charger a MODEL over the node (stanekplan.hackChargerPathOf, the chain's), the hacking route's first life on the placed layout (each life priced at the life-average from zero)",
     why: `${live ? '' : `no placed layout of this life in ${STANEK_FILE}: the Bladeburner arm is unpriced with the gift; `}${hackOptions.length ? '' : `no layout and fleet of this node in ${STANEK_FILE}: the hacking arm is unpriced with the gift`}`.trim() || null,
   }
 }
@@ -2729,13 +2732,16 @@ function routeGiftOf(ns, info, base, s0) {
  * BN13 accepts by policy, GIFT_NODES). null: no Church here, or the gift forfeited.
  */
 function routeGiftChainOf(ns, info, base, s0, g) {
-  return routeGiftChainOptionsOf({ gift: g, nodeMults: bitNodeMults(info), base, install: s0?.install ?? null, hackCharger: chainHackChargerOf(ns, info) })
+  const charger = chainHackChargerOf(ns, info)
+  const r = routeGiftChainOptionsOf({ gift: g, nodeMults: bitNodeMults(info), base, install: s0?.install ?? null, hackCharger: charger })
+  return r ? { ...r, charger } : r
 }
 /**
  * The hacking charger the chain prices hack + gift on (stanekplan.hackChainGiftInputsOf): the fleet measured
  * now (batch.txt ram.total; home's RAM and cores from the watchdog's homeup record) and the node's no-gift
  * hacking length to ramp over — the last pass's hacking arm WITHOUT the gift (hours from then) plus the node's
- * age then; none yet: the measured fleet alone (a lower bound).
+ * age then; after the accept (no arm without the gift) the length the chain last ramped over (decisions.bladeRoute
+ * .charger of this node), so the accept is re-priced on its own trajectory; none yet: HACK_CHARGER_RAMP.fallbackH.
  */
 function chainHackChargerOf(ns, info) { // ramHours: the last pass's hackBareH (no gift, no mandate) + the node's age then, else HACK_CHARGER_RAMP.fallbackH
   const liveGB = readJson(ns, '/tel/batch.txt')?.ram?.total
@@ -2744,8 +2750,9 @@ function chainHackChargerOf(ns, info) { // ramHours: the last pass's hackBareH (
   const prev = planCtx?.prevAny?.decisions?.bladeRoute
   const prevAt = Date.parse(prev?.decidedAt ?? '')
   const bare = prev?.gift?.chain === true ? prev.gift.hackBareH : null
-  const ramHours = typeof bare === 'number' && bare > 0 && prevAt > 0 && info?.lastNodeReset > 0 ? (prevAt - info.lastNodeReset) / 3.6e6 + bare : HACK_CHARGER_RAMP.fallbackH
-  return { liveGB: typeof liveGB === 'number' && liveGB > 0 ? liveGB : 0, liveHome: hu?.homeRam > 0 ? { ram: hu.homeRam, cores: hu.cores > 0 ? hu.cores : 1 } : null, ageH: ageH ?? 0, ramHours: ageH === null ? null : Math.max(ramHours, ageH) }
+  const kept = prev?.charger?.lastNodeReset === info?.lastNodeReset && prev.charger.ramHours > 0 ? prev.charger.ramHours : null
+  const ramHours = typeof bare === 'number' && bare > 0 && prevAt > 0 && info?.lastNodeReset > 0 ? (prevAt - info.lastNodeReset) / 3.6e6 + bare : kept ?? HACK_CHARGER_RAMP.fallbackH
+  return { lastNodeReset: info?.lastNodeReset ?? null, liveGB: typeof liveGB === 'number' && liveGB > 0 ? liveGB : 0, liveHome: hu?.homeRam > 0 ? { ram: hu.homeRam, cores: hu.cores > 0 ? hu.cores : 1 } : null, ageH: ageH ?? 0, ramHours: ageH === null ? null : Math.max(ramHours, ageH) }
 }
 /** The fleet the BLADEBURNER route would run is re-chosen at most this often (the chooser: every configuration, one exit each). */
 const ROUTE_FLEET_MS = 30 * 60e3
@@ -2944,6 +2951,8 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         fleet: { source: fl.source, why: fl.why },
         // the fleet the blade ARM was priced with (the committed one, or the chooser's: never the hack route's assignments)
         armSleeves: armSleeves(),
+        // the hacking charger the gift was priced on (chainHackChargerOf): its ramp length carries past the accept
+        charger: gift?.charger ?? null,
         routeFleet: routeFleet ?? { config: null, why: fl.source === 'committed' ? "sleeve.js's committed Bladeburner fleet" : 'no sleeves' },
         // Who acts for the division on this arm: bb-lite until untilH (null: the full daemon throughout); routeBuy: the route's own home purchase (homeplan.routeFullAtOf).
         lean: { untilH: leanUntilH === Infinity ? 'never' : Number.isFinite(leanUntilH) ? +leanUntilH.toFixed(3) : null, ...(leanRoute ? { routeBuy: { buyAtH: Number.isFinite(leanRoute.buyAtH) ? +leanRoute.buyAtH.toFixed(3) : null, cost: Number.isFinite(leanRoute.cost) ? Math.round(leanRoute.cost) : null, why: leanRoute.why } } : {}) },

@@ -393,7 +393,7 @@ Bladeburner layout from zero on the BLADE_HOST mid ramp), blade without, hack wi
 (2026-10-18, `stanekplan.hackChainGiftInputsOf`: the hacking layout from zero each life at f in
 `stanekepoch.CHAIN_HACK_F`, Genesis x0.9 at once, the charger a MODEL before the accept — the gameplan's ramp
 `HACK_CHARGER_RAMP`, home 2^8 -> 2^21 over the bare no-gift hacking exit `gift.hackBareH`, floored at the measured
-fleet, batch.txt + homeup); the min is the route, and `route.gift.accept` in progress.txt
+fleet, batch.txt + homeup; ONE charger model, `stanekplan.hackChargerPathOf`, re-prices the accepted arm in `hackGiftInputsOf` on the same ramp from the gift's live charge — `tools/sim/chargercal.mjs` checks the ramp against history.jsonl, SG24); the min is the route, and `route.gift.accept` in progress.txt
 (`giftVerdictOfProgress`) is what stanek.js accepts on and act.js gates on. Live BN7.3 16:27Z re-priced offline
 (the published arms reproduced to 0.01% / 0.3%): fleet i1s3c2t100, blade + gift 25.3h, blade 30.4h, hack 54.7h ->
 blade, accept. Test SG22. An UNPRICED decision (an arm unpriced, the route held) publishes `accept: null`, and

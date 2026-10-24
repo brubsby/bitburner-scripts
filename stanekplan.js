@@ -1953,21 +1953,109 @@ export function giftLifeInputsOf(base, L) {
  * exit inputs, measured under the gift as it is (Genesis's x0.9 is in the player's multipliers; the placed
  * layout at the charger's live fraction fNow of the fleet). The hacking route installs, and every install
  * clears the charge (Prestige.ts:125 -> StaneksGift.ts:226-228), so each life holds `layout` at f from zero:
- * the inputs move from the placed layout at fNow to `layout`'s life-average at f over the life
- * (layoutInputsOf; the regrowth is that average), and carry giftLife for the life length decision.
- * Returns {inputs, why} — inputs null where /tel/stanek.txt holds no layout and fleet of this node.
+ * the inputs move from the placed layout at fNow to `layout`'s life-average at f over the life, on the
+ * charger over the node (`charger`: hackChargerPathOf, THE SAME MODEL the chain priced the accept on —
+ * live BN5.2 dry-run 2026-10-24: the chain's ramp vs this builder's fleet held at entry flipped the
+ * accept 13.0h -> 20.4h one pass later; no `charger`: the measured fleet alone, a lower bound), and
+ * carry giftLife (the measured fleet) for the life length decision.
+ * Returns {inputs, basis, why} — inputs null where /tel/stanek.txt holds no layout and fleet of this node.
  */
-export function hackGiftInputsOf(base, st, { node, layout, f = DEFAULT_F, sameLife = true } = {}) {
-  if (!st || st.node !== node || !Array.isArray(st.layout?.placed) || !st.layout.placed.length) return { inputs: null, why: `${STANEK_FILE} has no placed layout of this node` }
+export function hackGiftInputsOf(base, st, { node, layout, f = DEFAULT_F, sameLife = true, charger = null } = {}) {
+  if (!st || st.node !== node || !Array.isArray(st.layout?.placed) || !st.layout.placed.length) return { inputs: null, basis: null, why: `${STANEK_FILE} has no placed layout of this node` }
   const fleetGB = st.fleet?.gb
   const hosts = Array.isArray(st.fleet?.hosts) ? st.fleet.hosts : null
   const cycleH = base?.cycleHours
-  if (!(fleetGB > 0) || !hosts?.length) return { inputs: null, why: `${STANEK_FILE} has no fleet: the hacking charger is unpriced` }
-  if (!(cycleH > 0)) return { inputs: null, why: 'cycleHours unknown in the exit inputs: the life the charge regrows over is unpriced' }
+  if (!(fleetGB > 0) || !hosts?.length) return { inputs: null, basis: null, why: `${STANEK_FILE} has no fleet: the hacking charger is unpriced` }
+  if (!(cycleH > 0)) return { inputs: null, basis: null, why: 'cycleHours unknown in the exit inputs: the life the charge regrows over is unpriced' }
   const fNow = sameLife && st.charger?.gb > 0 ? Math.min(1, st.charger.gb / fleetGB) : 0
-  const ctx = { layout: st.layout.placed, nodePower: st.layout.nodePower, fleetGB, hosts, fNow, cycleH }
   const L = Array.isArray(layout) && layout.length ? layout : st.layout.placed
-  return { inputs: { ...layoutInputsOf(base, ctx, f, L), giftLife: { layout: L, nodePower: st.layout.nodePower, fleetGB, hosts, f, refL: cycleH } }, why: `${layoutKeyOf(L)} at f ${f} of the fleet, from the placed ${layoutKeyOf(st.layout.placed)} at fNow ${fNow.toFixed(3)}` }
+  const np = st.layout.nodePower
+  const home = hosts.find((h) => h.host === 'home')
+  const path = hackChargerPathOf(charger ?? { liveGB: fleetGB, liveHome: home ? { ram: home.maxRam, cores: home.cores } : null })
+  if (!path.points) return { inputs: null, basis: null, why: path.why }
+  const at = hackChargerLnOf(path, { layout: L, nodePower: np, f, cycleH })
+  // what the inputs were measured under: the gift's LIVE charge (the player's multipliers carry it now — at the
+  // accept, nothing: the chain's zero) and the RAM the charger holds now (fNow of the fleet). The life-average at
+  // fNow here read a just-started charger as charged (BN2.2 dry-run 2026-10-24: 19.0h -> 22.4h at the same f).
+  const live = sameLife ? liveGiftLnOf(st) : null
+  const lnRam = Math.log(1 - Math.min(0.99, fNow))
+  const z = live ?? { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
+  const now = { lnIncome: z.lnIncome + lnRam, lnExp: z.lnExp + lnRam, lnRep: z.lnRep, lnHack: z.lnHack }
+  return { inputs: { ...scaleByGift(base, at, now), giftLife: { layout: L, nodePower: np, fleetGB, hosts, f, refL: cycleH } }, basis: path.basis, why: `${layoutKeyOf(L)} at f ${f}, from the placed ${layoutKeyOf(st.layout.placed)} at its live charge (ln hacking ${z.lnHack.toFixed(4)}) and fNow ${fNow.toFixed(3)}; ${path.why}` }
+}
+
+/**
+ * The hacking channels of the gift's LIVE charge (/tel/stanek.txt `fragments`: highestCharge, numCharge per
+ * placed fragment, through the game's effect, layoutMults -> calculateEffect): {lnIncome, lnExp, lnRep, lnHack}
+ * as chargeLnOf composes them (no RAM term). null when the record holds no fragments.
+ */
+export function liveGiftLnOf(st, a = HACK_SHARE) {
+  const fr = Array.isArray(st?.fragments) ? st.fragments.filter((x) => Number.isInteger(x?.id) && fragmentById(x.id)) : []
+  if (!fr.length) return null
+  const m = layoutMults(fr.map((x) => ({ id: x.id, x: x.x, y: x.y, rot: x.rot ?? 0 })), fr.map((x) => ({ highestCharge: x.highestCharge ?? 0, numCharge: x.numCharge ?? 0 })), st.layout?.nodePower ?? 1)
+  return {
+    lnIncome: Math.log(m.hacking_speed) + Math.log(m.hacking) - Math.log(a / m.hacking_money + (1 - a) / m.hacking_grow),
+    lnExp: Math.log(m.hacking_exp) + Math.log(m.hacking_speed),
+    lnRep: Math.log(m.faction_rep) + Math.log(m.hacking),
+    lnHack: Math.log(m.hacking),
+  }
+}
+
+/**
+ * THE HACKING CHARGER OVER THE NODE — ONE MODEL for the route's hacking arm with the gift, before the accept
+ * (hackChainGiftInputsOf) and after it (hackGiftInputsOf), so the accept is re-priced on the trajectory it
+ * was taken on. The charger runs f x the fleet (chargerPlaceOf, concentrated on the biggest host: home);
+ * home grows on the gameplan's ramp (homeAt: 2^HOME.log2Start -> 2^log2End, cores 1 -> HOME.coresEnd,
+ * shape u^HOME.shapeQ, u = hours into the node / `ramHours`, the node's no-gift hacking length), floored at
+ * the measured home and the fleet measured now (`liveGB`; the rest of the fleet held as measured: it only
+ * grows). The node's remaining time at the ramp's quadrature points (ageH -> ramHours). `ramHours` unknown:
+ * the measured fleet alone (basis 'measured', a LOWER bound). The per-life charge is GIFT_CAL's (calChargeLnOf).
+ * CALIBRATED (tools/sim/chargercal.mjs, the home paths of 9 hacking-route nodes in history.jsonl, the gift
+ * factor over the node on BN5.2's layout): median node -3.0% (tol 15%); gift nodes BN13.1 +5.0%, BN10.3
+ * -23.7% (its home reached 2^24 by 30h: the ramp is LOW there); the spread -24%..+5% printed every run.
+ * Returns {points: [{u, fleetGB, hosts}] | null, basis, why}.
+ */
+export function hackChargerPathOf({ liveGB = 0, liveHome = null, ageH = 0, ramHours = null, log2End = HACK_CHARGER_RAMP.log2End } = {}) {
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  const hRam = fin(liveHome?.ram) && liveHome.ram > 0 ? liveHome.ram : 0
+  const hCores = fin(liveHome?.cores) && liveHome.cores >= 1 ? liveHome.cores : 1
+  const restGB = Math.max(0, (fin(liveGB) ? liveGB : 0) - hRam)
+  const ramp = fin(ramHours) && ramHours > 0 && fin(ageH) && ageH >= 0
+  const us = ramp ? [0.125, 0.375, 0.625, 0.875].map((q) => Math.min(1, (ageH + q * Math.max(0, ramHours - ageH)) / ramHours)) : [null]
+  const points = []
+  for (const u of us) {
+    const h = u === null ? { ram: 0, cores: 1 } : homeAt(u, log2End)
+    const home = { host: 'home', cores: Math.max(hCores, h.cores), maxRam: Math.max(hRam, h.ram) }
+    const hosts = [{ ...home, capGb: home.maxRam }, ...(restGB > 0 ? [{ host: 'fleet', cores: 1, maxRam: restGB, capGb: restGB }] : [])]
+    const fleetGB = home.maxRam + restGB
+    if (!(fleetGB > 0)) return { points: null, basis: null, why: 'no fleet measured and no ramp: the charger is unpriced' }
+    points.push({ u, fleetGB, hosts })
+  }
+  const basis = ramp ? 'ramp' : 'measured'
+  const meanGB = points.reduce((s, p) => s + p.fleetGB, 0) / points.length
+  return { points, basis, why: `the charger ${ramp ? `on ${HACK_CHARGER_RAMP.source} over the node's ${ramHours.toFixed(1)}h from ${ageH.toFixed(1)}h, floored at the measured ${Math.round(liveGB)}GB` : `on the fleet measured now (${Math.round(liveGB)}GB; no node length to ramp over: a LOWER bound)`} — mean fleet ${Math.round(meanGB)}GB` }
+}
+/**
+ * chargeLnOf on the MEASURED per-life charge (GIFT_CAL, giftcal.mjs: 43 gift lives of BN13.1 + BN10.3 — the
+ * same calibration nodeModel takes as o.cal): every fragment's ln effect x kappa, nothing charged for the
+ * first delayH of a life (the charging time scaled as nodeModel's chg). The RAM the charger takes is not the
+ * gift's: its ln(1 - gb/fleet) is kept whole.
+ */
+export function calChargeLnOf(o, cal = GIFT_CAL) {
+  const k = Number.isFinite(cal?.kappa) ? cal.kappa : 1
+  const d = Number.isFinite(cal?.delayH) && cal.delayH > 0 && o.cycleH > 0 ? Math.max(0, o.cycleH - cal.delayH) / o.cycleH : 1
+  const r = chargeLnOf({ ...o, duty: (o.duty ?? ALLOC_DUTY) * d })
+  const lnRam = Math.log(1 - r.batchLoss)
+  return { ...r, lnIncome: k * (r.lnIncome - lnRam) + lnRam, lnExp: k * (r.lnExp - lnRam) + lnRam, lnRep: k * r.lnRep, lnHack: k * r.lnHack }
+}
+/** `layout` at f from zero each life (the calibrated life-average, calChargeLnOf), averaged over the charger path's points. */
+export function hackChargerLnOf(path, { layout, nodePower = 1, f, cycleH }) {
+  const acc = { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
+  for (const p of path.points) {
+    const r = calChargeLnOf({ layout, nodePower, fleetGB: p.fleetGB, hosts: p.hosts, f, cycleH })
+    for (const k of Object.keys(acc)) acc[k] += r[k] / path.points.length
+  }
+  return acc
 }
 
 /**
@@ -1988,33 +2076,18 @@ export function hackGiftInputsOf(base, st, { node, layout, f = DEFAULT_F, sameLi
 // a default, stated; the live BN10.3 replay moved the hack + gift arm 0.02h between 60h and 300h of it.
 export const HACK_CHARGER_RAMP = { log2End: 21, fallbackH: 61, source: 'the gameplan charger ramp (stanekplan.nodeModel homeAt; tools/sim/gameplan/effects.mjs stRam mid 21 = log2 home GB at a no-gift hacking exit, MEASURED p50)' }
 export function hackChainGiftInputsOf(base, { layout, nodePower = 1, f = DEFAULT_F, liveGB = 0, liveHome = null, ageH = 0, ramHours = null, log2End = HACK_CHARGER_RAMP.log2End } = {}) {
-  const fin = (x) => typeof x === 'number' && isFinite(x)
   const cycleH = base?.cycleHours
   if (!Array.isArray(layout) || !layout.length) return { inputs: null, basis: null, why: 'no hacking layout for this grid' }
   if (!(cycleH > 0)) return { inputs: null, basis: null, why: 'cycleHours unknown in the exit inputs: the life the charge regrows over is unpriced' }
-  const hRam = fin(liveHome?.ram) && liveHome.ram > 0 ? liveHome.ram : 0
-  const hCores = fin(liveHome?.cores) && liveHome.cores >= 1 ? liveHome.cores : 1
-  const restGB = Math.max(0, (fin(liveGB) ? liveGB : 0) - hRam)
-  const ramp = fin(ramHours) && ramHours > 0 && fin(ageH) && ageH >= 0
-  const us = ramp ? [0.125, 0.375, 0.625, 0.875].map((q) => Math.min(1, (ageH + q * Math.max(0, ramHours - ageH)) / ramHours)) : [null]
-  const acc = { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
-  let gbSum = 0
-  for (const u of us) {
-    const h = u === null ? { ram: 0, cores: 1 } : homeAt(u, log2End)
-    const home = { host: 'home', cores: Math.max(hCores, h.cores), maxRam: Math.max(hRam, h.ram) }
-    const hosts = [{ ...home, capGb: home.maxRam }, ...(restGB > 0 ? [{ host: 'fleet', cores: 1, maxRam: restGB, capGb: restGB }] : [])]
-    const fleetGB = home.maxRam + restGB
-    if (!(fleetGB > 0)) return { inputs: null, basis: null, why: 'no fleet measured and no ramp: the charger is unpriced' }
-    gbSum += fleetGB
-    const r = chargeLnOf({ layout, nodePower, fleetGB, hosts, f, cycleH })
-    for (const k of Object.keys(acc)) acc[k] += r[k] / us.length
-  }
+  // the charger over the node: hackChargerPathOf, the one model hackGiftInputsOf re-prices the accept on
+  const path = hackChargerPathOf({ liveGB, liveHome, ageH, ramHours, log2End })
+  if (!path.points) return { inputs: null, basis: null, why: path.why }
+  const acc = hackChargerLnOf(path, { layout, nodePower, f, cycleH })
   const zero = { lnIncome: 0, lnExp: 0, lnRep: 0, lnHack: 0 }
-  const basis = ramp ? 'ramp' : 'measured'
   return {
     inputs: scaleByGift(penaltyStepInputsOf(base, PENALTY[0], PENALTY[1]), acc, zero),
-    basis,
-    why: `${layoutKeyOf(layout)} at f ${f} from zero each life (Genesis x${PENALTY[1]} at the accept); the charger ${ramp ? `on ${HACK_CHARGER_RAMP.source} over the node's ${ramHours.toFixed(1)}h from ${ageH.toFixed(1)}h, floored at the measured ${Math.round(liveGB)}GB` : `on the fleet measured now (${Math.round(liveGB)}GB; no node length to ramp over: a LOWER bound)`} — mean fleet ${Math.round(gbSum / us.length)}GB, ln(hacking) ${acc.lnHack >= 0 ? '+' : ''}${acc.lnHack.toFixed(4)}, ln(income) ${acc.lnIncome >= 0 ? '+' : ''}${acc.lnIncome.toFixed(4)}`,
+    basis: path.basis,
+    why: `${layoutKeyOf(layout)} at f ${f} from zero each life (Genesis x${PENALTY[1]} at the accept); ${path.why}, ln(hacking) ${acc.lnHack >= 0 ? '+' : ''}${acc.lnHack.toFixed(4)}, ln(income) ${acc.lnIncome >= 0 ? '+' : ''}${acc.lnIncome.toFixed(4)}`,
   }
 }
 

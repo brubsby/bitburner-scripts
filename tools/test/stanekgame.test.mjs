@@ -49,6 +49,13 @@
 //       inputs, the Bladeburner arm the best gift path's members) and a switch pays ROUTE_GIFT's floor;
 //       routeHealthOf fails an acted != priced route with no file pin, a non-file pin, and a gift-accepted
 //       route not priced with it. RED: giftPinOf back; the gift options dropped; the file pin ignored.
+//   SG24 ONE CHARGER BEFORE AND AFTER THE ACCEPT (entry dry-run 2026-10-24, BN5.2: the chain priced hack +
+//       gift on the ramp, the accepted arm on the fleet measured at entry held fixed -> 13.0h at the accept,
+//       20.4h one pass later, 15.4h declining). On one charger (hackChargerPathOf), the accepted builder
+//       (hackGiftInputsOf, Genesis in the live multipliers, nothing charged yet) reproduces the chain's
+//       inputs (hackChainGiftInputsOf) on every channel; progress.js hands both the one chainHackChargerOf,
+//       and the ramp's length carries past the accept (decisions.bladeRoute.charger). RED: either builder
+//       off the shared path, or the accepted pass without the charger.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -1529,6 +1536,52 @@ async function sg23() {
   return c
 }
 
+async function sg24() {
+  const c = new Check('SG24', "one charger model before and after the accept: hackGiftInputsOf on the chain's charger reproduces hackChainGiftInputsOf")
+  const rd = (f) => fs.readFileSync(path.join(REPO, f), 'utf8')
+  const { bitNodeMults } = await import('../../bitNodeMultipliers.js')
+  const nm = bitNodeMults(5, 2)
+  const gs = sp.giftSize(nm.StaneksGiftExtraSize ?? 0, 3)
+  const np = nm.StaneksGiftPowerMultiplier
+  const L = sp.layoutForGrid(gs.width, gs.height, np, 'hack').placed.map((p) => ({ id: p.id, x: p.x, y: p.y, rot: p.rot ?? p.rotation }))
+  // the BN5.2 entry as the dry-run measured it: a 228GB fleet, home 128GB / 1 core
+  const base = { incomePerSec: 2.1e4, expPerSec: 310, repPerSec: 4.2, hackingMult: 1.7, cycleHours: 2.6 }
+  const charger = { lastNodeReset: 1, liveGB: 228, liveHome: { ram: 128, cores: 1 }, ageH: 0.1, ramHours: 19.2 }
+  const st = { node: 5, layout: { placed: L, nodePower: np }, fleet: { gb: 228, hosts: [{ host: 'home', cores: 1, maxRam: 128, capGb: 60 }, { host: 'n00dles', cores: 1, maxRam: 100, capGb: 100 }] }, charger: { gb: 0 } }
+  const accepted = sp.penaltyStepInputsOf(base, 1, sp.PENALTY[1]) // Genesis now in the live multipliers
+  const keys = ['incomePerSec', 'expPerSec', 'repPerSec', 'hackingMult']
+  for (const f of [0.05, 0.2, 0.3]) {
+    const pre = sp.hackChainGiftInputsOf(base, { ...charger, layout: L, nodePower: np, f })
+    const post = sp.hackGiftInputsOf(accepted, st, { node: 5, layout: L, f, sameLife: true, charger })
+    c.examined(1)
+    const off = keys.filter((k) => !(pre.inputs && post.inputs && Math.abs(post.inputs[k] / pre.inputs[k] - 1) < 1e-9))
+    if (off.length || pre.basis !== 'ramp' || post.basis !== 'ramp') c.fail(`f ${f}: the accepted builder must price the chain's trajectory (${off.join(', ') || 'basis'} differ)`, JSON.stringify({ pre: pre.inputs && keys.map((k) => pre.inputs[k]), post: post.inputs && keys.map((k) => post.inputs[k]), basis: [pre.basis, post.basis] }))
+  }
+  // the ramp is what moves it: the same accepted builder on the fleet held at entry prices lower
+  const held = sp.hackGiftInputsOf(accepted, st, { node: 5, layout: L, f: 0.2, sameLife: true })
+  const ramp = sp.hackGiftInputsOf(accepted, st, { node: 5, layout: L, f: 0.2, sameLife: true, charger })
+  c.examined(1)
+  if (!(held.basis === 'measured' && ramp.inputs?.hackingMult > held.inputs?.hackingMult)) c.fail('no charger: the measured fleet alone (a lower bound), below the ramp', JSON.stringify({ held: held.basis, h: held.inputs?.hackingMult, r: ramp.inputs?.hackingMult }))
+  else c.note(`BN5.2 at f 0.2: hacking x${(ramp.inputs.hackingMult / accepted.hackingMult).toFixed(3)} on the ramp vs x${(held.inputs.hackingMult / accepted.hackingMult).toFixed(3)} on the fleet held at entry`)
+  // the reference is the LIVE charge the inputs were measured under (never the life-average at fNow:
+  // a charger just started is not a charged gift — BN2.2 dry-run 19.0h -> 22.4h at the same f)
+  const frags = L.map((p) => ({ ...p, highestCharge: 40, numCharge: 30 }))
+  const live = sp.liveGiftLnOf({ fragments: frags, layout: { nodePower: np } })
+  const charged = sp.hackGiftInputsOf(accepted, { ...st, fragments: frags, charger: { gb: 44 } }, { node: 5, layout: L, f: 0.2, sameLife: true, charger })
+  const fresh = sp.hackGiftInputsOf(accepted, { ...st, charger: { gb: 44 } }, { node: 5, layout: L, f: 0.2, sameLife: true, charger })
+  c.examined(2)
+  if (!(live?.lnHack > 0) || Math.abs((charged.inputs.hackingMult * Math.exp(live.lnHack)) / fresh.inputs.hackingMult - 1) > 1e-9) c.fail('the reference must be the live charge of the record (layoutMults of its fragments)', JSON.stringify({ live, c: charged.inputs?.hackingMult, f: fresh.inputs?.hackingMult }))
+  if (Math.abs(fresh.inputs.hackingMult / ramp.inputs.hackingMult - 1) > 1e-9) c.fail('no charge on the record: a running charger (fNow > 0) moves no hacking channel — the gift is uncharged', JSON.stringify({ f: fresh.inputs.hackingMult, r: ramp.inputs.hackingMult }))
+  // the wiring: one charger builder for both passes, its ramp length carried past the accept
+  const pr = rd('progress.js')
+  c.examined(4)
+  if (!/const charger = chainHackChargerOf\(ns, info\)\n[^]*?hackGiftInputsOf\(base, st, \{ node: info\.currentNode, layout: L, f: fH, sameLife, charger \}\)/.test(pr)) c.fail("progress.js routeGiftOf must price the accepted arm on chainHackChargerOf (the chain's charger)")
+  if (!/hackCharger: charger \}\)\n\s*return r \? \{ \.\.\.r, charger \} : r/.test(pr)) c.fail('progress.js routeGiftChainOf must publish the charger it priced on')
+  if (!/charger: gift\?\.charger \?\? null,/.test(pr)) c.fail("decisions.bladeRoute must carry the charger (its ramp length is the next pass's)")
+  if (!/prev\?\.charger\?\.lastNodeReset === info\?\.lastNodeReset && prev\.charger\.ramHours > 0[^\n]*\n[^\n]*: kept \?\? HACK_CHARGER_RAMP\.fallbackH/.test(pr)) c.fail("chainHackChargerOf must keep the chain's ramp length after the accept (prev.charger of this node)")
+  return c
+}
+
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22(), await sg23()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22(), await sg23(), await sg24()]
 }
