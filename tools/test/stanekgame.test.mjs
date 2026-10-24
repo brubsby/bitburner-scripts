@@ -56,6 +56,13 @@
 //       inputs (hackChainGiftInputsOf) on every channel; progress.js hands both the one chainHackChargerOf,
 //       and the ramp's length carries past the accept (decisions.bladeRoute.charger). RED: either builder
 //       off the shared path, or the accepted pass without the charger.
+//   SG25 THE BLADEBURNER ARM TOO (BN5.2 dry-run 2026-10-24: blade + gift 13.3h at the accept on the BLADE_HOST
+//       ramp, 19.7h one pass later on the live charger's H held — 0 at the accept — vs 17.9h declining): the
+//       chain's blade + gift option and the accepted arm's 'keep' option, from the same zero charge on one
+//       charger (bladeChargerThrOf: the ramp at the node's age, floored at the live H), give the same factors
+//       over the exit; progress.js hands the accepted arm that charger. And the Simulacrum's money leg: SF7.3
+//       not joined -> it arrives at the join, no money leg; a money leg past the exit at today's income is
+//       published unpriced (null + cause), never an hours figure (moneyH 3805h at the entry).
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -1576,12 +1583,81 @@ async function sg24() {
   const pr = rd('progress.js')
   c.examined(4)
   if (!/const charger = chainHackChargerOf\(ns, info\)\n[^]*?hackGiftInputsOf\(base, st, \{ node: info\.currentNode, layout: L, f: fH, sameLife, charger \}\)/.test(pr)) c.fail("progress.js routeGiftOf must price the accepted arm on chainHackChargerOf (the chain's charger)")
-  if (!/hackCharger: charger \}\)\n\s*return r \? \{ \.\.\.r, charger \} : r/.test(pr)) c.fail('progress.js routeGiftChainOf must publish the charger it priced on')
+  if (!/hackCharger: charger[^\n]*\}\)\n\s*return r \? \{ \.\.\.r, charger \} : r/.test(pr)) c.fail('progress.js routeGiftChainOf must publish the charger it priced on')
   if (!/charger: gift\?\.charger \?\? null,/.test(pr)) c.fail("decisions.bladeRoute must carry the charger (its ramp length is the next pass's)")
   if (!/prev\?\.charger\?\.lastNodeReset === info\?\.lastNodeReset && prev\.charger\.ramHours > 0[^\n]*\n[^\n]*: kept \?\? HACK_CHARGER_RAMP\.fallbackH/.test(pr)) c.fail("chainHackChargerOf must keep the chain's ramp length after the accept (prev.charger of this node)")
   return c
 }
 
+async function sg25() {
+  const c = new Check('SG25', "the Bladeburner arm's charger is one model before and after the accept; the Simulacrum's money leg is never an absurd hours figure")
+  const rd = (f) => fs.readFileSync(path.join(REPO, f), 'utf8')
+  const se = await import('../../stanekepoch.js')
+  const BB = await import('../../bbplan.js')
+  const { bitNodeMults } = await import('../../bitNodeMultipliers.js')
+  const nm = bitNodeMults(5, 2)
+  const gift = { available: true, accepted: false, forfeited: false, l13: 3 }
+  const base = { incomePerSec: 2.1e4, expPerSec: 310, repPerSec: 4.2, hackingMult: 1.7, cycleHours: 2.6 }
+  const ageH = 0.05
+  const g = se.routeGiftChainOptionsOf({ gift, nodeMults: nm, base, install: null, bladeCharger: { ageH, H: 0 } })
+  const pre = g.bladeOptions.find((o) => o.make)
+  // the accepted pass: the same layout placed at zero charge, the live charger not yet running (H 0)
+  const placed = pre ? g.bladeOptions.length && sp.layoutForGrid(sp.giftSize(0, 3).width, sp.giftSize(0, 3).height, nm.StaneksGiftPowerMultiplier, 'blade').placed.map((p) => ({ id: p.id, x: p.x, y: p.y, rot: p.rot })) : []
+  const live = { placed, charges: placed.map(() => ({ highestCharge: 0, numCharge: 0 })), masses: placed.map(() => 0), H: 0, nodePower: nm.StaneksGiftPowerMultiplier }
+  const post = se.bladeGiftMakerOf({ live, target: null, nodePower: nm.StaneksGiftPowerMultiplier, thrAt: sp.bladeChargerThrOf({ ageH, H: live.H }) })
+  const held = se.bladeGiftMakerOf({ live, target: null, nodePower: nm.StaneksGiftPowerMultiplier })
+  c.examined(1)
+  if (!pre || !placed.length) c.fail('no Bladeburner gift option in the chain for BN5.2', JSON.stringify(g?.why))
+  else {
+    const a = pre.make()
+    const b = post()
+    const h = held()
+    let worst = 0
+    let heldGap = 0
+    for (const tS of [600, 3600, 4 * 3600, 12 * 3600]) {
+      const fa = a.factorAt(tS)
+      const fb = b.factorAt(tS)
+      const fh = h.factorAt(tS)
+      // the chain carries Genesis in its factors; the accepted pass has it in the live multipliers
+      for (const k of ['agility', 'dexterity', 'bladeburner_success_chance']) {
+        const pa = se.GENESIS_BLADE_KEYS.includes(k) ? fa[k] / sp.PENALTY[1] : fa[k]
+        worst = Math.max(worst, Math.abs(Math.log(fb[k] / pa)))
+        heldGap = Math.max(heldGap, Math.abs(Math.log(fh[k] / pa)))
+      }
+    }
+    c.examined(2)
+    if (worst > 1e-9) c.fail(`the accepted arm must price the chain's charger: the factors differ by ln ${worst.toExponential(2)}`)
+    if (!(heldGap > 1e-3)) c.fail('RED baseline: the live H held (0 at the accept) must price differently — else this check cannot see the bug', heldGap)
+    c.note(`blade factors: chain vs accepted ln gap ${worst.toExponential(1)}; vs the live H held ${heldGap.toFixed(3)}`)
+  }
+  // floored at the live charger: never below what it has now
+  const thr = sp.bladeChargerThrOf({ ageH: 10, H: 5000 })
+  c.examined(1)
+  const ramp = sp.bladeThrAt({ gbMax: sp.BLADE_HOST.gbMax.mid })
+  if (!(thr(0) === 5000 && sp.bladeChargerThrOf({ ageH: 0, H: 0 })(0) === ramp(0) && sp.bladeChargerThrOf({ ageH: 3, H: 0 })(0) === ramp(3 * 3600) && ramp(3 * 3600) > ramp(0))) c.fail('bladeChargerThrOf: the ramp at the node age, floored at the live H')
+  const pr = rd('progress.js')
+  c.examined(2)
+  if (!/thrAt: bladeChargerThrOf\(\{ ageH: charger\.ageH, H: live\.H \}\)/.test(pr)) c.fail("progress.js routeGiftOf: the accepted Bladeburner arm must charge on bladeChargerThrOf (the chain's model)")
+  if (!/bladeCharger: \{ ageH: charger\.ageH, H: 0 \}/.test(pr)) c.fail('progress.js routeGiftChainOf must place the chain on the node age (bladeCharger)')
+  // the Simulacrum
+  const s0 = { stub: true }
+  let v1 = null
+  try {
+    v1 = BB.simulacrumVerdict({ s0, withoutH: 15, cost: 3e11, repReq: 1e4, wealth: 0, moneyPerH: 7.9e7, atJoin: true })
+  } catch (e) {
+    v1 = { threw: String(e).slice(0, 120) }
+  }
+  c.examined(1)
+  if (!(v1?.buy === false && v1.atJoin === true && v1.moneyH === undefined)) c.fail('SF7.3 before the join: the Simulacrum arrives at the join, no money leg', JSON.stringify(v1))
+  const pr2 = /atJoin: tel\?\.joined !== true && \(info\.ownedSF\?\.get\?\.\(7\) \?\? 0\) >= 3/.test(pr)
+  c.examined(1)
+  if (!pr2) c.fail('progress.js must pass atJoin from SF7.3 and the division not joined')
+  const bp = rd('bbplan.js')
+  c.examined(1)
+  if (!/moneyH: moneyPast \? null : r2\(moneyH\)/.test(bp)) c.fail('bbplan.simulacrumVerdictGen must publish a money leg past the exit as unpriced (null + moneyUnpriced)')
+  return c
+}
+
 export async function run() {
-  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22(), await sg23(), await sg24()]
+  return [sg1(), await sg2(), await sg3(), await sg4(), sg5(), await sg6(), await sg7(), await sg8(), await sg9(), await sg10(), await sg11(), await sg12(), await sg13(), await sg14(), await sg15(), sg16(), await sg17(), sg18(), await sg19(), sg20(), await sg21(), await sg22(), await sg23(), await sg24(), await sg25()]
 }

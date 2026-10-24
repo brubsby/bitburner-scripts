@@ -26,10 +26,14 @@ const fin = (x) => typeof x === 'number' && Number.isFinite(x)
 const short = (s, n = 260) => (s == null ? null : String(s).slice(0, n))
 
 /** Every numeric field whose name reads as hours, with its path, in a published record. */
+// A RATE is not a duration: moneyPerH ($/h), rankPerH (rank/h) end in H and are not hours (BN5.2 dry-run 2026-10-24:
+// simulacrum.moneyPerH 7.9e7 read as an absurd 7.9e7h).
+export const RATE_KEY = /Per[A-Za-z]*H$|PerHour$/
 export function hourFieldsOf(obj, base = '', out = [], depth = 0) {
   if (!obj || typeof obj !== 'object' || depth > 8) return out
   for (const [k, v] of Object.entries(obj)) {
     const p = base ? `${base}.${k}` : k
+    if (RATE_KEY.test(k)) continue
     if (typeof v === 'number' && /(^|[a-z0-9_])H$|hours$|Hours$|^meanH$|^q\d0$/.test(k)) out.push({ path: p, v })
     else if (typeof v === 'string' && /(^|[a-z0-9_])H$|hours$|Hours$/.test(k) && /^(NaN|Infinity|-Infinity)$/.test(v)) out.push({ path: p, v: Number(v) })
     else if (v && typeof v === 'object') hourFieldsOf(v, p, out, depth + 1)

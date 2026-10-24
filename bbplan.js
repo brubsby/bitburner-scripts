@@ -2829,11 +2829,14 @@ export function bladeInstallOfBasis(basis, now = Date.now()) {
 export function simulacrumVerdict(o) {
   return drain(simulacrumVerdictGen(o))
 }
-export function* simulacrumVerdictGen({ s0, withoutH, cost, repReq, wealth = 0, moneyPerH = 0, rep = 0, repPerRank = 0, rankPerH = 0, owned = false, queued = false } = {}) {
+export function* simulacrumVerdictGen({ s0, withoutH, cost, repReq, wealth = 0, moneyPerH = 0, rep = 0, repPerRank = 0, rankPerH = 0, owned = false, queued = false, atJoin = false } = {}) {
   const r2 = (x) => (Number.isFinite(x) ? +x.toFixed(2) : null)
   const base = { cost: Number.isFinite(cost) ? Math.round(cost) : null, repReq: Number.isFinite(repReq) ? Math.round(repReq) : null, withoutH: r2(withoutH) }
   if (owned) return { ...base, buy: false, why: `${SIMULACRUM} is installed: the exit already runs the gym beside the actions` }
   if (queued) return { ...base, buy: false, why: `${SIMULACRUM} is bought and waits for an install: the install decision prices it (its batch carries it)` }
+  // SF7.3 held, not joined: Player.startBladeburner grants it at the join (PlayerObjectBladeburnerMethods.ts:13-19) — no money
+  // leg, no install (live BN5.2 dry-run 2026-10-24: a $3e11 price at the entry's income read moneyH 3805h)
+  if (atJoin) return { ...base, buy: false, atJoin: true, why: `${SIMULACRUM} arrives free at the Bladeburner join (Source-File 7.3): nothing to buy` }
   if (!s0 || !Number.isFinite(withoutH)) return { ...base, buy: false, why: 'no committed Bladeburner exit to price it against' }
   const moneyH = !Number.isFinite(cost) ? Infinity : wealth >= cost ? 0 : moneyPerH > 0 ? (cost - wealth) / moneyPerH : Infinity
   const repH = !Number.isFinite(repReq) ? Infinity : rep >= repReq ? 0 : repPerRank > 0 && rankPerH > 0 ? (repReq - rep) / (repPerRank * rankPerH) : Infinity
@@ -2844,7 +2847,10 @@ export function* simulacrumVerdictGen({ s0, withoutH, cost, repReq, wealth = 0, 
   const boundH = bound.hours
   // moneyPerH rides the verdict: splitctl.routeJoinClaimOf phases the hold on
   // this schedule (only cost - moneyPerH x repH must be in hand now).
-  const out = { ...base, moneyPerH: Number.isFinite(moneyPerH) && moneyPerH > 0 ? moneyPerH : null, moneyH: r2(moneyH), repH: r2(repH), reachH: r2(reachH), boundH: r2(boundH), boundGainH: Number.isFinite(boundH) ? r2(withoutH - boundH) : null }
+  // the money leg at TODAY's income held (the income's growth over the node is not simulated): past the exit it is
+  // no price — published null with its cause, never an hours figure (a 3805h moneyH read as an hours price)
+  const moneyPast = Number.isFinite(moneyH) && moneyH > withoutH
+  const out = { ...base, moneyPerH: Number.isFinite(moneyPerH) && moneyPerH > 0 ? moneyPerH : null, moneyH: moneyPast ? null : r2(moneyH), ...(moneyPast ? { moneyUnpriced: `at today's income ${(moneyPerH / 1e6).toFixed(1)}m/h held, ${moneyH.toFixed(0)}h — past the ${withoutH.toFixed(1)}h exit; the income's growth over the node is not simulated` } : {}), repH: r2(repH), reachH: r2(reachH), boundH: r2(boundH), boundGainH: Number.isFinite(boundH) ? r2(withoutH - boundH) : null }
   const money = !Number.isFinite(cost) ? 'money: the price is unread (snap-augprice)' : Number.isFinite(moneyH) ? `money in ${moneyH.toFixed(1)}h ($${(cost / 1e9).toFixed(1)}b against $${(wealth / 1e9).toFixed(3)}b at $${(moneyPerH / 1e6).toFixed(1)}m/h)` : `money never ($${(cost / 1e9).toFixed(1)}b, no income)`
   const repTxt = !Number.isFinite(repReq) ? 'reputation: the requirement is unread' : `reputation in ${Number.isFinite(repH) ? repH.toFixed(1) + 'h' : 'never'} (${Math.round(rep)} of ${Math.round(repReq)} at ${(repPerRank * rankPerH).toFixed(1)}/h)`
   if (!(reachH < withoutH)) return { ...out, buy: false, withH: null, gainH: null, why: `unreachable before the exit: ${money}, ${repTxt} — the exit is ${withoutH.toFixed(1)}h away; installed now at no cost it would be worth ${out.boundGainH ?? '?'}h` }

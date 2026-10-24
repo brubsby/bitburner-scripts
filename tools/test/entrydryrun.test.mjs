@@ -26,7 +26,7 @@ import path from 'node:path'
 import { Check } from './harness.mjs'
 import { REPO_ROOT } from './gameresolve.mjs'
 
-const { evaluate, ABSURD_H, acceptConsistencyOf } = await import('../sim/entry/evaluate.mjs')
+const { evaluate, ABSURD_H, acceptConsistencyOf, hourFieldsOf } = await import('../sim/entry/evaluate.mjs')
 const { entryHealthOf, DRYRUN_GRACE_MIN } = await import('../sim/entry/health.mjs')
 const { chainExtras, parseChain } = await import('../sim/entry/dryrun.mjs')
 
@@ -190,5 +190,14 @@ export async function run() {
     if (JSON.stringify(x) !== JSON.stringify(want)) c4.fail('chain extras wrong', `${JSON.stringify(x)} vs ${JSON.stringify(want)}`)
   }
   out.push(c4)
+
+  const c6 = new Check('ED6', 'a rate is not a duration: moneyPerH / rankPerH are never read as hours; moneyH and bladeH are')
+  {
+    const paths = hourFieldsOf({ bladeRoute: { bladeH: 13.3, simulacrum: { moneyPerH: 7.9e7, rankPerH: 120, moneyH: 3805.16, reachH: 2 } } }).map((x) => x.path)
+    c6.examined(4)
+    if (paths.some((p) => /PerH$/.test(p))) c6.fail('a per-hour rate was read as hours (BN5.2 dry-run: simulacrum.moneyPerH 7.9e7h)', paths.join(', '))
+    if (!paths.includes('bladeRoute.simulacrum.moneyH') || !paths.includes('bladeRoute.bladeH')) c6.fail('the real hours fields must still be read', paths.join(', '))
+  }
+  out.push(c6)
   return out
 }

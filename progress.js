@@ -185,7 +185,7 @@ import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, p
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
 import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT, routeGiftChainOptionsOf } from 'stanekepoch.js'
-import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, HACK_CHARGER_RAMP, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
+import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, HACK_CHARGER_RAMP, bladeChargerThrOf, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
 // THE FRESH LIFE FROM THE GAME'S FORMULAS (pure): the structural prior for
 // the hacking income, the exp ramp and the count batch's earnings curve.
@@ -2710,7 +2710,7 @@ function routeGiftOf(ns, info, base, s0) {
   const ep = readJson(ns, EPOCH_FILE)
   const dutyM = ep?.lastAugReset === info.lastAugReset ? ep?.decision?.track?.duty : null
   const duty = typeof dutyM === 'number' && dutyM > 0.3 && dutyM <= 1 ? dutyM : BLADE_HOST.duty
-  const bladeOptions = live ? bladeGiftOptionsOf({ live, width: w, height: h, nodePower: np }).map((o) => ({ src: o.src, key: o.key, make: bladeGiftMakerOf({ live, target: o.target, duty, nodePower: np, install: s0?.install ?? null }) })) : []
+  const bladeOptions = live ? bladeGiftOptionsOf({ live, width: w, height: h, nodePower: np }).map((o) => ({ src: o.src, key: o.key, make: bladeGiftMakerOf({ live, target: o.target, duty, nodePower: np, install: s0?.install ?? null, thrAt: bladeChargerThrOf({ ageH: charger.ageH, H: live.H }) }) })) : []
   return {
     hackOptions,
     bladeOptions,
@@ -2733,7 +2733,7 @@ function routeGiftOf(ns, info, base, s0) {
  */
 function routeGiftChainOf(ns, info, base, s0, g) {
   const charger = chainHackChargerOf(ns, info)
-  const r = routeGiftChainOptionsOf({ gift: g, nodeMults: bitNodeMults(info), base, install: s0?.install ?? null, hackCharger: charger })
+  const r = routeGiftChainOptionsOf({ gift: g, nodeMults: bitNodeMults(info), base, install: s0?.install ?? null, hackCharger: charger, bladeCharger: { ageH: charger.ageH, H: 0 } })
   return r ? { ...r, charger } : r
 }
 /**
@@ -2914,6 +2914,8 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
             rankPerH: rankPerH ?? 0,
             owned: simOwned,
             queued: (queued ?? []).includes(SIMULACRUM),
+            // SF7.3: startBladeburner grants it at the join (PlayerObjectBladeburnerMethods.ts:13-19)
+            atJoin: tel?.joined !== true && (info.ownedSF?.get?.(7) ?? 0) >= 3,
           })
           if (simulacrum) simulacrum.rankPerH = rankPerH === null ? 'unmeasured (no rank rate in /tel/bladeburner.txt)' : +rankPerH.toFixed(2)
         } catch (e) {

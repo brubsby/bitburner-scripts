@@ -1168,6 +1168,20 @@ export function bladeChargeAt({ gbMax, k, g0 = BLADE_HOST.g0, rampH = BLADE_HOST
 }
 /** The Bladeburner charger's threads (after the core bonus) at tSec: bladeChargeAt's host ramp, for chargeTrackOf. */
 export const bladeThrAt = ({ gbMax, g0 = BLADE_HOST.g0, rampH = BLADE_HOST.rampH, cores = BLADE_HOST.cores }) => (tS) => threadsOf(bladeHostGbAt(tS / 3600, { g0, rampH, gbMax }), cores)
+/**
+ * THE BLADEBURNER ROUTE'S CHARGER OVER THE NODE — ONE MODEL for the route decision's Bladeburner arm with
+ * the gift, before the accept (stanekepoch.routeGiftChainOptionsOf) and after it (progress.js routeGiftOf),
+ * so the accept is re-priced on the trajectory it was taken on (live BN5.2 dry-run 2026-10-24: the chain on
+ * this ramp 13.3h, the accepted pass on the live charger's H held — 0 at the accept, nothing charging — 19.7h
+ * vs 17.9h declining). threads(tS) = the BLADE_HOST ramp at the node's age ageH + tS (bladeThrAt, gbMax mid),
+ * floored at the live charger's power H (threads x core bonus; it never has less than it has now).
+ */
+export const bladeChargerThrOf = ({ ageH = 0, H = 0, gbMax = BLADE_HOST.gbMax.mid } = {}) => {
+  const ramp = bladeThrAt({ gbMax })
+  const a = Number.isFinite(ageH) && ageH > 0 ? ageH * 3600 : 0
+  const h = Number.isFinite(H) && H > 0 ? H : 0
+  return (tS) => Math.max(h, ramp(a + tS))
+}
 
 // ===========================================================================
 // L2: THE RE-LAY WITHIN A LIFE — what it deletes, how the charge regrows, its price
