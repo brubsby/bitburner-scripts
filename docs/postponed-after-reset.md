@@ -103,6 +103,11 @@ before starting each subagent.
 0d. **EXIT NOT APPROACHING spans a node change** (2026-10-21 17:11Z): compared BN3.1's last exit (4.3h) with BN3.2's
     first (10.3h) 0.5h after the entry and fired. The window must reset at lastNodeReset (and at installs if the
     model's basis changes).
+0e. **Body slot lent to crime/faction work after the Bladeburner join costs time** (bbboot.mjs, f49e76b):
+    in bbsim the 29% post-join lend measured +0.19h BN5.2, +0.63h BN13.3 (−0.03h BN2.2). progress.js owns the
+    slot policy; price the lend as a trajectory on the Bladeburner exit rather than assuming it free.
+0f. **BR3 CPU budget** failed once at 1248ms vs 1200ms right after f49e76b (machine loaded by 4 agents) —
+    re-run alone; if it holds, slice the bootstrap pricing step.
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
