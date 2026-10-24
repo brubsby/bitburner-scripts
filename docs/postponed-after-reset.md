@@ -127,7 +127,7 @@ before starting each subagent.
 0h. **Stale source guards red at HEAD** (2026-10-23): bn8.test B8w flags `readJson(ns, STATUS)` (a read) as a
     writer; B8af's regex wants `placeTrader(ns, all, hosts)` (seed.js passes liteHold). Both FAIL at b60e48e, so a
     real regression in either would be masked. Also planperf PP3/PP3c CPU guards (1217ms vs 800ms, loaded machine).
-0f. **BR3 CPU budget** failed once at 1248ms vs 1200ms right after f49e76b (machine loaded by 4 agents) —
+0f. ~~**BR3 CPU budget**~~ PASSES unloaded (2026-10-24 05:27Z) — failed once at 1248ms vs 1200ms right after f49e76b (machine loaded by 4 agents) —
     re-run alone; if it holds, slice the bootstrap pricing step.
 0h. **Exit inputs drift between passes** (c249a8f's author): the hack arm moved 14.3h -> 18.2h one pass after a
     blade accept in BN5.2 — eRep 0.11 -> 0 and the income formula evaluated at a different age (1.67h vs 2.08h).
