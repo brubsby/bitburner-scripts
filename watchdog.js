@@ -118,6 +118,8 @@ import { RAISED, FREEABLE, EVICTABLE, raisedPlacementOf, reserveRecordOf, reserv
 import { goPlaceStreamsOf, goPlaceValueOf, goMilestoneOf } from 'goplace.js'
 // Pure (0GB): bb-lite.js's actor headroom, held like the RAISED reservations.
 import { LITE_FILE, BB_FILE, liteReserveOf } from 'bbliteplan.js'
+// Pure (0GB): sleeve-lite.js's step — the fleet while sleeve.js has no host.
+import { LITE_FILE as SLEEVE_LITE_FILE, liteStepOf } from 'sleeveliteplan.js'
 
 const DAEMON = 'daemon'
 const JOB = 'job'
@@ -610,6 +612,29 @@ const WATCHED = [
     args: [],
     minIntervalMs: 600000,
     trigger: (ns) => canAccessFeature(ns.getResetInfo(), 10),
+  },
+  // THE SLEEVES WHILE sleeve.js HAS NO HOST (sleeve-lite.js, 15.25GB for a second, anywhere):
+  // idle at the entry (the game's bonus-time bank) and the Bladeburner route's fleet at the join,
+  // priced in sleeveliteplan.js. Triggered only when the step acts: never while sleeve.js runs (its
+  // reservation record, written by the sleeve.js entry above this cycle) or has assigned this life.
+  {
+    script: 'sleeve-lite.js',
+    host: 'anywhere',
+    args: [],
+    minIntervalMs: 120000,
+    trigger: (ns) => {
+      const info = ns.getResetInfo()
+      if (!canUseSleeve(info)) return false
+      const rd = (f) => {
+        try {
+          return JSON.parse(ns.read(f) || 'null')
+        } catch {
+          return null
+        }
+      }
+      const rec = rd(SLEEVE_LITE_FILE)
+      return liteStepOf({ node: info.currentNode, lifeStart: info.lastAugReset, rec, plan: rd('/tel/plan.txt'), blade: rd(BB_FILE), sleeveTel: rd('/tel/sleeve.txt'), reserve: rd(RAISED['sleeve.js'].file), n: rec?.n ?? null }).act !== null
+    },
   },
   // STANEK'S GIFT (stanek.js, ~20.5GB while it runs): accepts the gift at the
   // node's start where the stack wants it (stanekplan.giftWantOf: BN13, and the Bladeburner route where its priced exit wins),

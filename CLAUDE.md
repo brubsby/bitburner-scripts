@@ -414,6 +414,17 @@ the gift). `bbboot.mjs --calib` checks bbsim's opening against history.jsonl (st
 measured gym share; charger = live H 400); it runs SLOW in BN13 after ~2.5h (rank -23% at 5h). Tests
 BBOOT1-5.
 
+**Sleeves without sleeve.js are on shock recovery, and an idle sleeve banks its time** (2026-10-24,
+`sleeveliteplan.js`). Sleeve.prestige (every node entry) and every install put each sleeve on RECOVERY,
+not idle; an IDLE sleeve stores every tick's cycles (Sleeve.ts:264-276) and replays them at 15 a tick on
+its next work. sleeve.js (49.75GB) waits for a host; `sleeve-lite.js` (watchdog job, anywhere, 15.25GB
+for a second) sets the sleeves idle at the entry and the Bladeburner route's fleet (progress.js
+`routeFleet`, priced on the lite's count before sleeve.js has run) at the join, and stands down once
+sleeve.js runs or has assigned this life. bbsim models the bank (`o.sleeveBank`); `bbboot.mjs --levers
+--arms sleeve`: a fleet 1h/3h/5h after the join costs +0.20/+1.13/+2.55h in BN5.2, the bank cuts 3h to
++0.31h. Measured BN13.3: sleeve.js held the fleet within 0.14h of the entry (the save's shock), so the
+lite is insurance for an entry with no 64GB host. Tests SL1-SL4.
+
 **Early-game Singularity: act.js.** progress.js refuses to run until home spares
 its whole acting block (1,305GB at SF4.1). `act.js` (~6GB, anywhere) decides with
 `actplan.js` and runs ONE single-call actor at a time — `act-join/work/crime/gym/

@@ -37,6 +37,9 @@
 //   the gift (off)                                                +2.02 / +1.15 / +12.5                    live already
 // Earlier rounds (seeds 1-48, 401-432) picked the bars and the cadence and found the boot must end at the
 // first black op's RANK, not the op (the priced rule holds a rank-gated op: BN13 without the gift booted ~20h).
+// THE SLEEVES' START 2026-10-24 (SLEEVE_ARMS, seeds 701-760, BN5.2 / BN2.2): fleet 1h after the join +0.20 /
+// +0.09, 3h +1.13 / +0.82, 5h +2.55 / +2.09; idle at the entry (the bank) and the fleet at the join -0.03 / -0.00,
+// 3h late +0.31 / +0.25 — sleeveliteplan.js (sleeve-lite.js) ships the bank and the fleet at the join.
 // seeds 1-48: sleeve fleets (i8, s8, f8, i1s7, i2s2f4, i4f4, i2s2g4) all >= i4s4 (+0.2..+40h); training
 // (agility / agi+dex beside the actions, all to 200 before acting) +0.03..+1.3h; rest bands 0.5-0.7 /
 // 0.5-0.85 / 0.6-1.0 -0.09..+1.2h — none wins. Not searched here: sleeve gym transfer early (shock 100
@@ -340,6 +343,19 @@ export const DEFAULT_ARMS = [
   { name: 'no gift', arm: { sharedPolicy: BOOT_OFF, gift: false } },
 ]
 
+/**
+ * THE SLEEVES' START (sleeveliteplan.js prices sleeve-lite.js on these; `--levers --arms sleeve`): the fleet
+ * at the join vs late by H hours — the game keeps a sleeve without sleeve.js on shock RECOVERY
+ * (Sleeve.prestige), so a late fleet is recovery until then, no bank (bbsim's default) — and the sleeves
+ * IDLE from the entry, banking (o.sleeveBank: Sleeve.ts:264-276, replayed at 15 cycles a tick).
+ */
+export const SLEEVE_ARMS = [
+  { name: 'at join (game: recovery before)', arm: { spec: {} } },
+  ...[0.5, 1, 1.5, 3, 5].map((h) => ({ name: `join+${h}h (recovery until)`, arm: { spec: {}, policy: { sleevesFromH: h } } })),
+  { name: 'idle at entry, fleet at join (bank)', arm: { spec: { sleeveBank: true } } },
+  ...[1, 3].map((h) => ({ name: `idle at entry, join+${h}h (bank)`, arm: { spec: { sleeveBank: true }, policy: { sleevesFromH: h } } })),
+]
+
 /** Each arm against the first (the incumbent) on the same seeds: d = arm - incumbent, per seed, mean +- se. */
 async function levers({ cells, seeds, jobs, arms }) {
   for (const name of cells) {
@@ -374,7 +390,7 @@ async function main() {
   // the clean nodes played without the bootstrap policy (it shipped after them): calibrate the model they ran
   if (args.includes('--calib')) await calib({ seeds, jobs, arm: JSON.parse(opt('arm', JSON.stringify({ sharedPolicy: BOOT_OFF }))), fixStart: !args.includes('--raw') })
   if (args.includes('--levers')) {
-    const arms = opt('arms', null) ? JSON.parse(fs.readFileSync(opt('arms'), 'utf8')) : DEFAULT_ARMS
+    const arms = opt('arms', null) === 'sleeve' ? SLEEVE_ARMS : opt('arms', null) ? JSON.parse(fs.readFileSync(opt('arms'), 'utf8')) : DEFAULT_ARMS
     await levers({ cells: opt('cells', 'BN5.2').split(','), seeds, jobs, arms })
   }
 }

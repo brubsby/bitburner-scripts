@@ -477,10 +477,29 @@ export function runBladeburner(o) {
     // pol.sleevesFromH: the fleet idles until this many hours after the join (a replay of a
     // run whose sleeves were assigned late — BN6 2026-10-01/02, infiltrating only from 11:20Z).
     const sleevesFromS = (pol.sleevesFromH ?? 0) > 0 ? t + pol.sleevesFromH * 3600 : 0
+    // o.sleeveBank: THE GAME'S BONUS TIME. Sleeve.process (Sleeve.ts:264-276) adds every tick's
+    // cycles to storedCycles BEFORE it returns on `!this.currentWork`, so an idle sleeve banks its
+    // time, and a working one spends up to 15 cycles a tick (one cycle a tick accrues): 15x until the
+    // bank is gone. Off (the default) the fleet's clock starts when it is assigned, as before.
+    // o.preJoinSleeves: what the fleet does from the node's start to the join — 'idle' (banks the
+    // span) or 'recover' (Sleeve.shockRecovery from t 0: the span spent on shock, nothing banked).
+    const bank = o.sleeveBank === true
+    if (bank && !o.setup) {
+      if (o.preJoinSleeves === 'recover') {
+        for (const s of P.sleeves) {
+          s.shockRecovery()
+          for (let c = 0; c < t * 5 && s.currentWork; c += 15) s.process(15)
+          s.storedCycles = 0
+        }
+      } else for (const s of P.sleeves) s.storedCycles = t * 5
+    }
+    // pol.sleeves.bankFirst: every sleeve infiltrates while its bank lasts (support spends a bank
+    // on nothing), then takes its place in the mix.
+    const bankFirst = bank && pol.sleeves?.bankFirst === true
     let fleetStarted = false
     const startFleet = () => P.sleeves.forEach((s, i) =>
       s.startWork(
-        i < nInf
+        bankFirst || i < nInf
           ? new g.SleeveInfiltrateWork()
           : i < nInf + nSup
             ? new g.SleeveSupportWork()
@@ -755,7 +774,17 @@ export function runBladeburner(o) {
         startFleet()
         fleetStarted = true
       }
-      if (fleetStarted) for (const s of P.sleeves) s.process(STEP * 5)
+      if (fleetStarted) {
+        for (let i = 0; i < P.sleeves.length; i++) {
+          const s = P.sleeves[i]
+          // a bank: the game's ticks one at a time (15 cycles each); none: one call is the same sum
+          if (bank && s.storedCycles >= 5) for (let k = 0; k < STEP * 5; k++) s.process(1)
+          else s.process(STEP * 5)
+          if (bankFirst && i >= nInf && s.storedCycles < 15 && s.currentWork?.type === 'INFILTRATE') {
+            s.startWork(i < nInf + nSup ? new g.SleeveSupportWork() : i < nInf + nSup + nFa ? new g.SleeveBladeburnerWork({ actionId: { type: T.General, name: g.BladeburnerGeneralActionName.FieldAnalysis } }) : new g.SleeveClassWork({ classType: g.GymType[gymStatsOf(pol.sleeves?.gymStats)[(i - nInf - nSup - nFa) % gymStatsOf(pol.sleeves?.gymStats).length]], location: GYM }))
+          }
+        }
+      } else if (bank) for (const s of P.sleeves) s.storedCycles += STEP * 5
       t += STEP
       if (bb.rank >= C.RankNeededForFaction && !faction.isMember) bb.joinFaction()
       if (!gymming && !startTrain && !(gRun && !simOn) && (!bb.action || bb.actionTimeCurrent === 0 || bb.actionTimeCurrent < STEP)) decide()

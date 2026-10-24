@@ -555,6 +555,16 @@ const STACK = [
     why: 'watchdog-triggered. Converts money into NeuroFlux levels through donations, which need favour past the donation threshold, which needs an install — so there is nothing for it to do in the first life at any home size',
   },
   {
+    // THE SLEEVES BEFORE sleeve.js FITS. Off home (costs the home budget nothing): a job, so
+    // budgeted here and launched by the watchdog's trigger (sleeveliteplan.liteStepOf).
+    script: 'sleeve-lite.js',
+    where: 'anywhere',
+    kind: 'job',
+    tier: 64,
+    rank: 36,
+    why: 'watchdog-triggered while sleeve.js (49.75GB) has no host: the sleeves idle at the entry (bonus time, replayed at 15x on what follows) and on the Bladeburner fleet the route would run at the join; 15.25GB for a second, priced in sleeveliteplan.js',
+  },
+  {
     script: 'sleeveaug.js',
     where: 'home',
     kind: 'job',

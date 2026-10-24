@@ -169,6 +169,8 @@ import { bestCrimeFor, karmaGrindAcrossCycles, GYMS, nextGymLeg, gymLegs, gymRat
 import { bladeStartOf, bladeExitGen, bladeExitMeanGen, bladeMemberOf, bladeMemberOfDraw, BLADE_ENSEMBLE, bladeScatterGen, bladeContentOf, bladeInstallOfSpec, simulacrumVerdictGen, SIMULACRUM, POLICY as BB_POLICY, JOIN_COMBAT, bladeFleetOf, chooseSleeveConfigGen, sleeveConfigKey, successPosterior, rankRatePosterior, rankCalStep, rankWindowOkOf, RANK_CAL, bladeStateOf, bladeEventsOf, bladeGoCombatOf, bladeGraftsGen, bladeGraftSpecOf, BLADE_GRAFT, BLADE_GRAFT_SPECIAL, CONGRUITY } from 'bbplan.js'
 import { tierUnlocksOf, homeBuyAtOf, bladeHomeExitGen, routeFullAtOf, hackHomeArmOf, waitingResidentsOf, fleetForUnlockOf } from 'homeplan.js'
 import { leanUntilOf, FULL_TIER, LEAN_PLACE_H, bladeSlotStallOf, LITE_FILE, BB_FILE } from 'bbliteplan.js'
+// Pure (0GB): sleeve-lite.js's record — the live sleeve count before sleeve.js has run in this node.
+import { LITE_FILE as SLEEVE_LITE_FILE, liteSleevesOf } from 'sleeveliteplan.js'
 // Pure trajectory arithmetic, no ns surface: free to import.
 import { bestExitPolicy, bestExitPolicyGen, cycleStats, endpointCycleStats, installCadence, programExit, effectiveHackingMultOf, batchHackingGain, spendExit, spendRuns, spendExitFromRecord } from 'exitplan.js'
 import { measureFromLedger, installRecord, ledgerScores, achievableRate } from 'scorecard.js'
@@ -2769,7 +2771,8 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     // the fleet the blade route WOULD run — bbplan.chooseSleeveConfigGen over every configuration (gym
     // fleets included) for the live sleeve count — never the other route's assignments (live BN7.3 16:17Z:
     // 0/0/0 on the hack route's CLASS/SYNCHRO priced blade 51.1h vs hack 35.8h, so blade never got a fleet).
-    const nSleeves = ours ? (Number.isInteger(fleet.sleeves) ? fleet.sleeves : Array.isArray(fleet.assigned) ? fleet.assigned.length : 0) : 0
+    // Before sleeve.js has run in this node, sleeve-lite.js's count: it sets this fleet at the join (sleeveliteplan.js).
+    const nSleeves = ours ? (Number.isInteger(fleet.sleeves) ? fleet.sleeves : Array.isArray(fleet.assigned) ? fleet.assigned.length : 0) : liteSleevesOf(readJson(ns, SLEEVE_LITE_FILE), info.currentNode)
     const prevRF = pc.prevAny?.decisions?.bladeRoute?.routeFleet ?? null
     const rfFresh = (r) => !!r?.config && r.lastAugReset === info.lastAugReset && r.n === nSleeves && r.joined === (tel?.joined === true) && Date.now() - Date.parse(r.at ?? '') < ROUTE_FLEET_MS
     let routeFleet = fl.source === 'committed' || !(nSleeves > 0) ? null : rfFresh(prevRF) ? prevRF : null
