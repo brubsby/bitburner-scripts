@@ -1247,6 +1247,22 @@ function restoreLaunchClock(ns) {
 }
 
 /** Transient home residents the exit's reserve evicts (each restarts on its own once the reserve lapses). */
+/**
+ * endgame.js's --next FROM THE PLAN (tools/sim/gameplan/plan.mjs writes next-node.txt; the daemon pushes it
+ * to /next-node.txt): used when it was solved for the node in progress (`from` = currentNode) and names a
+ * node 1-14 (BN15 excluded by the user). Otherwise the hand-set args. endgame.js still refuses a maxed node.
+ */
+export function nextNodeArgsOf(ns, fallback) {
+  try {
+    const r = JSON.parse(ns.read('/next-node.txt') || 'null')
+    const node = ns.getResetInfo().currentNode
+    if (r && Number.isInteger(r.next) && r.next >= 1 && r.next <= 14 && r.from === node) return ['--next', r.next]
+  } catch {
+    /* the hand-set args */
+  }
+  return fallback
+}
+
 export const ENDGAME_EVICT = ['ctauto.js', 'go-cheat.js', 'go.js'] // go.js 20.8GB: BN3.1 (10-21) still 31GB short of 37.2 without it; the node ends, the game it drops is moot
 
 export async function main(ns) {
@@ -1511,7 +1527,7 @@ export async function main(ns) {
           if (target !== 'home') ns.scp([script, ...modulesOf(ns, script)], target, 'home')
 
           // Threads matter for share.js, whose whole effect scales with them.
-          const pid = ns.exec(script, target, threads ?? 1, ...args)
+          const pid = ns.exec(script, target, threads ?? 1, ...(script === 'endgame.js' ? nextNodeArgsOf(ns, args) : args))
           if (pid) {
             rec.count += 1
             rec.lastLaunch = new Date().toISOString()

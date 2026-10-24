@@ -1006,6 +1006,16 @@ if (ADAPT && DRAWS >= 10) {
 console.log('\nRECOMMENDATION')
 console.log(`  next: ${lab(rec.n)}  (lowest expected total ${rec.ET.toFixed(1)}h over ${DRAWS} draws; best in ${pct(rec.pBest).trim()} of draws; regret p90 ${rec.r90.toFixed(1)}h)`)
 console.log(`  mid-world optimum: ${lab(fm1[0].n)} (T ${fm1[0].T.toFixed(1)}h); robust fixed order starts ${lab(robust[0].n)}`)
+// THE WATCHDOG'S --next (watchdog.js nextNodeArgsOf): the recommendation as a root .txt the daemon pushes to
+// home as /next-node.txt. Hand-set --next went stale twice (BN3 replayed 9h, 10-22; BN13.3 out of order, 10-23).
+// --no-next-file for experiments that must not steer the live game.
+if (!has('--no-next-file')) {
+  const m = /BN(\d+)\.(\d+)/.exec(String(lab(rec.n)))
+  if (m) {
+    fs.writeFileSync(new URL('../../../next-node.txt', import.meta.url), JSON.stringify({ at: new Date().toISOString(), next: Number(m[1]), level: Number(m[2]), label: m[0], from: inProg ?? null, ET: +rec.ET.toFixed(1), pBest: rec.pBest, by: 'tools/sim/gameplan/plan.mjs' }) + '\n')
+    console.log(`  next-node.txt: ${m[0]}${inProg ? ` after BN${inProg} (in progress)` : ''} (the watchdog's endgame --next)`)
+  }
+}
 const ru = process.resourceUsage()
 console.log(`\nCOST: wall ${((performance.now() - T_START) / 1000).toFixed(1)}s | peak RSS ${(ru.maxRSS / 1024).toFixed(0)}MB | ` + Object.entries(phase).map(([k, v]) => `${k} ${v.toFixed(1)}s`).join(' | '))
 console.log(`  per draw: ${(tDraws / Math.max(1, DRAWS)).toFixed(2)}s (table ${T1.C.length.toLocaleString()} clear times over ${T1.F.toLocaleString()} live feature combos + DP over ${L1.size.toLocaleString()} states); mid table ${tTable.toFixed(2)}s, DP ${tDP.toFixed(2)}s`)
