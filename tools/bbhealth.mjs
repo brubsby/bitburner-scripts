@@ -146,7 +146,9 @@ export function bladeburnerHealth({ bb = null, lite = null, pl = null, pr = null
   const work = state?.currentWork ?? null
   const workType = work?.type ?? work?.ctor ?? null
   const running = bb.running ?? null
-  snap.owned = claimed && bb.slot?.ours === true
+  // THE SIMULACRUM (bbslot.slotClaim simulacrum: true): the actor acts beside a 'body' claim, so the rank
+  // check must run then too — it was off in every Simulacrum node, which hid BN11.2's and BN3.1's ~15h stalls.
+  snap.owned = (claimed || bb.slot?.simulacrum === true) && bb.slot?.ours === true
   snap.acting = snap.owned && !!running && age !== null && age < 5
   // THE LENT SLOT (actplan.bladeLend, /tel/act.txt lent): the Bladeburner
   // actor cannot act, so act.js runs the money crime under the claim until

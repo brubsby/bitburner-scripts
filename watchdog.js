@@ -1256,7 +1256,8 @@ export function nextNodeArgsOf(ns, fallback) {
   try {
     const r = JSON.parse(ns.read('/next-node.txt') || 'null')
     const node = ns.getResetInfo().currentNode
-    if (r && Number.isInteger(r.next) && r.next >= 1 && r.next <= 14 && r.from === node) return ['--next', r.next]
+    const lvl = ns.getResetInfo().ownedSF?.get?.(node) ?? 0
+    if (r && Number.isInteger(r.next) && r.next >= 1 && r.next <= 14 && r.from === node && r.fromSF === lvl) return ['--next', r.next]
   } catch {
     /* the hand-set args */
   }

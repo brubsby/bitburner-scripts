@@ -1012,7 +1012,7 @@ console.log(`  mid-world optimum: ${lab(fm1[0].n)} (T ${fm1[0].T.toFixed(1)}h); 
 if (!has('--no-next-file')) {
   const m = /BN(\d+)\.(\d+)/.exec(String(lab(rec.n)))
   if (m) {
-    fs.writeFileSync(new URL('../../../next-node.txt', import.meta.url), JSON.stringify({ at: new Date().toISOString(), next: Number(m[1]), level: Number(m[2]), label: m[0], from: inProg ?? null, ET: +rec.ET.toFixed(1), pBest: rec.pBest, by: 'tools/sim/gameplan/plan.mjs' }) + '\n')
+    fs.writeFileSync(new URL('../../../next-node.txt', import.meta.url), JSON.stringify({ at: new Date().toISOString(), next: Number(m[1]), level: Number(m[2]), label: m[0], from: inProg ?? null, fromSF: inProg ? (Object.fromEntries(pairsOf(entry))[inProg] ?? 0) : null, ET: +rec.ET.toFixed(1), pBest: rec.pBest, by: 'tools/sim/gameplan/plan.mjs' }) + '\n')
     console.log(`  next-node.txt: ${m[0]}${inProg ? ` after BN${inProg} (in progress)` : ''} (the watchdog's endgame --next)`)
   }
 }

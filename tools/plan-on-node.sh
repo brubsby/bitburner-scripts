@@ -16,9 +16,11 @@ NEXTFROM=$(python3 -c "import json;print(json.load(open('next-node.txt')).get('f
 NODE=${SIG%% *}
 if [ "$SIG" = "$(cat "$STAMP" 2>/dev/null)" ] && [ "$NEXTFROM" = "$NODE" ]; then exit 0; fi
 echo "$(date -u +%FT%TZ) re-solving: $SIG"
-if nice -n 15 timeout 2400 node tools/sim/gameplan/plan.mjs --jobs 3 > "$HOME/.cache/plan-on-node.log" 2>&1; then
+if nice -n 15 timeout 2400 node tools/sim/gameplan/plan.mjs --observe --jobs 3 > "$HOME/.cache/plan-on-node.log" 2>&1; then
   printf '%s' "$SIG" > "$STAMP"
   grep -A1 '^RECOMMENDATION' "$HOME/.cache/plan-on-node.log"; grep 'next-node.txt' "$HOME/.cache/plan-on-node.log"
 else
-  echo "plan.mjs FAILED (see ~/.cache/plan-on-node.log)"; tail -5 "$HOME/.cache/plan-on-node.log"; exit 1
+  echo "plan.mjs FAILED (see ~/.cache/plan-on-node.log)"; tail -5 "$HOME/.cache/plan-on-node.log"
+  printf '%s\n' "{\"at\":\"$(date -u +%FT%TZ)\",\"failed\":true,\"why\":\"plan.mjs failed: ~/.cache/plan-on-node.log\"}" > .telemetry/plan-on-node-failed.json
+  exit 1
 fi
