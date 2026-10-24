@@ -973,7 +973,62 @@ export function lifeLeftHOf(wf, { now = Date.now(), lastAugReset = null } = {}) 
   return { h: null, source: 'no horizon' }
 }
 
-export function weightsFor(gate, lastAugReset, earlyInputs) {
+// ---------------------------------------------------------------------------
+// THE FARM IN A STOCK NODE (BitNode 8: ScriptHackMoneyGain 0, so hack() pays
+// nothing; FavorToDonateToFaction 0, so every faction sells reputation from the
+// join; HacknetNodeMoney 0, so hacknet makes nothing — BitNode.tsx:764-793).
+//
+// There the channels are not goweights': The Black Hand's hacking_money and
+// Netburners' hacknet_node_money multiply 0, and Daedalus' faction_rep is a
+// PRICE — every donation costs $1e6 / faction_rep a point (donation.ts), read
+// at the donation. The early weights read the trader's income as the hacking
+// workers' (hacking_speed 1) and farmed Illuminati all node (the BN8.2 entry
+// dry-run, 2026-10-24); goWeights refuse there (no install point at the entry,
+// a ladder without gains). So the weights are the node's whole exit priced
+// with and without each arm, per phase, in tools/sim/gameplan/bn8.mjs
+// goWeightsTable (exit hours per unit ln, a secant over the phase):
+//   lives   before the count: Daedalus -0.08h, Illuminati -0.19h — both inside
+//           the purchase policy's noise, so 0 (the incumbent stands)
+//   final   the life after the 30th install: Daedalus saves 1.02h (the Red
+//           Pill's 2.5m reputation donated at the farm's power), Illuminati 0.02h
+//   climb   after the Red Pill: the hidden opponent's hacking 0.64h, Illuminati 0.20h
+// The whole node, searched (bn8.mjs goTable, BN8.2 from the plan's state):
+// no farm 30.44h, Illuminati throughout 30.33h, Daedalus in the final life +
+// the hidden opponent in the climb 28.78h. tools/test/bn8cal.test.mjs B85 holds
+// this table to bn8.mjs. NOT CALIBRATED in BN8 (no BN8 life has run a priced farm).
+export const STOCK_GO_WEIGHTS = {
+  8: {
+    lives: { faction_rep: 0, hacking_speed: 0 },
+    final: { faction_rep: 0.9589, hacking_speed: 0.01748 },
+    climb: { hacking_speed: 0.293, hacking: 0.8515 },
+    windowH: { lives: 6, final: 5.62, climb: 0.72 },
+  },
+}
+
+/**
+ * The stock node's weights for this life (null outside one): the phase from the installed
+ * augmentations — 'climb' with The Red Pill installed, 'final' once Daedalus' count is met
+ * (DaedalusAugsRequirement, Player.augmentations as getResetInfo().ownedAugs carries them),
+ * else 'lives'. Every other channel weighs 0 (it multiplies 0 here). A stock node without a
+ * table refuses by name — never the early weights' reading of the trader as hacking.
+ */
+export function stockGoWeights(reset, mults) {
+  if (!(mults?.ScriptHackMoneyGain === 0 && mults?.FavorToDonateToFaction === 0)) return null
+  const tab = STOCK_GO_WEIGHTS[reset?.currentNode]
+  const owned = reset?.ownedAugs
+  const n = owned instanceof Map ? owned.size : Array.isArray(owned) ? owned.length : null
+  if (!tab || n === null) return { weights: null, why: !tab ? `BitNode ${reset?.currentNode} is a stock node with no priced farm table` : 'installed augmentations unreadable' }
+  const red = owned instanceof Map ? owned.has(RED_PILL) : owned.includes(RED_PILL)
+  const need = num(mults.DaedalusAugsRequirement) ? mults.DaedalusAugsRequirement : 30
+  const phase = red ? 'climb' : n >= need ? 'final' : 'lives'
+  const weights = { hacking_money: 0, hacknet_node_money: 0, faction_rep: 0, hacking_speed: 0, combat: 0, ...tab[phase] }
+  return { weights, phase, windowH: tab.windowH[phase], why: `stock node (BitNode ${reset.currentNode}), the ${phase} phase (${n} installed of ${need}${red ? ', The Red Pill in' : ''}): the node's exit priced per arm (bn8.mjs goWeightsTable) -> ${Object.entries(weights).map(([k, v]) => `${k} ${v}`).join(', ')}` }
+}
+
+export function weightsFor(gate, lastAugReset, earlyInputs, stock = null) {
+  // A STOCK NODE'S FARM IS PRICED ON ITS OWN TRAJECTORY (stockGoWeights): first, because there goWeights
+  // prices the hacking exit's channels, which cannot see the donation price faction_rep cuts.
+  if (stock?.weights) return { source: 'stock', weights: stock.weights, favor: null, windowH: stock.windowH, remainingH: null, asOf: null, phase: stock.phase, why: stock.why }
   const sameLife = !!gate && gate.lastAugReset === lastAugReset
   const gw = sameLife ? gate?.objective?.goWeights ?? null : null
   if (gw?.weights) return { source: 'goWeights', weights: gw.weights, favor: gw.favor ?? null, windowH: gw.windowH ?? gate?.objective?.windowH ?? null, remainingH: num(gw.remainingH) ? gw.remainingH : null, asOf: num(gw.asOf) ? gw.asOf : null, why: gw.why ?? null }

@@ -155,7 +155,7 @@ export async function run() {
     if (!/fourSPlanOf\(ns\.read\('\/tel\/plan\.txt'\), info\.lastAugReset\)/.test(st) || !/decidedBy: 'plan \(decisions\.fourS\)'/.test(st) || !/fallback: /.test(st)) c.fail("stock.js must read the plan's decision and name its fallback");
     const pg = code("progress.js");
     if (!/async function fourSDecisionOf/.test(pg) || !/fourS: pc\.decisions\.fourS \?\? pc\.prev\?\.decisions\?\.fourS \?\? null/.test(pg)) c.fail("progress.js must decide and publish decisions.fourS");
-    if (!/const f4 = fourSCarriedOf\(planCtx, info\)/.test(pg) || !/gate\.install && !forcedInstall && fourSHold\?\.hold/.test(pg)) c.fail("progress.js must carry the committed purchase into every decision's inputs and hold the install for it");
+    if (!/const f4 = fourSCarriedOf\(planCtx, info(, out\.capitalAge \?\? null)?\)/.test(pg) || !/gate\.install && !forcedInstall && fourSHold\?\.hold/.test(pg)) c.fail("progress.js must carry the committed purchase into every decision's inputs and hold the install for it");
     checks.push(c);
   }
 

@@ -7,7 +7,9 @@
 //     hacking 2500, Daedalus, The Red Pill, the exit) within bn8.MS_TOL of the measured; the exp model and the
 //     trader factor re-fitted on the fixture reproduce the committed BN8_CAL / traderw.RW_BN8.
 // B82 THE FORECAST from the plan's BN8.2 state: finite, inside a sane band, monotone in the trader's factor,
-//     the gift priced both ways; the route's memo returns the same answer.
+//     the gift priced both ways; the route's memo returns bestPolicy with the farm as played (GO_PLAYED).
+// B85 THE IPvGO FARM IN BN8 (goplan.STOCK_GO_WEIGHTS = bn8.mjs goWeightsTable; the farm as played saves hours
+//     over no farm and over the early weights' Illuminati throughout; Netburners / The Black Hand worth 0).
 
 const out = { examined: 0, notes: [], fails: [] }
 const fail = (m) => out.fails.push(m)
@@ -63,7 +65,26 @@ try {
   const r1 = B.bn8RouteHours((n) => lvMap.get(n) ?? 0, { int: 156 })
   const r2 = B.bn8RouteHours((n) => lvMap.get(n) ?? 0, { int: 156 })
   out.examined++
-  if (r1 !== r2 || Math.abs(r1.hours - h) > 1e-9) fail(`bn8RouteHours is not the memoised bestPolicy: ${r1.hours} vs ${h}`)
+  const hGo = B.bestPolicy({ sf, int: 156, level: 2, go: B.GO_PLAYED }, B.BN8_CAL).best?.hours
+  if (r1 !== r2 || Math.abs(r1.hours - hGo) > 1e-9) fail(`bn8RouteHours is not the memoised bestPolicy with the farm as played: ${r1.hours} vs ${hGo}`)
+  // B85: the farm's weights, and its hours
+  const GP = await import('../../../goplan.js')
+  const wt = B.goWeightsTable(B.PLAN_STATES['BN8.2'])
+  const live = GP.STOCK_GO_WEIGHTS[8]
+  for (const ph of ['lives', 'final', 'climb']) {
+    for (const [ch, v] of Object.entries(wt.phases[ph])) {
+      out.examined++
+      const c = live?.[ph]?.[ch]
+      if (!(typeof c === 'number' && Math.abs(c - v) <= Math.max(0.05, 0.1 * v))) fail(`goplan.STOCK_GO_WEIGHTS[8].${ph}.${ch} ${c} is not bn8.mjs goWeightsTable's ${v}: rerun bn8.mjs --go-table`)
+    }
+  }
+  note(`B85 farm weights (bn8.mjs): ${JSON.stringify(wt.phases)}; detail ${JSON.stringify(wt.detail)}`)
+  const cur = B.bestPolicy({ sf, int: 156, level: 2, go: { lives: 'Illuminati', final: 'Illuminati', climb: 'Illuminati' } }, B.BN8_CAL).best?.hours
+  out.examined += 2
+  note(`B85 BN8.2: no farm ${h?.toFixed(2)}h, Illuminati throughout (the early weights' pick) ${cur?.toFixed(2)}h, the farm as played ${hGo?.toFixed(2)}h`)
+  if (!(hGo < h - 0.5 && hGo < cur - 0.5)) fail(`the farm as played (${hGo}h) does not beat no farm (${h}h) and Illuminati throughout (${cur}h) by 0.5h`)
+  const nb = GP.stockGoWeights({ currentNode: 8, ownedAugs: new Map(Array.from({ length: 30 }, (_, i) => [`a${i}`, 1])) }, { ScriptHackMoneyGain: 0, FavorToDonateToFaction: 0, DaedalusAugsRequirement: 30 })
+  if (nb?.weights?.hacknet_node_money !== 0 || nb?.weights?.hacking_money !== 0) fail('a stock node must weigh hacknet_node_money and hacking_money at 0 (HacknetNodeMoney / ScriptHackMoneyGain 0)')
   // B84's model half: the live accept table is bn8.mjs's own pricing
   const SP = await import('../../../stanekplan.js')
   const tab = B.giftTable()

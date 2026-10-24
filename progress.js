@@ -180,7 +180,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
-import { rwRegimeOf, RW_PRIOR, capitalAgeInputsOf } from 'traderw.js'
+import { rwRegimeOf, RW_PRIOR, RW_AGE, rwAgeKnee, capitalAgeInputsOf } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
@@ -2333,7 +2333,7 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
     // install decision's w4 read 23.0h while grafts, priced on the default
     // policy with no install batch, read 84.9h). No committed install: the
     // default policy, named in `basis`.
-    const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
+    const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now()) ?? countRouteBasisOf(ns, info, countCtx)
     const traj = trajectoryOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
     const priceExit = (x, d = null) => traj(x, d)
     // Priced as generators (trajectoryGenOf yields per policy): a 23-graft set
@@ -2636,10 +2636,17 @@ async function graftDecisionOf(ns, info, sing, player, inputsGen, pending, work,
  * life and in the intermediate lives' batches (the measured cadence).
  */
 const FOUR_S_API_BASE = 25e9 // StockMarket/data/Constants.ts MarketDataTixApi4SCost
-function fourSSpecOf(info, when = 'life1') {
+function fourSSpecOf(info, when = 'life1', capAge = null) {
   const m = bitNodeMults(info)?.FourSigmaMarketDataApiCost
   const pr = RW_PRIOR['4S-long']
   if (!(typeof m === 'number' && m > 0) || !pr) return null
+  // WHERE THE TRADER IS THE INCOME (BitNode 8: the exit inputs' capitalAge, capitalAgeOverrideOf): the 4S curve
+  // the trader runs THERE — the ledger's by-age 4S row (RW_AGE['4S-long']) x BN8's own factor at this home
+  // (capitalAge.kappa, RW_BN8), each leg's knee by its market's age (exitplan capAgeOf reads capitalAge.fourS).
+  // It was the fresh-market prior (RW_PRIOR: r0 1.135/h, one knee $1e12) beside a pre-4S curve that carried the
+  // factor and the age: the purchase priced one regime on BN8's trader and the other on every node's (65be811).
+  const a4 = RW_AGE['4S-long']
+  if (capAge && capAge.kappa > 0 && a4) return { cost: FOUR_S_API_BASE * m, when, r0PerSec: (capAge.kappa * a4.r0PerHour) / 3600, Wstar: rwAgeKnee(capAge.ageNowH ?? 0, '4S-long'), shape: { ...pr.shape, n: a4.n }, curve: `BN8: RW_AGE 4S x ${capAge.kappa.toFixed(3)}` }
   return { cost: FOUR_S_API_BASE * m, when, r0PerSec: pr.r0PerHour / 3600, Wstar: pr.Wstar, shape: pr.shape }
 }
 /** Whether the 4S TIX API is owned, from the trader's own record (stock.txt mode). {owned: true|false|null, why}. */
@@ -2651,9 +2658,9 @@ function fourSStateOf(ns, info) {
 }
 /** The committed 4S purchase as exit inputs (every decision's trajectory carries it): 'now' committed and not owned. */
 let fourSOwnedNow = null
-function fourSCarriedOf(pc, info) {
+function fourSCarriedOf(pc, info, capAge = null) {
   const d = pc?.decisions?.fourS ?? pc?.prev?.decisions?.fourS ?? null
-  return d?.key === 'now' && fourSOwnedNow === false ? fourSSpecOf(info, 'life1') : null
+  return d?.key === 'now' && fourSOwnedNow === false ? fourSSpecOf(info, 'life1', capAge) : null
 }
 let fourSHoldSince = null
 function fourSHoldOf(d, owned, lastAugReset, now = Date.now()) {
@@ -3230,9 +3237,9 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
     const base = { ...inputsFn() }
     delete base.fourS
     yield
-    const spec = fourSSpecOf(info, 'life1')
+    const spec = fourSSpecOf(info, 'life1', base.capitalAge ?? null)
     if (!spec) return { key: null, why: 'the 4S TIX API price is unreadable (FourSigmaMarketDataApiCost)' }
-    const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
+    const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now()) ?? countRouteBasisOf(ns, info, countCtx)
     const traj = trajectoryOf(basis, { count: countCtx, repPoint: pc.repPoint ?? null })
     const withIn = { ...base, fourS: spec }
     // One trajectory structure (the purchase adds no leg the structural noise
@@ -3262,7 +3269,7 @@ async function fourSDecisionOf(ns, info, inputsFn, countCtx = null) {
     return {
       ...d,
       cost: spec.cost,
-      curve: { r0PerHour: +(spec.r0PerSec * 3600).toFixed(3), Wstar: spec.Wstar, source: RW_PRIOR['4S-long'].source },
+      curve: { r0PerHour: +(spec.r0PerSec * 3600).toFixed(3), Wstar: spec.Wstar, source: spec.curve ?? RW_PRIOR['4S-long'].source },
       basis: basis ? { kind: basis.kind, waitH: basis.waitH ?? null } : { kind: 'default policy (no committed install)' },
       withoutH: pointNone,
       withH: pointNow,
@@ -4032,7 +4039,7 @@ function programVerdicts(ns, inputs, info) {
  * the shortfall (requirement - distinct owned, queued included). Null
  * elsewhere — every other node prices exactly as before.
  */
-function countModelOf(mults, offers, allCount, player) {
+function countModelOf(mults, offers, allCount, player, later = null) {
   if (mults?.ScriptHackMoneyGain !== 0) return null
   const need = mults?.DaedalusAugsRequirement
   if (!(need > 0) || !(allCount instanceof Map)) return null
@@ -4040,7 +4047,11 @@ function countModelOf(mults, offers, allCount, player) {
   if (!(short > 0)) return null
   const fwrg = mults?.FactionWorkRepGain
   const donatable = favorToDonateOf(mults) === 0
-  const ladder = ticketLadder(offers, new Set(allCount.keys()), {
+  // THE CATALOGUE IS NOT FROZEN AT THE FACTIONS JOINED NOW (backlog 6): an unjoined faction's augmentations
+  // are a later life's tickets (`later`: countLaterOf), their reputation bought whole where its faction takes
+  // donations. At BN8.2's entry nothing is joined, so the ladder was EMPTY and the count route's 27 other
+  // tickets were padded at its own price ($2.5m Wired Reflexes, paddedLadder).
+  const ladder = ticketLadder([...(offers ?? []), ...(later ?? [])], new Set(allCount.keys()), {
     nfgName: NFG,
     laterDonation: (o) => (donatable && canDonateTo(o.faction, 0, 0) && fwrg > 0 && o.repReq > 0 ? donationForRep(o.repReq, player?.mults?.faction_rep ?? 1, fwrg) : null),
   })
@@ -4123,7 +4134,7 @@ function capitalAgeOverrideOf(ns, info) {
   if (bitNodeMults(info)?.ScriptHackMoneyGain !== 0) return {}
   const homeGB = homeRamOf(readJson(ns, '/tel/homeup.txt'), readJson(ns, '/tel/boot.txt'), info?.lastNodeReset) ?? null
   const ageNowH = typeof info?.lastAugReset === 'number' ? Math.max(0, (Date.now() - info.lastAugReset) / 3.6e6) : 0
-  const o = capitalAgeInputsOf({ regime: rwRegimeOf(stockNow?.mode), ageNowH, homeGB })
+  const o = capitalAgeInputsOf({ regime: rwRegimeOf(stockNow?.mode), ageNowH, homeGB, homeRamCost: bitNodeMults(info)?.HomeComputerRamCost ?? 1 })
   return { ...o, capitalFit: `traderw r(W, age) (rwage.mjs, the ledger by market age) x BN8 factor ${o.capitalAge.kappa.toFixed(2)} at home ${homeGB ?? '?'}GB (RW_BN8, BN8.1): r0 ${(o.capitalReturnPerSec * 3600).toFixed(2)}/h, knee $${o.capitalScaleW.toExponential(2)} at market age ${ageNowH.toFixed(2)}h (${o.capitalAge.regime})` }
 }
 
@@ -4353,7 +4364,7 @@ async function lifeLengthDecisionOf(ns, info, countCtx = null) {
     pc.decisions.lifeLength = prev ? { ...prev, held: true, why: `no posterior this pass (${pc.error ?? 'plan context'}): the committed ${prev.key} stands`, options: [], pricedAt: null } : { key: null, lifeH: null, why: `no posterior this pass (${pc.error ?? 'plan context'}) and no committed life length: the provisional length stands` }
     return pc.decisions.lifeLength
   }
-  const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now())
+  const basis = hackBasisOf(pc.prev?.decisions?.install ?? null, Date.now()) ?? countRouteBasisOf(ns, info, countCtx, { ownLife: true })
   const d = await planDecide(pc, 'lifeLength', () => decideLifeLengthGen({ options, basis, ctx: { count: countCtx, repPoint: pc.repPoint ?? null }, prev, draws: pc.draws, redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, reachSd: pc.post?.drift?.s ?? null }))
   if (d && typeof d === 'object') {
     if (pending) d.pendingFrom = pending
@@ -4807,6 +4818,28 @@ function publishPlan(ns, info, extra = {}) {
  */
 // The committed count route, this life (countexit.commitRoute).
 const COUNT_ROUTE_FILE = '/tel/countroute.txt'
+/**
+ * THE COUNT-AWARE BASIS WITH NO INSTALL COMMITTED (backlog 0g's leftover): while Daedalus' count is short
+ * every trajectory runs through the count (never installing cannot reach the exit), but a decision with no
+ * committed install priced the DEFAULT policy — plan.trajectoryGenOf(null) is the plain policy search, the
+ * count ignored — so at BN8.2's entry the life length decision read 9.8-10.8h on L0.5/L1 against the count
+ * route's 227h (the entry dry-run, 2026-10-24) and the 4S decision priced 4S on that 10.8h trajectory. The
+ * basis is the committed count route (this life's /tel/countroute.txt: the route and the composition it was
+ * priced at; its detour less the time since), the trajectory the count route decision publishes. Null with
+ * no count gate, no committed route of this life, or a route record without its route (an older writer).
+ */
+// The later lives' length: the life length decision's options carry their own (lifeH null: the option's
+// inputs); every other decision the committed length where there is one (the inputs carry it), else the
+// length the route was priced at — not the measured cadence of a fresh node (BN8.2's entry: 1.06h lives).
+function countRouteBasisOf(ns, info, countCtx, { ownLife = false } = {}) {
+  if (!(countCtx?.short > 0)) return null
+  const c = readJson(ns, COUNT_ROUTE_FILE)
+  if (!c || c.lastAugReset !== info?.lastAugReset || !c.route || typeof c.route.detourH !== 'number') return null
+  const since = Math.max(0, (Date.now() - Date.parse(c.at ?? '')) / 3.6e6)
+  const route = { ...c.route, detourH: Math.max(0, c.route.detourH - (isFinite(since) ? since : 0)) }
+  const lifeH = ownLife || committedLifeL(ns, info) ? null : typeof c.lifeH === 'number' && c.lifeH > 0 ? c.lifeH : null
+  return { kind: 'route', route, routeKey: routeKey(route), extra: 0, lifeH, n: typeof c.n === 'number' && c.n >= 1 ? c.n : 1 }
+}
 const EXIT_CAL_MAX = 48
 const EXIT_CAL_GAP_MS = 12 * 60e3
 function exitCalibrationOf(ns, info) {
@@ -5704,7 +5737,7 @@ function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyP
   const cr = contractRepOf(ns, info, player, out, fs9)
   if (cr.rec) out.contractRep = cr.rec
   // The committed 4S purchase (fourSDecisionOf): every decision's trajectory buys it where the plan does.
-  const f4 = fourSCarriedOf(planCtx, info)
+  const f4 = fourSCarriedOf(planCtx, info, out.capitalAge ?? null)
   if (f4) out.fourS = f4
   out.streams = { gang: gc.why, sleeves: sc.why, hacknetFinalWindow: fh?.length ? `the fleet a fresh life rebuilds (lifeplan.freshHacknetFlow): $${(stepRateAt(fh, 8) / 1e6).toFixed(2)}m/s to the balance at 8h, $${(stepRateAt(fh, 24) / 1e6).toFixed(2)}m/s at 24h (its purchases repaid from its own income first)` : 'no hacknet servers model this life (hacknet.txt mode not servers): the final window prices no hacknet (a floor)' }
   out.streams.contractRep = cr.why
@@ -7595,6 +7628,19 @@ async function act(ns, canJoin, info, note) {
   // twice and could disagree with itself between the two reads.
   // Where money is capital (the count-aware exit decides), the schedule
   // scores the count gate's tickets too; other nodes are unchanged.
+  // THE COUNT'S LATER-LIFE TICKETS (countModelOf `later`): every unjoined, unbanned faction's distinct
+  // augmentations at their base price (the snapshot price over this life's queue factor, as the count routes
+  // read them). NOT SIMULATED (named): the join's own gates in that later life (a hacking bar, a city group's
+  // enemies — one group a life, so across lives each is reachable), as the ladder's donation already was.
+  const countLater = (() => {
+    const m = bitNodeMults(info)
+    if (m?.ScriptHackMoneyGain !== 0 || !(m?.DaedalusAugsRequirement > 0) || !candidates?.length) return null
+    const ref = offers.find((o) => o.name !== NFG && o.baseCost > 0)
+    const qf = ref ? sing.augPrice(ref.name) / ref.baseCost : 1
+    const out = []
+    for (const c of candidates) for (const a of c.augs ?? []) if (a.name !== NFG && !allCount.has(a.name)) out.push({ name: a.name, faction: c.name, baseCost: sing.augPrice(a.name) / (qf > 0 ? qf : 1), repReq: a.repReq ?? 0, mults: a.mults, factionRep: c.rep ?? 0, laterOnly: true })
+    return out
+  })()
   const countTickets = (() => {
     const m = bitNodeMults(info)
     if (m?.ScriptHackMoneyGain !== 0 || !(m?.DaedalusAugsRequirement > 0)) return null
@@ -7615,7 +7661,7 @@ async function act(ns, canJoin, info, note) {
       const rec = readJson(ns, '/tel/exitinputs.txt')
       if (!rec?.inputs || rec.lastAugReset !== info?.lastAugReset || !(Date.now() - Date.parse(rec.at) < 15 * 60e3)) return { best: null, tried: [], why: 'no fresh same-life exit inputs' }
       const mults = bitNodeMults(info)
-      const cc = countModelOf(mults, offers, allCount, player)
+      const cc = countModelOf(mults, offers, allCount, player, countLater)
       if (!cc) return { best: null, tried: [], why: 'count model unpriced' }
       const prior = readJson(ns, SCHEDULE)
       const same = prior?.lastAugReset === info?.lastAugReset
@@ -7666,8 +7712,12 @@ async function act(ns, canJoin, info, note) {
       const cm = bayRoute
         ? { best: { name: bayRoute.name, hours: bay.q50 ?? bay.meanH, route: bayRoute }, stayed: bay.held === true || bay.stays === true, switched: bay.switched === true, why: `plan: ${bay.why}` }
         : { ...commitRoute(ranked, routes, committed, { tolPerH: exitCalibrationOf(ns, info).tolPerH }), fallback: `the plan could not decide (${bay?.why ?? pc.error ?? 'no posterior'}): interim hysteresis` }
-      if (cm.best) ns.write(COUNT_ROUTE_FILE, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, name: cm.best.name, faction: cm.best.route.faction, via: cm.best.route.via, since: cm.switched || !committed ? new Date().toISOString() : committed.since, why: cm.why }), 'w')
-      return { ...ranked, best: cm.best, commitment: { stayed: cm.stayed, switched: cm.switched, why: cm.why, fallback: cm.fallback ?? null, previous: committed ? `${committed.name} at ${committed.faction} via ${committed.via}` : null }, plan: bay?.key ? { meanH: bay.meanH, q10: bay.q10, q50: bay.q50, q90: bay.q90, pBest: bay.pBest, held: bay.held === true, draws: bay.n } : null, routes: routes.length }
+      // the route itself and its composition ride along: while no install is committed, the count-aware
+      // decisions price the committed route as their basis (countRouteBasisOf)
+      const cmT = (ranked.tried ?? []).find((t) => routeKey(t) === routeKey(cm.best?.route ?? {})) ?? null
+      const cmN = cmT?.n ?? ranked.composition?.n?.[0] ?? null
+      if (cm.best) ns.write(COUNT_ROUTE_FILE, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset ?? null, name: cm.best.name, faction: cm.best.route.faction, via: cm.best.route.via, since: cm.switched || !committed ? new Date().toISOString() : committed.since, why: cm.why, route: cm.best.route, n: cmN, lifeH: cmT?.lifeH ?? null }), 'w')
+      return { ...ranked, ladder: { tickets: cc.ladder.length, laterOnly: cc.ladder.filter((t) => !Number.isFinite(t.price)).length, short: cc.short }, best: cm.best, commitment: { stayed: cm.stayed, switched: cm.switched, why: cm.why, fallback: cm.fallback ?? null, previous: committed ? `${committed.name} at ${committed.faction} via ${committed.via}` : null }, plan: bay?.key ? { meanH: bay.meanH, q10: bay.q10, q50: bay.q50, q90: bay.q90, pBest: bay.pBest, held: bay.held === true, draws: bay.n } : null, routes: routes.length }
     } catch (e) {
       return { best: null, tried: [], why: `route pricing threw: ${String(e).slice(0, 80)}` }
     }
@@ -7680,6 +7730,8 @@ async function act(ns, canJoin, info, note) {
         // below), and the gate's exitH is the minimum it chose.
         chosen: countRoute.best ? { name: countRoute.best.name, faction: countRoute.best.route.faction, via: countRoute.best.route.via, rankExitH: +countRoute.best.hours.toFixed(2), rankBasis: "previous pass's exit inputs (ranking only)", gateExitH: null, detourH: +countRoute.best.route.detourH.toFixed(3), price: Math.round(countRoute.best.route.price) } : null,
         routes: countRoute.routes ?? null,
+        composition: countRoute.composition ?? null,
+        ladder: countRoute.ladder ?? null,
         commitment: countRoute.commitment ?? null,
         plan: countRoute.plan ?? null,
         alternatives: (countRoute.tried ?? []).slice(0, 8),
@@ -7944,7 +7996,7 @@ async function act(ns, canJoin, info, note) {
   // pass's first inputs: every exit input built after it — the graft, 4S,
   // install, gang, sleeve and exit decisions' — prices the committed length.
   try {
-    await lifeLengthDecisionOf(ns, info, canBuyAug ? countModelOf(bitNodeMults(info), offers, allCount, player) : null)
+    await lifeLengthDecisionOf(ns, info, canBuyAug ? countModelOf(bitNodeMults(info), offers, allCount, player, countLater) : null)
   } catch (e) {
     const pcl = planCtx
     if (pcl) pcl.decisions.lifeLength = { key: null, lifeH: null, error: true, why: `life length decision threw: ${String(e).slice(0, 160)}` }
@@ -8171,9 +8223,9 @@ async function act(ns, canJoin, info, note) {
   // (exitinputs moneyAtW, same life) — a batch bought with more money buys a
   // superset, and a graft after the install cannot take any of it.
   if (canBuyAug) batchNamesNow = batchNamesOf(ns, info, plan, pending, replanAt)
-  const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info), offers, allCount, player)) : null
+  const graftDecision = canJoin && canBuyAug ? await graftDecisionOf(ns, info, sing, player, () => exitInputsGen(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), pending, work, countModelOf(bitNodeMults(info), offers, allCount, player, countLater)) : null
   // THE 4S TIX API, on the same basis and inputs (the grafts committed just above carried).
-  const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info), offers, allCount, player)) : null
+  const fourSDecision = canJoin && canBuyAug ? await fourSDecisionOf(ns, info, () => exitInputsOf(ns, info, player, schedule, econNow?.incomePerSec ?? 0, contractMoneyPerSec, offers, candidates, plan, pending, readFleet(ns, info)), countModelOf(bitNodeMults(info), offers, allCount, player, countLater)) : null
   const fourSHold = fourSHoldOf(fourSDecision, fourSOwnedNow, info?.lastAugReset ?? null)
   // STANEK'S CHARGING ALLOCATION, on the same inputs (stanekDecisionOf): where the gift is accepted,
   // and on the Bladeburner route its accept decision (priced, basis 'blade') before and after the accept.
@@ -8855,7 +8907,7 @@ async function act(ns, canJoin, info, note) {
             // families between passes.
             let decided = null
             try {
-              const cc = countModelOf(bitNodeMults(info), offers, allCount, player)
+              const cc = countModelOf(bitNodeMults(info), offers, allCount, player, countLater)
               // THE PLAN'S EXIT where it decided a route this pass (nothing
               // is queued, so there is no install decision): the committed
               // route's median over the posterior draws.
@@ -9301,7 +9353,7 @@ async function act(ns, canJoin, info, note) {
         // to the node's opening at each install. "Never" is not a candidate:
         // it cannot reach Daedalus. Unpriced -> the ordinary comparison below
         // and, in installgate, the floor as the named fallback.
-        const countCtx = countModelOf(bitNodeMults(info), offers, allCount, player)
+        const countCtx = countModelOf(bitNodeMults(info), offers, allCount, player, countLater)
         if (countCtx) {
           const nowC = await paced(bestCountExitGen(bestExitPolicyGen, inputs, countCtx, { firstInstallH: 0 }), 'count-exit-scan')
           if (nowC.best) {
@@ -9728,7 +9780,7 @@ async function act(ns, canJoin, info, note) {
       if (b && typeof b.q50 === 'number') return { exitH: b.q50, ...(typeof b.pointSeH === 'number' && isFinite(b.pointSeH) ? { seH: b.pointSeH } : {}), source: `plan: median over the posterior (${b.key}${b.held ? ', held' : ''}), 80% interval ${b.q10}-${b.q90}h${planCtx?.incomeFromPrior ? ` — ${planCtx.incomeFromPrior}` : ''}${planCtx?.repFromEstimate ? ` — ${planCtx.repFromEstimate}` : ''}` }
       if (!exitCompare?.countAware && countTickets) {
         try {
-          const cc = countModelOf(bitNodeMults(info), offers, allCount, player)
+          const cc = countModelOf(bitNodeMults(info), offers, allCount, player, countLater)
           const viaCount = cc ? await countExitNowOf(exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet), cc, countRoute?.best?.route ?? null) : null
           if (viaCount) {
             if (countRouteNow?.chosen && viaCount.source.startsWith('count-aware exit via')) countRouteNow.chosen.gateExitH = +viaCount.exitH.toFixed(2)

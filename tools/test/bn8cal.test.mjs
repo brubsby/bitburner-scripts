@@ -18,6 +18,9 @@
 //   GC2 THE GAMEPLAN USES IT: stanek.mjs's factors at GIFT_CAL, world.giftCal null = the uncalibrated model.
 //   B81 / B82 (child: gameplan/bn8test.mjs, the game's catalogue) THE BN8.1 REPLAY within tolerance and the
 //       committed BN8_CAL / RW_BN8 = their fits; BN8.2 priced, sane, monotone in the trader.
+//   B85 (same child) THE IPvGO FARM IN BN8: goplan.STOCK_GO_WEIGHTS = bn8.mjs goWeightsTable; the farm as played
+//       (GO_PLAYED: Daedalus in the final life, the hidden opponent in the climb) beats no farm and the early
+//       weights' Illuminati throughout by >= 0.5h; the route's hours are the farm as played.
 //   B83 THE ROUTE: with the BN8 model on, BN8 is priced by 'stocks' only (hack/stanek off there); --bn8-hack
 //       restores the old routes; other nodes unchanged.
 //   B84 THE GIFT IN BN8 LIVE (stanekplan.STOCK_GIFT_PRICED): accept iff the BN8 model says it wins, basis 'hack';
@@ -187,7 +190,7 @@ async function gc2() {
 }
 
 function b8x() {
-  const c = new Check('B81', "BN8's exit model on the game's catalogue (child gameplan/bn8test.mjs): BN8.1's replay within tolerance, BN8_CAL / RW_BN8 = their fits; BN8.2 priced, sane, monotone in the trader (B82)")
+  const c = new Check('B81', "BN8's exit model on the game's catalogue (child gameplan/bn8test.mjs): BN8.1's replay within tolerance, BN8_CAL / RW_BN8 = their fits; BN8.2 priced, sane, monotone in the trader (B82); the IPvGO farm's table and hours (B85)")
   const r = spawnSync(process.execPath, ['--max-old-space-size=2048', path.join(ROOT, 'tools/sim/gameplan/bn8test.mjs')], { encoding: 'utf8', timeout: 900e3 })
   let res
   try {

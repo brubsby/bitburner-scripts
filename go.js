@@ -174,6 +174,7 @@ import {
   w0Obs,
   obsDue,
   weightsFor,
+  stockGoWeights,
   lifeLeftHOf,
   goMaxRepOf,
   solverVersion,
@@ -1381,7 +1382,8 @@ export async function main(ns) {
       // path refused and the incumbent stood, which in a fresh node is
       // whatever the last process happened to be playing (BN14.1: Daedalus,
       // with no faction joined). goplan.weightsFor makes the choice.
-      const wf = weightsFor(gate, reset?.lastAugReset, earlyInputs)
+      // A STOCK NODE (BitNode 8) prices its farm on its own exit, per phase (goplan.stockGoWeights).
+      const wf = weightsFor(gate, reset?.lastAugReset, earlyInputs, stockGoWeights(reset, bitNodeMults(reset)))
       earlyWhy = wf.source === 'early' ? wf.why : null
       weightsSource = wf.source
       const hard = hardPinOf()

@@ -23,8 +23,16 @@ before starting each subagent.
 ## Live exit model (BN13 findings)
 5. **Install actor vs new life disagree** (EXIT JUMP AT INSTALL: 42h priced -> 75h at
    22:08Z) — different builders for the next life's pricing; not the search (f0c87ad).
+   BN8 (2026-10-24): where it bit there, the count route's trajectory priced 1 ticket an install while the
+   install comparison searched the composition (same inputs, two exits: 227h published vs ~39h) — fixed
+   (countexit.bestCountRoute searches n; routeExitFixed / plan's route spec carry it; NG1). The general
+   builder split outside BN8 is still open.
 6. **Aug catalogue frozen at the factions joined now** — later lives can't buy from new
    factions (largest pessimistic gap per the BN13 audit).
+   BN8 (2026-10-24): the count ladder now carries every unjoined, unbanned faction's augmentations as later-life
+   tickets (countModelOf `later`, ticketLadder laterOnly; NG2) — at BN8.2's entry it was EMPTY and the route's
+   27 others were padded at its own $2.5m. Still open: the purchase model's catalogue (cadenceOffersNow) is the
+   node's joined factions, so a fresh BN8 entry has no life length decision until the first join; outside BN8.
 7. **Daedalus 30-aug requirement absent from the BN13 exit** (optimistic gap). 2026-10-23: priced in BN8's own
    model (gameplan bn8.mjs: 30 installed, $100b, hacking 2500); still absent from the general exitplan (BN8 live
    has countplan's count route).
@@ -124,6 +132,13 @@ before starting each subagent.
     ticket at 1.9^j, took the purchase shape on its ticket lives and budgeted on today's market — fixed. BN8.2's
     entry on the dry-run's inputs: 80.7h on 9 installs -> 38.6h on 3 (gameplan 31.7h never / 30.4h gift).
     Left: with nothing installed the life length decision prices basis null without the count (9.5h).
+    DONE 2026-10-24 (NG5): with no install committed, the life length, 4S and graft decisions price the committed
+    count route (countRouteBasisOf: /tel/countroute.txt carries the route, its composition and life length).
+    Same commit: the 4S decision on BN8's trader (RW_AGE 4S x RW_BN8, NG4; 4S also enters the count lives'
+    budgets), home RAM bought at installs moves BN8's trader (NG3; bn8live 39.2h -> 30.5h vs gameplan 31.7h),
+    the Daedalus IPvGO farm prices the final window's donation (NG6) and go.js plays BN8's farm per phase off
+    bn8.mjs goWeightsTable (goplan.STOCK_GO_WEIGHTS, B85, NG7). BN8.2 entry dry-run published exit 227h -> 49.8h
+    mean (q50 31.1h).
 0h. **Stale source guards red at HEAD** (2026-10-23): bn8.test B8w flags `readJson(ns, STATUS)` (a read) as a
     writer; B8af's regex wants `placeTrader(ns, all, hosts)` (seed.js passes liteHold). Both FAIL at b60e48e, so a
     real regression in either would be masked. Also planperf PP3/PP3c CPU guards (1217ms vs 800ms, loaded machine).

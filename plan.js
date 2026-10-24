@@ -1255,12 +1255,14 @@ export function decideRoute(o = {}) {
 export function* decideRouteGen({ inputs, count, routes, point, repPoint = null, prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, topK = PLAN.topK, theta = PLAN.theta, now = Date.now(), clock: budgetClock = clock, ocba = PLAN.ocba } = {}) {
   const byKey = new Map((routes ?? []).map((r) => [routeKey(r), r]))
   const lifeOf = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.lifeH ?? null]))
+  // the composition each route was priced at (bestCountRoute searches it): the draws price the same policy
+  const nOf = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.n ?? 1]))
   const pointH = new Map((point?.tried ?? []).map((t) => [routeKey(t), t.hours]))
   const committedKey = prev?.key && byKey.has(prev.key) ? prev.key : null
-  const sim = (route) => (d) => routeExitFixed(bestExitPolicy, applyDraw(inputs, d), count, route, { lifeH: lifeOf.get(routeKey(route)) ?? null, detourH: detourOf(route, d, repPoint, inputs?.repSdLn ?? null) })
+  const sim = (route) => (d) => routeExitFixed(bestExitPolicy, applyDraw(inputs, d), count, route, { lifeH: lifeOf.get(routeKey(route)) ?? null, n: nOf.get(routeKey(route)) ?? 1, detourH: detourOf(route, d, repPoint, inputs?.repSdLn ?? null) })
   // The same simulation yielding per policy (up to 7 afford-waits of a whole
   // count-aware search each, in one step as `sim`).
-  const simGen = (route) => (d) => routeExitFixedGen(bestExitPolicyGen, applyDraw(inputs, d), count, route, { lifeH: lifeOf.get(routeKey(route)) ?? null, detourH: detourOf(route, d, repPoint, inputs?.repSdLn ?? null) })
+  const simGen = (route) => (d) => routeExitFixedGen(bestExitPolicyGen, applyDraw(inputs, d), count, route, { lifeH: lifeOf.get(routeKey(route)) ?? null, n: nOf.get(routeKey(route)) ?? 1, detourH: detourOf(route, d, repPoint, inputs?.repSdLn ?? null) })
   let keys = []
   if (!redecide && committedKey) keys = [committedKey]
   else {
@@ -1345,7 +1347,7 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
       // INSTALL ONCE THE ROUTE'S DETOUR IS DONE (+ extra): the wait is the
       // drawn detour, so the route's own uncertainty rides this option.
       const extra = fin(w.extra) ? w.extra : 0
-      add(`r${extra}`, { kind: 'route', route: w.route, routeKey: routeKey(w.route), extra, lifeH: w.lifeH ?? null }, w.hours, { routeKey: routeKey(w.route), extra })
+      add(`r${extra}`, { kind: 'route', route: w.route, routeKey: routeKey(w.route), extra, lifeH: w.lifeH ?? null, n: w.n ?? 1 }, w.hours, { routeKey: routeKey(w.route), extra })
       continue
     }
     // A HOLD WAIT CARRIES ITS HOLD (factionplan.holdCandidates: the slot
@@ -1530,7 +1532,7 @@ export function installScreenOf(opts, committedKey = null, { topK = PLAN.install
  *     batch's multipliers), then the policy search; the count-aware fixed
  *     policy where the count gate is short
  *   {kind: 'never'}                          hold to the exit
- *   {kind: 'route', route, extra, lifeH}     install once the route's detour
+ *   {kind: 'route', route, extra, lifeH, n}  install once the route's detour
  *     (drawn, where `d` is given) is done
  * Returns (inputs, d?) => hours | null.
  */
@@ -1580,7 +1582,7 @@ export function trajectoryGenOf(spec, { count = null, repPoint = null } = {}) {
   if (spec.kind === 'route') {
     return function* (x, d = null) {
       const det = d ? detourOf(spec.route, d, repPoint, x?.repSdLn ?? null) : spec.route?.detourH
-      return count ? yield* routeExitFixedGen(bestExitPolicyGen, x, count, spec.route, { firstInstallH: det + (spec.extra ?? 0), lifeH: spec.lifeH ?? null, detourH: det }) : null
+      return count ? yield* routeExitFixedGen(bestExitPolicyGen, x, count, spec.route, { firstInstallH: det + (spec.extra ?? 0), lifeH: spec.lifeH ?? null, n: spec.n ?? 1, detourH: det }) : null
     }
   }
   const w = fin(spec.waitH) ? Math.max(0, spec.waitH) : 0

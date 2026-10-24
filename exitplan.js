@@ -815,6 +815,11 @@ export function hoursToRep(target, o = {}) {
   // BN8 reputation leg as a grind while the node sold it for money.
   const { rep0 = 0, repPerSec, donationCost = null, favor = 0, favorToDonate = null, moneyLeg = null } = o
   if (!num(target) || target <= rep0) return { hours: 0, how: 'already held' }
+  // THE DONATION'S PRICE AT THE HOUR IT IS MADE (o.donationScaleAt(t), t hours into the leg): a point costs
+  // $1e6 / faction_rep (donation.ts), read when the money is given — the Daedalus IPvGO bonus (faction_rep x
+  // CalculateEffect, Go/effects/effect.ts:88-90) grows over the leg, so the money owed falls as the farm banks
+  // power. Absent: the price at the leg's start, as before.
+  const scale = typeof o.donationScaleAt === 'function' ? (t) => Math.max(1, o.donationScaleAt(t) || 1) : null
   if (num(favorToDonate) && favorToDonate >= 0 && favor >= favorToDonate && pos(donationCost) && typeof moneyLeg === 'function') {
     // WORK WHILE SAVING (o.workWhileDonating): the work slot keeps earning
     // the same reputation while the money is saved, so the donation still
@@ -830,12 +835,12 @@ export function hoursToRep(target, o = {}) {
       const need = target - rep0
       const free = num(o.slotFreeAt) && o.slotFreeAt > 0 ? o.slotFreeAt : 0
       const earned = (t) => (P * Math.max(0, t - free) + S * t) * 3600
-      const targetAt = (t) => donationCost * Math.max(0, 1 - earned(t) / need)
+      const targetAt = (t) => (donationCost / (scale ? scale(t) : 1)) * Math.max(0, 1 - earned(t) / need)
       const h = moneyLeg(donationCost, targetAt)
-      if (num(h)) return { hours: h, how: `donated the remainder after ${Math.round(earned(h))} rep of work (of $${Math.round(donationCost)})` }
+      if (num(h)) return { hours: h, how: `donated the remainder after ${Math.round(earned(h))} rep of work (of $${Math.round(donationCost)}${scale ? `, x1/${scale(h).toFixed(3)} by the Daedalus farm then` : ''})` }
     }
-    const h = moneyLeg(donationCost)
-    if (num(h)) return { hours: h, how: `donated $${Math.round(donationCost)}` }
+    const h = scale ? moneyLeg(donationCost, (t) => donationCost / scale(t)) : moneyLeg(donationCost)
+    if (num(h)) return { hours: h, how: `donated $${Math.round(donationCost)}${scale ? ` (x1/${scale(h).toFixed(3)} by the Daedalus farm then)` : ''}` }
   }
   if (!pos(repPerSec)) return { hours: null, how: 'no measured reputation rate' }
   return { hours: (target - rep0) / repPerSec / 3600, how: 'ground' }
@@ -2470,6 +2475,12 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       favorToDonate,
       moneyLeg,
       workWhileDonating: wwd,
+      // THE DAEDALUS FARM CUTS THE DONATION'S PRICE at the power it has banked when the money is given
+      // (goRepAt: from the window's install, tj hours after the join). Only for a window that opens with an
+      // install (installsFirst > 0): its power starts at 0 there (Go.ts:34-47) while `donation` is priced at
+      // today's faction_rep — which already carries today's farm when the window is now (installsFirst 0,
+      // not credited: a floor). NOT MODELLED: today's Daedalus power in that price carried past the install.
+      ...(goRepAt && installsFirst > 0 ? { donationScaleAt: (tj) => goRepAt(tj) } : {}),
       sleeveRepPerSec: wwd && fleetOn ? sRep(h) * fm0 : 0,
       slotFreeAt: Math.max(0, Math.max(busyH, graftDone - finalStart) - (h - finalStart)),
     })

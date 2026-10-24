@@ -62,8 +62,24 @@
 // search from BN8.1's entry is printed beside the measured clear net of its recorded stalls.
 // NOT CALIBRATED: the policy (cheapest-first; the live augplan prices by the exit), the factions not
 // modelled (a floor on what a life can buy), sleeves (SF10: their faction rep and exp transfer NOT
-// PRICED), the IPvGO farm (Daedalus' faction_rep, Illuminati's speed: NOT PRICED), kappa8 off BN8.1's
-// fleet sizes.
+// PRICED), kappa8 off BN8.1's fleet sizes.
+//
+// THE IPvGO FARM (go.js, one opponent at a time; GO below): node power accrues at the arm's measured
+// power/hour (goplan.POWER_PER_HOUR, 5x5) from each install, where Go.prestigeAugmentation zeroes it
+// (Go/Go.ts:34-47), and the bonus is effect.ts CalculateEffect (x2 with SF14, x GoPower = 1 in BN8):
+//   Daedalus    faction_rep (effect.ts:88-90): the faction work's rate AND every donation's price,
+//               $1e6 / faction_rep a point (donation.ts) — read at the moment of the donation, so an
+//               install's batch is priced at the farm's power at the install, the Red Pill at its life's
+//   Illuminati  hacking_speed (effect.ts:92): the scripts' exp rate (an op's time ~ 1/speed, Hacking.ts)
+//   w0r1d_d43m0n hacking (effect.ts:95), on its 19x19 board, offered only with the Red Pill installed
+//               (netscriptGoImplementation.ts:359): the climb's level
+//   Netburners  hacknet_node_money x HacknetNodeMoney 0 in BN8 (BitNode.tsx:770; HacknetServers.ts
+//               calculateHashGainRate multiplies by it): worth 0 here, as hacknet itself
+//   The Black Hand  hacking_money x ScriptHackMoneyGain 0: worth 0; Slum Snakes / Tetrads: no BN8 leg.
+// A farm policy names the arm per phase { lives, final, climb } and is searched with the life policy
+// (goTable). NOT CALIBRATED in BN8: the power/hour is the 5x5 study's (checked live elsewhere), BN8.1's
+// own farm is unrecorded (its exp fit EXP_K0 carries whatever speed bonus ran then), and go.js's RAM is
+// not charged.
 
 import '../../test/gameresolve.mjs'
 import fs from 'node:fs'
@@ -78,6 +94,7 @@ const { addRepToFavor } = await import('../../../favor.js')
 const { ramUpgradeCost } = await import('../../../homecost.js')
 const { SF11_DISCOUNT, BASE_PRICE_MULT, NFG_LEVEL_MULT } = await import('../../../augplan.js')
 const sp = await import('../../../stanekplan.js')
+const gp = await import('../../../goplan.js')
 const { layoutFor } = await import('./stanek.mjs')
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -117,6 +134,19 @@ export const FACTION_BARS = [
   { name: 'Tetrads', hack: 0 },
 ]
 export const CITY_GROUPS = [['Chongqing', 'New Tokyo', 'Ishima'], ['Sector-12', 'Aevum'], ['Volhaven']]
+/** The IPvGO arms a BN8 farm can play (see the header): power/hour (goplan, 5x5 measured; the hidden opponent's prior) and bonus power (Go/Constants.ts). */
+export const GO = {
+  Daedalus: { pph: gp.POWER_PER_HOUR.Daedalus, power: gp.OPPONENTS.Daedalus.power, channel: 'faction_rep' },
+  Illuminati: { pph: gp.POWER_PER_HOUR.Illuminati, power: gp.OPPONENTS.Illuminati.power, channel: 'hacking_speed' },
+  w0r1d_d43m0n: { pph: gp.W0_PRIOR.powerPerHour, power: gp.OPPONENTS.w0r1d_d43m0n.power, channel: 'hacking' },
+}
+/** The farm's bonus on `channel` at t hours into a life (node power from 0 at the install), 1 when another arm plays. */
+function goMult(st, phase, channel, t) {
+  const arm = st.go?.[phase] ?? null
+  const a = arm ? GO[arm] : null
+  if (!a || a.channel !== channel || !(t > 0)) return 1
+  return gp.effectAt(a.pph * t, a.power, catalogue(st.level).m.GoPower, st.l14 > 0 ? st.l14 : 0)
+}
 const NFG = 'NeuroFlux Governor'
 const SPECIAL = new Set([NFG, 'The Red Pill', "Stanek's Gift - Genesis", "Stanek's Gift - Awakening", "Stanek's Gift - Serenity"])
 
@@ -191,9 +221,9 @@ function giftFactor(st, t) {
 /** kappa8's home range: the calibration's two endpoints ran on 256GB and 16TB; past 16TB the factor is held (no extrapolation). */
 export const KAPPA_HOME = { min: RW_BN8.homeMin, max: RW_BN8.homeMax }
 const kappaOf = (R, cal) => cal.KAPPA8 * Math.pow(Math.min(KAPPA_HOME.max, Math.max(R, 32)) / 256, cal.RHO8)
-function expRate(st, L, cal, mu, gf) {
+function expRate(st, L, cal, mu, gf, goSpeed = 1) {
   const R = st.home * (st.gift ? 1 - GIFT_F : 1)
-  return cal.EXP_K0 * Math.pow(Math.max(R, 8) / 512, cal.EXP_B) * (L + 50) * mu.hacking_exp * gf * mu.hacking_speed * (intBonus(st.int) / intBonus(cal.INT_REF))
+  return cal.EXP_K0 * Math.pow(Math.max(R, 8) / 512, cal.EXP_B) * (L + 50) * mu.hacking_exp * gf * mu.hacking_speed * goSpeed * (intBonus(st.int) / intBonus(cal.INT_REF))
 }
 /** Faction work rep per second at level L (reputation.ts getHackingWorkRepGain x 5 cycles/s, focused). */
 const repRate = (L, int, repMult, favor) => 5 * ((L + int / 3) / 975) * repMult * intBonus(int) * (1 + favor / 100) * FOCUS
@@ -229,6 +259,7 @@ export function runLife(st, T, cal, { final = false, maxH = 200, dt = 0.02, onSt
   const end = final ? maxH : T
   let t = 0
   const favor = st.workFavor ?? 0
+  const phase = final ? 'final' : 'lives'
   while (t < end - 1e-9) {
     const h = Math.min(dt, end - t)
     while (pending.length && pending[0].t <= t) {
@@ -236,6 +267,7 @@ export function runLife(st, T, cal, { final = false, maxH = 200, dt = 0.02, onSt
       mu = multsOf(st)
     }
     const gf = giftFactor(st, t + h / 2)
+    const goRep = goMult(st, phase, 'faction_rep', t + h / 2)
     // the market: age t, the regime this node has bought
     const reg = st.fourS ? '4S-long' : 'pre-long'
     W *= Math.exp(kappaOf(st.home, cal) * rwAgeRate(W, t + h / 2, reg) * h)
@@ -244,9 +276,9 @@ export function runLife(st, T, cal, { final = false, maxH = 200, dt = 0.02, onSt
       st.fourS = true
       st.fourSAt = st.clock + t
     }
-    exp += expRate(st, L, cal, mu, gf) * h * 3600
+    exp += expRate(st, L, cal, mu, gf, goMult(st, phase, 'hacking_speed', t + h / 2)) * h * 3600
     L = levelOf(exp, mu.hacking * gf)
-    const rr = repRate(L, st.int, mu.faction_rep, joinAt !== null ? st.daedFavor ?? 0 : favor) * h * 3600
+    const rr = repRate(L, st.int, mu.faction_rep * goRep, joinAt !== null ? st.daedFavor ?? 0 : favor) * h * 3600
     if (joinAt !== null) daedRep += rr
     else workRep += rr
     t += h
@@ -254,7 +286,7 @@ export function runLife(st, T, cal, { final = false, maxH = 200, dt = 0.02, onSt
     if (final) {
       if (joinAt === null && installedCount(st) >= DAEDALUS.augs * catalogue(st.level).m.DaedalusAugsRequirement / 30 && L >= DAEDALUS.hacking && W >= DAEDALUS.money) joinAt = t
       if (joinAt !== null) {
-        const need = Math.max(0, RED_PILL_REP * catalogue(st.level).m.AugmentationRepCost - daedRep) * 1e6 / (mu.faction_rep * catalogue(st.level).m.FactionWorkRepGain)
+        const need = Math.max(0, RED_PILL_REP * catalogue(st.level).m.AugmentationRepCost - daedRep) * 1e6 / (mu.faction_rep * goMult(st, phase, 'faction_rep', t) * catalogue(st.level).m.FactionWorkRepGain)
         if (W >= need) {
           redPillAt = t
           W -= need
@@ -263,7 +295,8 @@ export function runLife(st, T, cal, { final = false, maxH = 200, dt = 0.02, onSt
       }
     }
   }
-  return { W, L, exp, workRep, t, joinAt, redPillAt, mu }
+  // the multipliers at the life's end: the donations at its install are priced at the farm's power then (donation.ts reads Player.mults)
+  return { W, L, exp, workRep, t, joinAt, redPillAt, mu: { ...mu, faction_rep: mu.faction_rep * goMult(st, phase, 'faction_rep', t) } }
 }
 
 // ---------------------------------------------------------------------------
@@ -364,10 +397,10 @@ export function buyAndInstall(st, W, L, workRep, mu, { names = null } = {}) {
 // A WHOLE NODE under a policy
 // ---------------------------------------------------------------------------
 /** A fresh entry: { sf: [[n, l]...], int, l11, l13, gift, level }. */
-export function entryState({ sf, int = 0, level = 1, gift = false }) {
+export function entryState({ sf, int = 0, level = 1, gift = false, go = null }) {
   const s = sfMults(sf)
   const lv = new Map(sf)
-  return { sf: s, sfPairs: sf, int, level, l11: lv.get(11) ?? 0, l13: lv.get(13) ?? 0, gift: gift && (lv.get(13) ?? 0) >= 1, owned: new Set(), nfg: 0, home: HOME0, fourS: false, clock: 0, workFavor: 0, daedFavor: 0 }
+  return { sf: s, sfPairs: sf, int, level, l11: lv.get(11) ?? 0, l13: lv.get(13) ?? 0, l14: lv.get(14) ?? 0, gift: gift && (lv.get(13) ?? 0) >= 1, go, owned: new Set(), nfg: 0, home: HOME0, fourS: false, clock: 0, workFavor: 0, daedFavor: 0 }
 }
 
 /**
@@ -404,8 +437,8 @@ export function runNode(entry, policy, cal = BN8_CAL, { maxFinalH = 120, trace =
   const need = EXIT_LEVEL * catalogue(st.level).m.WorldDaemonDifficulty
   while (L < need && t < 50) {
     const gf = giftFactor(st, t + 0.005)
-    exp += expRate(st, L, cal, mu, gf) * 0.01 * 3600
-    L = levelOf(exp, mu.hacking * gf)
+    exp += expRate(st, L, cal, mu, gf, goMult(st, 'climb', 'hacking_speed', t + 0.005)) * 0.01 * 3600
+    L = levelOf(exp, mu.hacking * gf * goMult(st, 'climb', 'hacking', t + 0.01))
     t += 0.01
   }
   const exitH = policy.exitH ?? EXIT_H
@@ -686,15 +719,20 @@ export function replay(b81, cal) {
 // THE GAMEPLAN'S ROUTE: BN8's hours at a lattice state (memoised)
 // ---------------------------------------------------------------------------
 const ROUTE_MEMO = new Map()
-/** BN8 from the state lv (lv(n) = SF level) at intelligence int: { hours, gift, policy, milestones, byGift }. */
-export function bn8RouteHours(lv, { int = 0, cal = BN8_CAL, giftWays = null } = {}) {
+/**
+ * The farm go.js plays in BN8 (goplan.stockGoWeights on STOCK_GO_WEIGHTS): no priced arm before the count (the
+ * incumbent stands, worth ~0 here: goTable), Daedalus in the final life, the hidden opponent in the climb.
+ */
+export const GO_PLAYED = { lives: null, final: 'Daedalus', climb: 'w0r1d_d43m0n' }
+/** BN8 from the state lv (lv(n) = SF level) at intelligence int: { hours, gift, policy, milestones, byGift }, the farm as played (GO_PLAYED). */
+export function bn8RouteHours(lv, { int = 0, cal = BN8_CAL, giftWays = null, go = GO_PLAYED } = {}) {
   const sf = []
   for (let n = 1; n <= 14; n++) if (lv(n) > 0) sf.push([n, lv(n)])
-  const key = `${sf.map((p) => p.join('.')).join(',')}|${Math.round(int)}|${cal.KAPPA8}|${cal.RHO8}|${cal.EXP_K0}|${cal.EXP_B}|${giftWays ? giftWays.join('/') : 'auto'}`
+  const key = `${sf.map((p) => p.join('.')).join(',')}|${Math.round(int)}|${cal.KAPPA8}|${cal.RHO8}|${cal.EXP_K0}|${cal.EXP_B}|${giftWays ? giftWays.join('/') : 'auto'}|${JSON.stringify(go)}`
   let r = ROUTE_MEMO.get(key)
   if (!r) {
     const level = Math.min(3, lv(8) + 1)
-    const b = bestPolicy({ sf, int, level }, cal, { giftWays })
+    const b = bestPolicy({ sf, int, level, go }, cal, { giftWays })
     r = { hours: b.best?.hours ?? Infinity, gift: !!b.best?.gift, policy: b.best?.policy ?? null, milestones: b.best?.milestones ?? null, byGift: Object.fromEntries(Object.entries(b.byGift).map(([k, v]) => [k, v ? { hours: v.hours, policy: v.policy } : null])) }
     ROUTE_MEMO.set(key, r)
   }
@@ -743,11 +781,91 @@ export function giftTable({ int = 156, cal = BN8_CAL } = {}) {
   return out
 }
 
+/**
+ * THE IPvGO FARM IN BN8, PRICED (goplan.STOCK_GO_PRICED, go.js's opponent in a stock node): BN8's whole exit
+ * under each farm policy { lives, final, climb } against no farm, from the plan's entry state. Every policy is
+ * first run at the no-farm best life policy (lifeH, lives, the gift as it chose); the best few are then
+ * searched over the life grid themselves (a farm moves the best life length: cheaper donations buy more per
+ * install). Returns { none: {hours, policy}, rows: [{go, hours, policy}], best }.
+ */
+export const GO_LIVES = [null, 'Daedalus', 'Illuminati']
+export const GO_FINAL = [null, 'Daedalus', 'Illuminati']
+export const GO_CLIMB = [null, 'Illuminati', 'w0r1d_d43m0n']
+export function goTable(state = PLAN_STATES['BN8.2'], { int = 156, cal = BN8_CAL, search = 3, lifeGrid = LIFE_GRID } = {}) {
+  const sf = typeof state === 'string' ? pairsOfStr(state) : state
+  const level = Math.min(3, (new Map(sf).get(8) ?? 0) + 1)
+  const base = bestPolicy({ sf, int, level }, cal, { lifeGrid })
+  if (!base.best) return { none: null, rows: [], best: null }
+  const giftWays = [base.best.gift]
+  const rows = []
+  for (const lives of GO_LIVES) for (const final of GO_FINAL) for (const climb of GO_CLIMB) {
+    const go = { lives, final, climb }
+    const r = runNode(entryState({ sf, int, level, gift: base.best.gift, go }), base.best.policy, cal)
+    rows.push({ go, hours: r.hours, policy: base.best.policy, searched: false })
+  }
+  rows.sort((x, y) => x.hours - y.hours)
+  // the best few, and the pick go.js made before this table (Illuminati throughout: the early weights read the
+  // trader's income as the hacking workers', hacking_speed 1) and no farm, each searched over the life grid
+  const cur = (r) => r.go.lives === 'Illuminati' && r.go.final === 'Illuminati' && r.go.climb === 'Illuminati'
+  const off = (r) => !r.go.lives && !r.go.final && !r.go.climb
+  for (const row of rows.filter((r, i) => i < search || cur(r) || off(r))) {
+    const b = bestPolicy({ sf, int, level, go: row.go }, cal, { lifeGrid, giftWays })
+    if (b.best && b.best.hours < row.hours) Object.assign(row, { hours: b.best.hours, policy: b.best.policy })
+    row.searched = true
+  }
+  rows.sort((x, y) => x.hours - y.hours)
+  return { none: { hours: base.best.hours, policy: base.best.policy, gift: base.best.gift }, rows, best: rows[0] }
+}
+/**
+ * THE FARM'S CHANNEL WEIGHTS PER PHASE (goplan.STOCK_GO_WEIGHTS), exit hours per unit ln of the multiplier:
+ * per phase (lives / final / climb) and arm, the hours BN8's exit saves with that arm in that phase alone (the
+ * others off), at the no-farm best policy, divided by ln of the bonus the arm reaches over the phase's length on
+ * that trajectory (the life length; the final life to the Red Pill; the climb) — a secant over the phase, the
+ * unit goweights' weights carry, floored at 0. Returns { phases: {lives, final, climb}: {channel: weight},
+ * detail }.
+ */
+export function goWeightsTable(state = PLAN_STATES['BN8.2'], { int = 156, cal = BN8_CAL, lifeGrid = LIFE_GRID } = {}) {
+  const sf = typeof state === 'string' ? pairsOfStr(state) : state
+  const level = Math.min(3, (new Map(sf).get(8) ?? 0) + 1)
+  const base = bestPolicy({ sf, int, level }, cal, { lifeGrid })
+  if (!base.best) return null
+  const run = (go) => runNode(entryState({ sf, int, level, gift: base.best.gift, go }), base.best.policy, cal)
+  const H0 = run(null)
+  const lenOf = { lives: base.best.policy.lifeH, final: H0.finalLifeH, climb: H0.climbH }
+  const sf14 = new Map(sf).get(14) ?? 0
+  const goPower = catalogue(level).m.GoPower
+  const arms = { lives: ['Daedalus', 'Illuminati'], final: ['Daedalus', 'Illuminati'], climb: ['Illuminati', 'w0r1d_d43m0n'] }
+  const phases = {}
+  const detail = {}
+  for (const [ph, list] of Object.entries(arms)) {
+    phases[ph] = {}
+    for (const arm of list) {
+      const a = GO[arm]
+      const saved = H0.hours - run({ [ph]: arm }).hours
+      const lnE = Math.log(gp.effectAt(a.pph * lenOf[ph], a.power, goPower, sf14))
+      phases[ph][a.channel] = +(Math.max(0, saved) / lnE).toPrecision(4)
+      detail[`${ph}|${arm}`] = { savedH: +saved.toFixed(3), phaseH: +lenOf[ph].toFixed(3), lnE: +lnE.toFixed(4) }
+    }
+  }
+  return { phases, detail, noneH: +H0.hours.toFixed(3), policy: base.best.policy, gift: base.best.gift }
+}
+const goName = (go) => `lives ${go.lives ?? 'none'} / final ${go.final ?? 'none'} / climb ${go.climb ?? 'none'}`
+
 async function main() {
   const has = (k) => process.argv.includes(`--${k}`)
   const argOf = (k) => {
     const i = process.argv.indexOf(`--${k}`)
     return i > 0 ? process.argv[i + 1] : null
+  }
+  if (has('go-table')) {
+    for (const [label, st] of Object.entries(argOf('state') ? { state: argOf('state') } : PLAN_STATES)) {
+      const t = goTable(st, { int: Number(argOf('int') ?? 156) })
+      console.log(`${label} THE IPvGO FARM (bn8.mjs goTable): no farm ${t.none ? `${t.none.hours.toFixed(2)}h (${t.none.policy.lives} lives of ${t.none.policy.lifeH}h, gift ${t.none.gift ? 'accepted' : 'never'})` : 'unpriced'}`)
+      const w = goWeightsTable(st, { int: Number(argOf('int') ?? 156) })
+      console.log(`  STOCK_GO_WEIGHTS (goplan.js) from goWeightsTable(): ${JSON.stringify(w?.phases ?? null)}  ${JSON.stringify(w?.detail ?? null)}`)
+      for (const r of t.rows) console.log(`  ${goName(r.go).padEnd(62)} ${Number.isFinite(r.hours) ? r.hours.toFixed(2) : 'inf'}h${t.none ? ` (${(r.hours - t.none.hours >= 0 ? '+' : '') + (r.hours - t.none.hours).toFixed(2)}h)` : ''}  ${r.policy.lives} lives of ${r.policy.lifeH}h${r.searched ? ' [searched]' : ''}`)
+    }
+    return
   }
   if (has('gift-table')) {
     console.log(`STOCK_GIFT_PRICED (stanekplan.js) from bn8.mjs giftTable(): ${JSON.stringify(giftTable())}`)
@@ -809,6 +927,8 @@ async function main() {
       console.log(`  the best policy's lives (gift ${b.best.gift ? 'accepted' : 'never'}):`)
       for (const l of tr.lives) console.log(l.final ? `    final life ${l.len.toFixed(2)}h: Daedalus joined at ${l.joinAt.toFixed(2)}h, The Red Pill's money at ${l.len.toFixed(2)}h, level ${l.L.toFixed(0)}; climb ${l.climbH.toFixed(2)}h` : `    life to ${l.at.toFixed(1)}h (${l.len}h): book $${l.W.toExponential(2)}, level ${l.L.toFixed(0)}, bought ${l.bought} + ${l.nfg} NFG -> ${l.installed} installed, home ${l.home >= 1024 ? l.home / 1024 + 'TB' : l.home + 'GB'}, 4S ${l.fourS ? 'y' : 'n'}`)
     }
+    const bg = bestPolicy({ sf, int, level, go: GO_PLAYED }, BN8_CAL)
+    console.log(`  with the IPvGO farm as played (${goName(GO_PLAYED)}): ${fmt(bg.best?.hours)}h (${bg.best ? `${bg.best.policy.lives} lives of ${bg.best.policy.lifeH}h, gift ${bg.best.gift ? 'accepted' : 'never'}` : '-'}) — the route's hours (bn8RouteHours)`)
     for (const [k, v] of Object.entries(b.byGift)) console.log(`  gift ${k.padEnd(6)} ${v ? `${v.hours.toFixed(1)}h: ${v.policy.lives} lives of ${v.policy.lifeH}h, then the final life ${v.finalLifeH.toFixed(1)}h, climb ${v.climbH.toFixed(2)}h; 30 installed ${fmt(v.milestones.thirty)}h, 4S ${fmt(v.milestones.fourS)}h, hacking 2500 ${fmt(v.milestones.hack2500)}h, Daedalus ${fmt(v.milestones.join)}h, The Red Pill ${fmt(v.milestones.redPill)}h` : 'no policy exits'}`)
     // sensitivity: the trader's factor at its two endpoints' spread
     for (const f of [0.8, 1.25]) {

@@ -165,6 +165,9 @@ async function main() {
   const gp = bn8.bestPolicy({ sf: bn8.PLAN_STATES['BN8.2'].split(',').map((t) => t.split('.').map(Number)), int: Number(argOf('int') ?? 156), level: 2 })
   const g = gp.best
   console.log(`  GAMEPLAN (bn8.mjs bestPolicy, ${bn8.PLAN_STATES['BN8.2']}): ${g ? `${g.hours.toFixed(1)}h, ${g.policy.lives} lives of ${g.policy.lifeH}h then the final life (gift ${g.gift ? 'accepted' : 'never'})` : 'no policy exits'}`)
+  // the IPvGO farm as go.js plays it in BN8 (bn8.GO_PLAYED, goplan.stockGoWeights): the route's hours
+  const gpGo = bn8.bestPolicy({ sf: bn8.PLAN_STATES['BN8.2'].split(',').map((t) => t.split('.').map(Number)), int: Number(argOf('int') ?? 156), level: 2, go: bn8.GO_PLAYED })
+  console.log(`  GAMEPLAN with the IPvGO farm as played (Daedalus in the final life, the hidden opponent in the climb): ${gpGo.best ? `${gpGo.best.hours.toFixed(1)}h (gift ${gpGo.best.gift ? 'accepted' : 'never'}); never ${gpGo.byGift?.never?.hours?.toFixed(1) ?? '-'}h` : 'no policy exits'} — the live model prices the farm in its final window only (exitplan o.go.rep: the work and, past an install, the donation)`)
   const lb = live.best
   const gb = grind.best
   const cnt = (b) => (b ? `; count-aware ${b.countH}h: the first install at ${b.countWaitH}h, then ${b.countInstalls - 1} lives of ${b.L}h (${b.countPhase} installs to the count, up to ${b.countN} tickets each), then the final window` : '; count-aware unpriced')

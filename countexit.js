@@ -41,7 +41,8 @@
 // compounded, the same model the exit's money legs use.
 
 import { drain, callGen } from 'coop.js'
-import { capitalOf, isShaped, capitalRateAt, capitalGain, capitalEarnAt, ageKneeQ } from 'traderw.js'
+import { capitalOf, isShaped, capitalRateAt, capitalGain, capitalEarnAt, ageKneeQ, rwBn8Kappa } from 'traderw.js'
+import { ramUpgradeCost, MAX_HOME_RAM } from 'homecost.js'
 
 const num = (x) => typeof x === 'number' && isFinite(x)
 const pos = (x) => num(x) && x > 0
@@ -76,9 +77,13 @@ export function ticketLadder(offers, owned, { nfgName = 'NeuroFlux Governor', la
   for (const o of offers ?? []) {
     if (!o || o.name === nfgName || have.has(o.name) || !pos(o.baseCost)) continue
     const short = Math.max(0, (o.repReq ?? 0) - (o.factionRep ?? 0))
-    const price = short > 0 ? (num(o.donationCost) ? o.baseCost + o.donationCost : null) : o.baseCost
-    if (price === null) continue
     const later = typeof laterDonation === 'function' ? laterDonation(o) : null
+    // A LATER LIFE'S TICKET (o.laterOnly: an unjoined faction's augmentation): not for sale this life
+    // (price Infinity — no first batch takes it), and in a later life only where its reputation can be
+    // bought whole (or none is needed).
+    if (o.laterOnly === true && !(num(later) || !(o.repReq > 0))) continue
+    const price = o.laterOnly === true ? Infinity : short > 0 ? (num(o.donationCost) ? o.baseCost + o.donationCost : null) : o.baseCost
+    if (price === null) continue
     const row = { name: o.name, price, laterPrice: num(later) ? o.baseCost + later : o.baseCost, ...gainsOf(o.mults), base: o.baseCost, faction: o.faction ?? null, don: price - o.baseCost, laterDon: num(later) ? later : 0 }
     const cur = byName.get(o.name)
     if (!cur || row.price < cur.price) byName.set(o.name, row)
@@ -265,20 +270,54 @@ export function countPhase(o) {
   let remaining = (ladder ?? []).slice()
   let level = nfg?.level ?? 0
   const per = []
+  // THE 4S TIX API IN THE COUNT LIVES (inputs.fourS, exitplan's spec): bought in this life ('life1') it is
+  // paid from this life's budget, and every later life trades on the 4S curve (Player.has4SDataTixApi
+  // survives installs, PlayerObjectGeneralMethods.ts:166) — its r0, knee and age model (capitalAge.fourS).
+  // The count phase budgeted every life on the inputs' curve, so the 4S decision's count trajectory saw
+  // the price and none of the return (the BN8.2 entry dry-run, 2026-10-24).
+  const four = inputs.fourS && pos(inputs.fourS.cost) && pos(inputs.fourS.r0PerSec) ? inputs.fourS : null
+  const later = four
+    ? { ...inputs, capitalReturnPerSec: four.r0PerSec, capitalScaleW: pos(four.Wstar) ? four.Wstar : inputs.capitalScaleW, capitalShape: four.shape ?? inputs.capitalShape, capitalAge: inputs.capitalAge?.fourS ? { ...inputs.capitalAge, ...inputs.capitalAge.fourS } : inputs.capitalAge }
+    : inputs
+  // HOME RAM BOUGHT AT EACH INSTALL MOVES BITNODE 8's TRADER (inputs.capitalAge {kappa, homeGB, homeRamCost},
+  // traderw.capitalAgeInputsOf): the install procedure spends what the batch leaves on home (homeup --reserve 0;
+  // home survives the install, ServerHelpers.ts prestigeHomeComputer), and the trader's factor is kappa8(home)
+  // = kappa (home/256GB)^rho (RW_BN8, BN8.1: 256GB -> 16TB over the node). The count lives were budgeted at the
+  // entry's home all node — the live model's trader never grew where the gameplan's (bn8.mjs) does. RAM only
+  // (homeup also weighs cores, which do not move the trader: a ceiling on the RAM bought, stated).
+  const ca = inputs.capitalAge
+  const homeOn = !!(ca && pos(ca.kappa) && pos(ca.homeGB))
+  let home = homeOn ? ca.homeGB : null
+  const kappaAt = (h) => (homeOn ? rwBn8Kappa(h) / ca.kappa : 1)
+  const buyHome = (cash) => {
+    if (!homeOn) return
+    let c = Math.max(0, cash)
+    for (let k = 0; k < 40 && home < MAX_HOME_RAM; k++) {
+      const p = ramUpgradeCost(home, ca.homeRamCost ?? 1)
+      if (!(p <= c)) break
+      c -= p
+      home *= 2
+    }
+  }
+  const laterBudget = () => {
+    const f = kappaAt(home)
+    const x = f !== 1 ? { ...later, capitalReturnPerSec: (later.capitalReturnPerSec ?? 0) * f } : later
+    return moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), x, 0) // the trader's warm-up after each install earns nothing; a fresh market
+  }
   for (let i = 0; i < maxInstalls && left > 0; i++) {
-    const budget =
-      i === 0
-        ? moneyAfter(inputs.money ?? 0, firstInstallH, inputs)
-        : moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), inputs, 0) // the trader's warm-up after each install earns nothing; a fresh market
+    const budget = i === 0 ? Math.max(0, moneyAfter(inputs.money ?? 0, firstInstallH, inputs) - (four && four.when !== 'final' ? four.cost : 0)) : laterBudget()
     const b = bankBatch({ budget, ladder: remaining, n: Math.min(n, left), nfg: nfg ? { price: nfg.price * Math.pow(NFG_LEVEL_MULT, level - (nfg.level ?? 0)) } : null, later: i > 0 })
     if (b.count === 0) return { installs: null, why: `install ${i + 1} cannot afford one ticket ($${Math.round(budget)} in hand)`, perInstall: per }
-    per.push({ ...b, budget })
+    buyHome(budget - b.cost)
+    per.push({ ...b, budget, ...(homeOn ? { home } : {}) })
     left -= b.count
     level += b.nfgLevels
     const got = new Set(b.chosen)
     remaining = remaining.filter((t) => !got.has(t.name))
   }
   if (left > 0) return { installs: null, why: `the count is still ${left} short after ${maxInstalls} installs`, perInstall: per }
+  // the trader's factor once the count is banked (home bought through it), for the exit's later legs
+  const capitalFactor = kappaAt(home)
   // AFTER THE COUNT: what each later life's compounded budget buys in
   // NeuroFlux alone — a FLOOR on that install's multiplier gain (real
   // augmentations beyond the ladder are not read here). bestCountExit takes
@@ -287,12 +326,13 @@ export function countPhase(o) {
   // nothing about what a compounded book buys once the count is banked.
   const post = []
   for (let j = 0; j < postInstalls; j++) {
-    const budget = moneyAfter(num(inputs.installCash) ? inputs.installCash : 0, Math.max(0, (inputs.cycleHours ?? 0) - (num(inputs.capitalWarmupH) ? inputs.capitalWarmupH : 0)), inputs, 0)
+    const budget = laterBudget()
     const b = bankBatch({ budget, ladder: [], n: 0, nfg: nfg ? { price: nfg.price * Math.pow(NFG_LEVEL_MULT, level - (nfg.level ?? 0)) } : null, later: true })
-    post.push({ gain: b.gain, nfgLevels: b.nfgLevels, budget })
+    buyHome(budget - b.cost)
+    post.push({ gain: b.gain, nfgLevels: b.nfgLevels, budget, ...(homeOn ? { home } : {}) })
     level += b.nfgLevels
   }
-  return { installs: per.length, perInstall: per, post }
+  return { installs: per.length, perInstall: per, post, capitalFactor, ...(homeOn ? { home: per[per.length - 1]?.home ?? home } : {}) }
 }
 
 /**
@@ -354,7 +394,8 @@ export function* countExitAtGen(bestExitPolicy, inp, short, ladder, n, firstInst
     // buys up front, the worse: with reputation donated (lifeplan, backlog 0g) the BN8.2 entry's count exit
     // went 80.7h -> 336.7h on the same inputs (tools/sim/gameplan/bn8live.mjs). After the count, the cadence's
     // mean, as this model was written.
-    { ...inp, firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain), exp: Math.max(1, ph.perInstall[0].expGain ?? 1), rep: Math.max(1, ph.perInstall[0].repGain ?? 1) }, nextInstallGain: null, perCycleExtra: { byInstall }, cadenceShape: null },
+    // the trader past the count runs at the home the count lives bought (countPhase capitalFactor; 1 without the model)
+    { ...inp, ...(pos(ph.capitalFactor) && ph.capitalFactor !== 1 ? { capitalReturnPerSec: (inp.capitalReturnPerSec ?? 0) * ph.capitalFactor, ...(inp.fourS && pos(inp.fourS.r0PerSec) ? { fourS: { ...inp.fourS, r0PerSec: inp.fourS.r0PerSec * ph.capitalFactor } } : {}) } : {}), firstInstallH, installGains: { hacking: Math.max(1, ph.perInstall[0].gain), exp: Math.max(1, ph.perInstall[0].expGain ?? 1), rep: Math.max(1, ph.perInstall[0].repGain ?? 1) }, nextInstallGain: null, perCycleExtra: { byInstall }, cadenceShape: null },
     400,
     ph.installs,
   )
@@ -389,23 +430,27 @@ export function routeExitFixed(bestExitPolicy, inputs, count, route, opts = {}) 
   return drain(routeExitFixedGen(bestExitPolicy, inputs, count, route, opts))
 }
 /** routeExitFixed as a generator (countExitAtGen per extra wait): the search or its generator. */
-export function* routeExitFixedGen(bestExitPolicy, inputs, count, route, { firstInstallH = 0, lifeH = null, detourH = null, affordWaits = ROUTE_AFFORD_WAITS } = {}) {
+export function* routeExitFixedGen(bestExitPolicy, inputs, count, route, { firstInstallH = 0, lifeH = null, detourH = null, n = 1, affordWaits = ROUTE_AFFORD_WAITS } = {}) {
   if (!(count?.short > 0) || !route) return null
   const d = num(detourH) && detourH >= 0 ? detourH : route.detourH
   const { ladder } = paddedLadder({ ...count, ladder: [{ ...route, must: true }, ...(count.ladder ?? []).filter((t) => t.name !== route.name)] })
   const inp = lifeInputs(inputs, lifeH)
+  // `n`: the composition the point search chose (bestCountRoute's tried[].n), as `lifeH` is its life length.
+  const k = Math.max(1, Math.min(num(n) ? n : 1, count.short))
   // A draw whose detour ends before the money for the augmentation is in
   // hand installs when it is (the first of these extra waits that affords
   // it), rather than reading as "infeasible": the route's policy is "buy it
   // as soon as both the detour and the money allow".
   for (const extra of affordWaits) {
-    const at = yield* countExitAtGen(bestExitPolicy, inp, count.short, ladder, 1, Math.max(firstInstallH, d) + extra, count.nfg ?? null)
+    const at = yield* countExitAtGen(bestExitPolicy, inp, count.short, ladder, k, Math.max(firstInstallH, d) + extra, count.nfg ?? null)
     if (num(at.hours) && !at.degenerate && at.firstBatch?.chosen?.includes(route.name)) return at.hours
   }
   return null
 }
 /** The extra waits routeExitFixed tries after the detour (hours). */
 export const ROUTE_AFFORD_WAITS = [0, 0.25, 0.5, 1, 2, 4, 8]
+/** Routes bestCountRoute tries, cheapest first, to search the composition on (the first that prices). */
+export const COMPOSITION_TRIES = 6
 
 /**
  * THE COUNT-AWARE EXIT: for each composition n, the count phase's installs
@@ -481,25 +526,52 @@ export function bestCountRoute(bestExitPolicy, inputs, count, routes, opts = {})
   return drain(bestCountRouteGen(bestExitPolicy, inputs, count, routes, opts))
 }
 /** The generator bestCountRoute drains (yields inside each route's pricing). */
-export function* bestCountRouteGen(bestExitPolicy, inputs, count, routes, { firstInstallH = 0 } = {}) {
+export function* bestCountRouteGen(bestExitPolicy, inputs, count, routes, { firstInstallH = 0, compositions = null } = {}) {
   if (!count || !(count.short > 0)) return { best: null, tried: [], why: 'the count is met' }
   if (!Array.isArray(routes) || !routes.length) return { best: null, tried: [], why: 'no route to a distinct augmentation' }
   const tried = []
   let best = null
+  const ok = (route) => pos(route?.price) && num(route?.detourH) && route.detourH >= 0
+  const ladderOf = (route) => [{ ...route, must: true }, ...(count.ladder ?? []).filter((t) => t.name !== route.name)]
+  // THE COMPOSITION — tickets per install of the count phase — IS SEARCHED, once, on the cheapest route that
+  // prices (COMPOSITION_TRIES), and every route is priced at it. It was fixed at 1: every route's count phase
+  // bought ONE ticket an install, so BitNode 8's 28 short were 28 lives — the BN8.2 entry dry-run published
+  // 227h (count route Wired Reflexes) where the same inputs' count-aware exit, n searched, reads ~39h
+  // (tools/sim/gameplan/bn8live.mjs). The route is the FIRST batch's must; the rest of the count is the ladder's.
+  let comps = compositions
+  let nWhy = compositions ? 'given' : null
+  if (!comps) {
+    // the cheapest routes in turn (then the soonest) until one prices: the soonest is a donation route ready at
+    // once, unaffordable at its detour (the BN8.2 entry: $255m in hand against ~$1e9 of reputation)
+    const order = routes.filter(ok).sort((a, b) => a.price - b.price || a.detourH - b.detourH)
+    const fails = []
+    for (const rep of order.slice(0, COMPOSITION_TRIES)) {
+      const r0 = yield* bestCountExitGen(bestExitPolicy, inputs, { ...count, ladder: ladderOf(rep) }, { firstInstallH: Math.max(firstInstallH, rep.detourH) })
+      if (r0?.best && r0.best.firstBatch?.chosen?.includes(rep.name)) {
+        comps = [r0.best.n]
+        nWhy = `searched on ${rep.name} at ${rep.faction} (${rep.via}): n ${r0.best.n} at ${r0.best.lifeH}h lives`
+        break
+      }
+      fails.push(`${rep.name} at ${rep.faction} (${rep.via}): ${r0?.best ? 'not in the first batch' : String(r0?.why ?? 'unpriced').slice(0, 80)}`)
+    }
+    if (!comps) {
+      comps = [1]
+      nWhy = `unsearched (${fails.length ? fails.join('; ') : 'no priced route'}): n 1`
+    }
+  }
   for (const route of routes) {
-    if (!pos(route?.price) || !num(route?.detourH) || route.detourH < 0) {
+    if (!ok(route)) {
       tried.push({ name: route?.name ?? null, via: route?.via ?? null, hours: null, why: 'unpriced route (price or detour unreadable)' })
       continue
     }
-    const ladder = [{ ...route, must: true }, ...(count.ladder ?? []).filter((t) => t.name !== route.name)]
-    const r = yield* bestCountExitGen(bestExitPolicy, inputs, { ...count, ladder }, { firstInstallH: Math.max(firstInstallH, route.detourH), compositions: [1] })
+    const r = yield* bestCountExitGen(bestExitPolicy, inputs, { ...count, ladder: ladderOf(route) }, { firstInstallH: Math.max(firstInstallH, route.detourH), compositions: comps })
     const took = r.best?.firstBatch?.chosen?.includes(route.name) === true
     const hours = r.best && took ? r.best.hours : null
-    tried.push({ name: route.name, faction: route.faction ?? null, via: route.via ?? null, lifeH: r.best?.lifeH ?? null, price: Math.round(route.price), detourH: +route.detourH.toFixed(3), hacking: route.hacking, exp: route.exp, rep: route.rep, hours: hours === null ? null : +hours.toFixed(3), why: hours !== null ? null : r.best ? 'not affordable in the first batch' : r.why ?? 'unpriced' })
+    tried.push({ name: route.name, faction: route.faction ?? null, via: route.via ?? null, lifeH: r.best?.lifeH ?? null, n: r.best?.n ?? null, price: Math.round(route.price), detourH: +route.detourH.toFixed(3), hacking: route.hacking, exp: route.exp, rep: route.rep, hours: hours === null ? null : +hours.toFixed(3), why: hours !== null ? null : r.best ? 'not affordable in the first batch' : r.why ?? 'unpriced' })
     if (hours !== null && (!best || hours < best.hours)) best = { name: route.name, hours, route, result: r.best }
   }
   tried.sort((a, b) => (a.hours ?? Infinity) - (b.hours ?? Infinity))
-  return best ? { best, tried } : { best: null, tried, why: 'no route prices' }
+  return best ? { best, tried, composition: { n: comps, why: nWhy } } : { best: null, tried, composition: { n: comps, why: nWhy }, why: 'no route prices' }
 }
 
 /**

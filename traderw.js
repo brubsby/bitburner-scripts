@@ -140,7 +140,7 @@ export function ageKneeQ(ageK, a) {
   return Math.exp(Math.round(Math.log(ageK.W1 * Math.pow(Math.max(num(a) ? a : 0, pos(ageK.aMin) ? ageK.aMin : 0.5), num(ageK.beta) ? ageK.beta : 0)) / 0.1) * 0.1)
 }
 
-export function capitalAgeInputsOf({ regime = 'pre-long', ageNowH = 0, homeGB = null, bn8 = true } = {}) {
+export function capitalAgeInputsOf({ regime = 'pre-long', ageNowH = 0, homeGB = null, bn8 = true, homeRamCost = 1 } = {}) {
   const reg = RW_AGE[regime] ? regime : 'pre-long'
   const p = RW_AGE[reg]
   const k = bn8 ? rwBn8Kappa(homeGB) : 1
@@ -149,7 +149,9 @@ export function capitalAgeInputsOf({ regime = 'pre-long', ageNowH = 0, homeGB = 
     capitalReturnPerSec: (k * p.r0PerHour) / 3600,
     capitalScaleW: rwAgeKnee(ageNowH, reg, p),
     capitalShape: { ...RW_PRIOR[reg].shape, n: p.n },
-    capitalAge: { W1: p.W1, beta: p.beta, aMin: p.aMin, ageNowH: num(ageNowH) && ageNowH > 0 ? ageNowH : 0, regime: reg, kappa: k, ...(reg === 'pre-long' ? { fourS: { W1: s4.W1, beta: s4.beta, aMin: s4.aMin } } : {}) },
+    // homeGB / homeRamCost: the home the factor was read at, so a model that buys home RAM at an install
+    // (countexit.countPhase: homeup --reserve 0 with what the batch leaves) moves the factor with it.
+    capitalAge: { W1: p.W1, beta: p.beta, aMin: p.aMin, ageNowH: num(ageNowH) && ageNowH > 0 ? ageNowH : 0, regime: reg, kappa: k, ...(bn8 && num(homeGB) && homeGB > 0 ? { homeGB, homeRamCost: num(homeRamCost) && homeRamCost > 0 ? homeRamCost : 1 } : {}), ...(reg === 'pre-long' ? { fourS: { W1: s4.W1, beta: s4.beta, aMin: s4.aMin } } : {}) },
   }
 }
 
