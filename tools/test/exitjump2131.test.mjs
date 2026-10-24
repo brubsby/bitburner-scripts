@@ -185,7 +185,7 @@ export async function run() {
       [/rejoinLevel: exitFactionHackReq\(/, "rejoinLevel from the invitation's hacking branch"],
       [/preInstallRepMult: 1 \+ goBonus\(ns\) \/ 100/, "the IPvGO rep bonus the install zeroes"],
       [/lifeGraftHold\?\.hold\) \{\s*lifeGraftHoldStart\(lifeGraftHold\)/, "the held branch starts the clock"],
-      [/exitFactionNow = null\s*\{/, "reset every pass"],
+      [/function beginPassState\([^)]*\) \{[\s\S]{0,1600}exitFactionNow = null/, "reset every pass (beginPassState)"],
     ];
     c.examined(need.length);
     for (const [re, what] of need) if (!re.test(src)) c.fail(`progress.js: ${what}`);

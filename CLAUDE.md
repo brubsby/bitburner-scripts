@@ -1000,9 +1000,16 @@ own code (`loadGame`), destroys the current node and enters the target by `Prest
 prestigeSourceFile` (home RAM, $1262, the SF9.3 server, the sleeves, augs reset, the /tel files
 surviving), then runs THIS checkout's stack against it with the game's real `ns` (NetscriptFunctions
 over WorkerScripts; the one seam is `compile()`, hooked so node imports the module): boot.js and what it
-starts for 90s with the game loop ticking, then the snapshots, one full progress.js pass, one act.js /
-stanek.js cycle, endgame.js --dry, and again after a Bladeburner join (SF7.3's Simulacrum).
-`evaluate.mjs` names every decision unpriced / held / absurd (> 1000h) / blocked with its cause.
+starts for 90s with the game loop ticking, then the snapshots, one full progress.js pass and AT ONCE A
+SECOND on the same state, one act.js / stanek.js cycle, endgame.js --dry, and again after a Bladeburner
+join (SF7.3's Simulacrum).
+`evaluate.mjs` names every decision unpriced / held / absurd (> 1000h) / blocked with its cause, and
+INPUT DRIFT: an exit input that moved between consecutive passes beyond what the state moved (`inputDriftOf`:
+clock / accept — Genesis exactly x0.9 / act / join; an unlisted input is strict). **The exit inputs are a
+function of the state, never of the pass before** (backlog 0h: eRep read off BN13's gate moved BN5.2's hack
+arm 8.0h -> 18.2h a pass later): a per-pass measurement enters the builder through the pass
+(`passElasticityOf`, `batcherCalOf`), another script's record at the player's own multipliers; tests ID1-ID6
+build the inputs twice over frozen telemetry (`exitInputsSeam`).
 `node tools/sim/entry/dryrun.mjs --chain 5.2,5.3 [--save F]` (~5 min a node). `tools/plan-on-node.sh`
 runs it for next-node.txt's node into `.telemetry/entry-dryrun.json`; healthcheck fails NEXT NODE
 ENTRY UNPRICED (or NOT DRY-RUN past 2h). Tests ED1-ED4.

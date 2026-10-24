@@ -70,6 +70,63 @@ export function acceptConsistencyOf({ entry, accepted, phase = 'accepted' }) {
   return F
 }
 
+/**
+ * INPUT DRIFT: the exit inputs (progress.js exitInputsOf, as /tel/exitinputs.txt publishes them) of two
+ * consecutive planner passes may differ only by the state that moved between them (backlog 0h: BN5.2's
+ * entry read eRep 0.63 off BN13's gate, its own pass measured 0, and the next pass moved the hack arm
+ * 8.0h -> 18.2h with nothing decided). Each input is listed under the events that may move it:
+ *   clock   real time between the passes: money, the measured rates and their ages, the market, the fleet
+ *   accept  Stanek's Gift accepted (Genesis x0.9 on every multiplier, Augmentations.ts:1593-1617): what is a
+ *           function of the multipliers, and the gift's own life context; hackingMult must move by exactly x0.9
+ *   act     act.js ran its orders (money spent, work started, factions joined): what the plan and the
+ *           schedule are functions of
+ *   join    the Bladeburner division (the exit inputs carry nothing of it: clock only)
+ * Anything not listed under an event that happened must be identical (numbers to REL_TOL: cached vs fresh
+ * float rounding); strings are the numbers' explanations and are not compared. A NEW input is strict until
+ * it is listed here — loud by default. Returns findings (kind 'INPUT DRIFT').
+ */
+export const DRIFT_REL_TOL = 1e-6
+export const DRIFT_DRIVERS = {
+  clock: /^(money|incomePerSec|incomeFlatPerSec|incomeFromPrior|flatIncomePerSec|contractMoney\w*|lifeIncome|hacknet\.nodeMoney|hacking|hackingExp|expPerSec|expFlatPerSec|freshExpLagH|capital\w*|go|goCadenceMult|favorStream\w*|preInstallRepMult|split|incomeSplitDelta|incomeModel\.(otherGB|homeGB|moneyGB)|giftLife\.(fleetGB|hosts)|carriedIncome|freshHacknet|contractRep)(\.|$)/,
+  accept: /^(hackingMult|hacknet|freshHackCum|freshExpLagH|incomePerSec|incomeFlatPerSec|expPerSec|repPerSec|repDonate|donationCost|split|incomeSplitDelta|incomeModel|cadence\w*|cycleHours|multGainPerCycle|giftLife|contractRep|freshHacknet)(\.|$)/,
+  act: /^(money|rep\w*|eRep|eBudget|nextInstallGain|installGains|persistBaseline|incomeModel|exitFavor|exitRep|rejoin\w*|join\w*|terminalRep|donationCost|cadence\w*|cycleHours|multGainPerCycle|contractRep|fourS|graft\w*|carriedIncome|lifeIncome|hacknet|go|favorStream\w*)(\.|$)/,
+  join: null,
+}
+const leavesOf = (o, p = '', out = new Map()) => {
+  if (o && typeof o === 'object' && !Array.isArray(o)) {
+    for (const [k, v] of Object.entries(o)) leavesOf(v, p ? `${p}.${k}` : k, out)
+  } else out.set(p, o)
+  return out
+}
+const sameLeaf = (a, b) => {
+  if (typeof a === 'number' && typeof b === 'number') return a === b || Math.abs(a - b) <= DRIFT_REL_TOL * Math.max(Math.abs(a), Math.abs(b))
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => (x && typeof x === 'object' && !Array.isArray(x) ? JSON.stringify(x) === JSON.stringify(b[i]) : sameLeaf(x, b[i])))
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+export function inputDriftOf({ prev, next, events = [], from = 'prev', to = 'next', phase = to }) {
+  const F = []
+  if (!prev || !next) return F
+  const on = ['clock', ...events]
+  const A = leavesOf(prev)
+  const B = leavesOf(next)
+  const drift = []
+  for (const k of new Set([...A.keys(), ...B.keys()])) {
+    const a = A.get(k)
+    const b = B.get(k)
+    if (typeof a === 'string' || typeof b === 'string') continue
+    if (sameLeaf(a, b)) continue
+    if (k === 'hackingMult' && on.includes('accept') && fin(a) && fin(b) && a > 0) {
+      const want = SP.PENALTY[1]
+      if (Math.abs(b / a - want) > DRIFT_REL_TOL) drift.push(`hackingMult x${(b / a).toFixed(6)} at the accept (Genesis is x${want})`)
+      continue
+    }
+    if (on.some((e) => DRIFT_DRIVERS[e]?.test(k))) continue
+    drift.push(`${k}: ${short(JSON.stringify(a), 60)} -> ${short(JSON.stringify(b), 60)}`)
+  }
+  if (drift.length) F.push({ level: 'fail', kind: 'INPUT DRIFT', decision: 'exit inputs', what: `the exit inputs moved between the ${from} and ${to} passes beyond what ${on.join(' + ')} moves: ${drift.slice(0, 8).join('; ')}${drift.length > 8 ? ` (+${drift.length - 8} more)` : ''}`, cause: 'an input that is not a function of the game state (a time-of-pass read, a cache, a record the previous pass wrote): progress.js exitInputsOf', phase })
+  return F
+}
+
 export function evaluate({ read, info, canCotMG, now = Date.now(), phase = 'entry' }) {
   const F = []
   const add = (level, kind, decision, what, cause = null) => F.push({ level, kind, decision, what, cause: short(cause, 400), phase })

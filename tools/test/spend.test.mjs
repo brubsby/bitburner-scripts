@@ -113,7 +113,7 @@ export async function run() {
     c8.examined(2);
     const fn = pr.slice(pr.indexOf("function installGainsOf"), pr.indexOf("function nextInstallGainOf"));
     if (!/Math\.pow\(growMult, growShareNow\)/.test(fn) || !/income: prod\(\['hacking_money', 'hacking_chance', 'hacking_speed'\]\) \* growLift/.test(fn)) c8.fail("income must include grow^growShare");
-    if (!/growShareNow = typeof g === 'number' && isFinite\(g\) \? g : null/.test(pr)) c8.fail("act() must set the measured share each pass");
+    if (!/batcherCalNow = batcherCalOf\(ns, info\)\s*growShareNow = batcherCalNow\.growShare/.test(pr)) c8.fail("act() must set the measured share each pass (beginPassState: this pass's batcherCalOf)");
   }
   checks.push(c8);
 

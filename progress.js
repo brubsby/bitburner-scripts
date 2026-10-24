@@ -1935,10 +1935,56 @@ const MAX_PLANNING_HORIZON_H = 1000
  *            (growShareNow; x1 when unmeasured).
  * Null when the batch is empty or unreadable.
  */
-// grow's measured share of the batch (weightsMeta.growShare, last pass's gate
-// record), set once per pass in act(): the exponent income responds to
-// hacking_grow with. Null -> grow priced at x1, the old floor.
+// grow's measured share of the batch (batcherCalOf, this pass's), set once per
+// pass in act(): the exponent income responds to hacking_grow with. Null ->
+// grow priced at x1, the old floor.
 let growShareNow = null
+let batcherCalNow = null
+const CAL_LAST = '/tel/cal-last.txt'
+/**
+ * THE BATCHER'S CALIBRATION (chance observed, grow's share of the threads),
+ * for the derived objective and installGainsOf, once per pass: batch.txt's
+ * live targets; with no landings yet (every life's first minutes) the last
+ * published figures — the gate's, else /tel/cal-last.txt — because it is a
+ * property of the batcher, not the life (2026-09-20 00:25), and `calSource`
+ * says which.
+ */
+function batcherCalOf(ns, info) {
+  const bt = readJson(ns, '/tel/batch.txt')
+  const live = (bt?.targets ?? []).filter((t) => t?.plan && t.cal?.chanceObs != null)
+  if (live.length) {
+    const chanceObs = live.reduce((a, t) => a + t.cal.chanceObs, 0) / live.length
+    const growShare = live.reduce((a, t) => a + t.plan.g / (t.plan.h + t.plan.g + t.plan.w1 + t.plan.w2), 0) / live.length
+    return { chanceObs, growShare, calSource: 'live' }
+  }
+  const priorGate = readJson(ns, GATE)
+  const po = priorGate?.objective
+  if (typeof po?.chanceObs === 'number' && typeof po?.growShare === 'number') return { chanceObs: po.chanceObs, growShare: po.growShare, calSource: priorGate.lastAugReset === info?.lastAugReset ? 'prior pass' : 'prior life' }
+  // The last LIVE reading, in its own file: the prior-gate chain breaks whenever
+  // one gate lacks the record (2026-09-20 01:10).
+  const remembered = readJson(ns, CAL_LAST)
+  if (typeof remembered?.chanceObs === 'number' && typeof remembered?.growShare === 'number') return { chanceObs: remembered.chanceObs, growShare: remembered.growShare, calSource: `remembered ${remembered.at}` }
+  return { chanceObs: null, growShare: null, calSource: null }
+}
+
+/**
+ * THE PLANNER'S MEASURED RESPONSES (eRep, eBudget: the derived objective's
+ * elasticities), THIS PASS'S, for the exit inputs. They were read back from
+ * the install gate record — the PREVIOUS pass's, and at a node's first pass
+ * the last node's: BN5.2's entry dry-run priced eRep 0.63 / eBudget 0.25 from
+ * BN13's last life where its own pass had measured 0 / 0, and the next pass
+ * (reading that) moved the hack arm 8.0h -> 18.2h with nothing else decided
+ * (backlog 0h). Null where this pass did not measure them (no plan, the
+ * derivation refused) — exactly what the gate it publishes then carries.
+ */
+let elasticityNow = null
+function setPassElasticity(m) {
+  elasticityNow = { eRep: m?.eRep ?? null, eBudget: m?.eBudget ?? null }
+}
+function passElasticityOf(k) {
+  const e = elasticityNow?.[k]
+  return typeof e === 'number' && isFinite(e) ? e : null
+}
 
 function installGainsOf(names, offers) {
   const byName = new Map((offers ?? []).map((o) => [o?.name, o]))
@@ -1970,7 +2016,6 @@ const GANG_REP_LEVELS = 10
  */
 function publishExitInputs(ns, info, inputs, at = null) {
   try {
-    const gate = readJson(ns, GATE)
     // WHERE THIS LIFE ENDS AND WHAT IT CAN BUY THERE, for scripts that price a
     // spend now: the gate's install point W, the money expected at W, and the
     // batch gains the planner buys at a ladder of money levels (replanAt). A
@@ -2013,8 +2058,9 @@ function publishExitInputs(ns, info, inputs, at = null) {
         lastAugReset: info?.lastAugReset ?? null,
         bitNode: info?.currentNode ?? null,
         inputs,
-        eRep: typeof gate?.objective?.eRep === 'number' ? gate.objective.eRep : null,
-        eBudget: typeof gate?.eBudget === 'number' ? gate.eBudget : null,
+        // The responses the inputs were built with (this pass's: passElasticityOf).
+        eRep: typeof inputs?.eRep === 'number' ? inputs.eRep : null,
+        eBudget: typeof inputs?.eBudget === 'number' ? inputs.eBudget : null,
         W: at && typeof at.W === 'number' ? at.W : null,
         finalWindow: at?.finalWindow === true,
         moneyAtW: at && typeof at.moneyAtW === 'number' ? at.moneyAtW : null,
@@ -2091,9 +2137,8 @@ async function sleeveObjectiveByExit(ns, info, player, inputsFn, repFaction, exp
       const { sleeves, ...rest } = b.carriedIncome
       return { ...b, carriedIncome: rest }
     })()
-    const gate = readJson(ns, GATE)
-    const eRep = typeof gate?.objective?.eRep === 'number' ? gate.objective.eRep : null
-    const eB = typeof gate?.eBudget === 'number' ? gate.eBudget : null
+    const eRep = passElasticityOf('eRep')
+    const eB = passElasticityOf('eBudget')
     const playerRep = base.repPerSec
     const k = karmaChannelCtx(ns, info, player)
     const gang = k?.gangPending === true && !k.gangKarmaWaived && typeof k.grindHours === 'function'
@@ -5609,6 +5654,14 @@ function cadenceModelPriorOf(ns, info) {
 function exitInputsOf(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   return drain(exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet))
 }
+/**
+ * THE EXIT INPUTS' TEST SEAM (tools/test/inputdrift.test.mjs, backlog 0h): a
+ * pass begun over an ns (beginPassState, as act() begins one), this pass's
+ * measured responses (as act() sets them before its first build), and the one
+ * builder — so the same frozen telemetry can be built twice, a pass apart.
+ * No ns function of its own: exports cost no RAM.
+ */
+export const exitInputsSeam = { beginPass: beginPassState, measured: setPassElasticity, build: exitInputsOf }
 /** exitInputsOf as a generator: the purchase model's exits in slices (purchaseCadenceGen). */
 function* exitInputsGen(ns, info, player, schedule, incomePerSec, contractMoneyPerSec, offers, candidates, plan, pending, planFleet) {
   // THE BASE INPUTS' ONCE-PER-PASS PIECES, one step each: the first build of
@@ -5783,10 +5836,16 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // Hacknet money until the next install (exitplan lifeIncome).
     lifeIncome: hacknetLifeIncome(ns, info).perSec,
     // The fleet every LATER life rebuilds from zero (lifeplan.freshLifeMoney):
-    // hacknet.js's purchase model, when it runs hacknet servers this life.
+    // hacknet.js's purchase model, when it runs hacknet servers this life — at
+    // THIS pass's multipliers (the player's): hacknet.js wrote its copy at its
+    // own last run, so the pass right after the gift's accept priced the fleet
+    // at the multipliers before Genesis and the next at Genesis's (BN2.2 entry
+    // dry-run: hacknet_node_money 1.564 -> 1.408, backlog 0h).
     hacknet: (() => {
       const h = readJson(ns, HACKNET_FILE)
-      return h?.mode === 'servers' && h.lastAugReset === info?.lastAugReset && h.model?.mults && typeof h.model.nodeMoney === 'number' ? h.model : null
+      if (!(h?.mode === 'servers' && h.lastAugReset === info?.lastAugReset && h.model?.mults && typeof h.model.nodeMoney === 'number')) return null
+      const pm = player?.mults ?? {}
+      return { ...h.model, mults: Object.fromEntries(Object.entries(h.model.mults).map(([k, v]) => [k, typeof pm[k] === 'number' && isFinite(pm[k]) ? pm[k] : v])) }
     })(),
     hacking: player.skills?.hacking,
     hackingExp: player.exp?.hacking ?? 0,
@@ -5879,16 +5938,12 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // lower later lives only by their gains relative to this (exitplan).
     persistBaseline: installGainsOf([...(plan?.buy ?? []).map((b) => b?.name), ...(pending ?? [])], offers),
     // The planner's measured responses of its own batch to money and
-    // reputation (last pass's gate record): what a persisting income or
-    // reputation gain buys in every later life (exitplan persistLift).
-    eRep: (() => {
-      const e = readJson(ns, GATE)?.objective?.eRep
-      return typeof e === 'number' && isFinite(e) ? e : null
-    })(),
-    eBudget: (() => {
-      const e = readJson(ns, GATE)?.eBudget
-      return typeof e === 'number' && isFinite(e) ? e : null
-    })(),
+    // reputation (THIS pass's derived objective, passElasticityOf — never the
+    // gate record, which is the last pass's, or the last node's): what a
+    // persisting income or reputation gain buys in every later life
+    // (exitplan persistLift).
+    eRep: passElasticityOf('eRep'),
+    eBudget: passElasticityOf('eBudget'),
     exitLevel: typeof d === 'number' && isFinite(d) && d > 0 ? WD_BASE_HACKING * d : null,
     // The requirement, not the shortfall: exitHours skips the leg
     // itself when the cash is already there, and feeding it a claim
@@ -6277,7 +6332,15 @@ function makeIncomeSample(incomePerSec, player, schedule, info) {
   }
 }
 
-async function act(ns, canJoin, info, note) {
+/**
+ * ONE PASS'S STATE, RESET (act() at every pass; the exit inputs' determinism
+ * test, tools/test/inputdrift.test.mjs, between its two builds): every
+ * per-pass memo, and the batcher's calibration THIS pass (batcherCalOf) — the
+ * exponent installGainsOf prices hacking_grow at. It was last pass's gate
+ * record, so the first pass of a node priced this node's batch at the last
+ * node's grow share and the next pass at its own (backlog 0h).
+ */
+function beginPassState(ns, info) {
   planCtx = null // one plan context per pass (planCtxOf)
   incomePriorMemo = undefined // one income prior per pass (incomePriorOf)
   freshPriorMemo = undefined // one formula fresh life per pass (freshPriorOf)
@@ -6286,19 +6349,22 @@ async function act(ns, canJoin, info, note) {
   incomePostMemo = undefined // and one posterior (incomePostOf)
   stockRowsMemo = null // one read of the trader's history per pass (stockHistRowsOf)
   traderBeliefMemo = undefined // one trader-return belief per pass (traderBeliefNow)
-  // The step-cost memory across passes (a fresh process each): the page's
-  // localStorage, 0GB (coop.stepMemoryStore).
-  passPacer = makePacer({ sliceMs: PLAN.sliceMs, yieldFn: pageYieldOf(ns), store: stepMemoryStore(pageStorage()) })
   passT0 = Date.now()
+  elasticityNow = null // set once this pass has measured them (passElasticityOf)
   graftCarry = null // set once the snapshots are read (carriedGraftsOf)
   graftedThisLife = new Set()
   batchNamesNow = null
   redPillRepReq = null
   exitFactionNow = null
-  {
-    const g = readJson(ns, GATE)?.objective?.growShare
-    growShareNow = typeof g === 'number' && isFinite(g) ? g : null
-  }
+  batcherCalNow = batcherCalOf(ns, info)
+  growShareNow = batcherCalNow.growShare
+}
+
+async function act(ns, canJoin, info, note) {
+  // The step-cost memory across passes (a fresh process each): the page's
+  // localStorage, 0GB (coop.stepMemoryStore).
+  passPacer = makePacer({ sliceMs: PLAN.sliceMs, yieldFn: pageYieldOf(ns), store: stepMemoryStore(pageStorage()) })
+  beginPassState(ns, info)
   const flags = ns.flags([
     ['dry', false],
     ['no-install', false],
@@ -7080,40 +7146,10 @@ async function act(ns, canJoin, info, note) {
 
         // The batcher's own saturation and thread shape, from its telemetry.
         const bt = readJson(ns, '/tel/batch.txt')
-        const live = (bt?.targets ?? []).filter((t) => t?.plan && t.cal?.chanceObs != null)
-        let chanceObs = live.length ? live.reduce((a, t) => a + t.cal.chanceObs, 0) / live.length : null
-        let growShare = live.length
-          ? live.reduce((a, t) => a + t.plan.g / (t.plan.h + t.plan.g + t.plan.w1 + t.plan.w2), 0) / live.length
-          : null
-        // THE BATCHER'S CALIBRATION IS A PROPERTY OF THE BATCHER, NOT THE LIFE.
-        // For the first minutes after an install it has no landings yet, and
-        // refusing the whole derived basket for the two channels it weights
-        // (chance, grow) left the elasticity unmeasured at every life's
-        // start (2026-09-20 00:25). The last published figures stand in,
-        // from any life, and `calSource` says so.
-        let calSource = live.length ? 'live' : null
-        // The last LIVE reading is also remembered in its own file, because
-        // the prior-gate chain breaks whenever one gate lacks the record
-        // (2026-09-20 01:10: an unplanned write dropped it, the batcher had
-        // restarted, and the figures were gone until it landed again).
-        const CAL_LAST = '/tel/cal-last.txt'
-        if (live.length) ns.write(CAL_LAST, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset, chanceObs, growShare }), 'w')
-        if (chanceObs === null || growShare === null) {
-          const priorGate = readJson(ns, GATE)
-          const po = priorGate?.objective
-          if (typeof po?.chanceObs === 'number' && typeof po?.growShare === 'number') {
-            chanceObs = po.chanceObs
-            growShare = po.growShare
-            calSource = priorGate.lastAugReset === info?.lastAugReset ? 'prior pass' : 'prior life'
-          } else {
-            const remembered = readJson(ns, CAL_LAST)
-            if (typeof remembered?.chanceObs === 'number' && typeof remembered?.growShare === 'number') {
-              chanceObs = remembered.chanceObs
-              growShare = remembered.growShare
-              calSource = `remembered ${remembered.at}`
-            }
-          }
-        }
+        // THE BATCHER'S CALIBRATION THIS PASS (batcherCalOf, read once at the
+        // pass's start: the same figures installGainsOf prices grow at).
+        const { chanceObs, growShare, calSource } = batcherCalNow ?? batcherCalOf(ns, info)
+        if (calSource === 'live') ns.write(CAL_LAST, JSON.stringify({ at: new Date().toISOString(), lastAugReset: info?.lastAugReset, chanceObs, growShare }), 'w')
 
         // THE EXIT'S SENSITIVITIES FIRST (objective.exitWeights): hours saved
         // per ln of each channel in the next batch, on last pass's published
@@ -7856,6 +7892,10 @@ async function act(ns, canJoin, info, note) {
     }
   }
 
+  // THIS PASS'S MEASURED RESPONSES (the derived objective above) are the
+  // exit inputs' eRep / eBudget from here on (passElasticityOf): every build
+  // of the pass comes after this line.
+  setPassElasticity(weightsMeta)
   // THE PASS'S FIRST EXIT INPUTS, IN SLICES. The first build of a pass prices
   // the purchase model's ten life lengths (purchaseCadenceGen, memoised for
   // the pass); built synchronously by whichever caller came first it held the

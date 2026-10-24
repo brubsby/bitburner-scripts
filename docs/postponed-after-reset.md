@@ -132,6 +132,14 @@ before starting each subagent.
 0h. **Exit inputs drift between passes** (c249a8f's author): the hack arm moved 14.3h -> 18.2h one pass after a
     blade accept in BN5.2 — eRep 0.11 -> 0 and the income formula evaluated at a different age (1.67h vs 2.08h).
     exitInputsOf should give the same inputs for the same state.
+    DONE 2026-10-24 (tests ID1-ID6; dry-run INPUT DRIFT): eRep / eBudget were read off the install gate — the last
+    pass's record, at a node's first pass the last node's (BN13's 0.6293 / 0.2476; the entry pass itself measured
+    0 / 0) — now this pass's measurement (passElasticityOf); installGainsOf's grow exponent was the gate's growShare
+    (now batcherCalOf, this pass); the hacknet model carried hacknet.js's multipliers from its last run (lagged the
+    accept a pass; now the player's). The income formula's age is NOT drift: formulaRatePrior reads the formula at
+    max(age, its first-income hour), and Genesis's x0.9 (Augmentations.ts:1593-1617) moves that hour (1.67h -> 2.08h).
+    BN5.2 hack arm across entry/again/accepted/joined: 8.02 / 18.51 / 18.15 / 18.15h -> 18.51 / 18.51 / 18.16 / 18.15h.
+    Left (0i): the blade arm's re-price after the accept (BN2.2 11.6h -> 13.2h) is the gift's pricing, not the inputs.
 0i. ~~**Stanek allocation f is still priced on the fleet held at entry**~~ DONE 2026-10-24: decisions.stanek prices
     every f on the route arms' charger (hackGiftInputsOf on chainHackChargerOf), one grid with the chain; BN5.2's
     accepted state replayed: f 0.1 -> 0.3, the chain's (SG26).

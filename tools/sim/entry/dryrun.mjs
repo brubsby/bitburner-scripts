@@ -16,14 +16,18 @@
 //               for --boot-s (default 90) with the game loop ticking (Engine.updateGame: work, sleeves,
 //               hacknet; autosave off) — the node's first minute as the stack lives it.
 //   2. entry    the watchdog and act.js stopped; every snapshot actor, then one full progress.js pass (the
-//               route + gift chain, the Covenant mandate, the install gate, the slot, every decision), then
+//               route + gift chain, the Covenant mandate, the install gate, the slot, every decision) and AT
+//               ONCE A SECOND on the same state (the 'again' pass: its records stand for the entry), then
 //               act.js resumed for one cycle (it executes the orders through its own gates), stanek.js and
 //               endgame.js (--dry) one cycle each.
+//   2b. accepted  where stanek.js accepted the gift on the chain's verdict: the snapshots and one more pass.
 //   3. joined   where the Bladeburner division exists: combat to 100, Player.startBladeburner (SF7.3's
 //               Simulacrum arrives here), the snapshots and one more progress.js pass.
 // evaluate.mjs reads what they published through the readers' own functions (stanekplan's gift gate,
 // bbslot's claim) and names every decision that came out unpriced, held, absurd (> 1000h or non-finite)
-// or blocked, with the cause the publisher gave.
+// or blocked, with the cause the publisher gave; and every exit input that moved between two consecutive
+// passes beyond what the state moved between them (inputDriftOf: INPUT DRIFT — the again pass is the
+// determinism probe, real time the only change).
 //
 // WHAT IS NOT THE GAME (stated): a script's module is node's import of this checkout (build.mjs's compile
 // seam), not the game's blob compile; time is real time (90s of boot, not the node's first hour — a
@@ -80,7 +84,7 @@ async function one() {
   const t0 = Date.now()
   const W = await import('./world.mjs')
   const { G } = W
-  const { evaluate, acceptConsistencyOf } = await import('./evaluate.mjs')
+  const { evaluate, acceptConsistencyOf, inputDriftOf } = await import('./evaluate.mjs')
   const { canAccessCotMG, canJoinBladeburner } = await import('../../../sfgate.js')
   const { bitNodeMults } = await import('../../../bitNodeMultipliers.js')
   const node = Number(opt('node'))
@@ -174,10 +178,23 @@ async function one() {
   // the forced planner pass: its own failure to run (no room on home, a timeout) is a finding — the stack's
   // earlier pass on file must never stand in for it
   let passFail = null
+  // every planner pass's exit inputs, with what moved the state since the pass before (evaluate.inputDriftOf)
+  const passInputs = []
+  let since = []
   const plannerPass = async (label) => {
     const r = await runToEnd('progress.js', [], { timeoutMs: Number(opt('pass-s', 900)) * 1000 })
     step(label, r)
     passFail = r.ok ? null : { level: 'fail', kind: 'NOT RUN', decision: 'progress.js', what: `the planner pass did not run to its end (${label})`, cause: r.why }
+    const ei = read('/tel/exitinputs.txt')
+    const br = read('/tel/plan.txt')?.decisions?.bladeRoute
+    passInputs.push({ label, events: since, inputs: r.ok && ei?.lastAugReset === infoNow().lastAugReset ? ei.inputs : null, route: br ? { key: br.key ?? null, hackH: br.hackH ?? null, bladeH: br.bladeH ?? null } : null, exitH: read('/tel/plan.txt')?.exit?.meanH ?? null })
+    since = []
+  }
+  const driftSince = (phase) => {
+    const n = passInputs.length
+    if (n < 2) return []
+    const [a, b] = [passInputs[n - 2], passInputs[n - 1]]
+    return inputDriftOf({ prev: a.inputs, next: b.inputs, events: b.events, from: a.label, to: b.label, phase })
   }
   const judge = (phase) => {
     keepTel(phase)
@@ -215,21 +232,29 @@ async function one() {
   const snap = await snapshots()
   step('snapshots', { ok: !snap.length, why: snap.join('; ') || null })
   await plannerPass('progress.js')
+  // THE SAME STATE, PASSED AGAIN: nothing acted between the two passes (real time only), so the exit inputs
+  // must agree (evaluate.inputDriftOf, backlog 0h); its records stand for the entry from here on
+  await plannerPass('progress.js (again)')
+  const againDrift = driftSince('entry')
   step('act.js cycle', await cycle('act.js', '/tel/act.txt', 45e3))
+  since.push('act')
+  const genesis = (i) => [...(i.ownedAugs?.keys?.() ?? [])].includes("Stanek's Gift - Genesis")
+  const g0 = genesis(infoNow())
   if (canAccessCotMG(infoNow())) step('stanek.js cycle', await cycle('stanek.js', '/tel/stanek.txt', 60e3))
+  if (!g0 && genesis(infoNow())) since.push('accept')
   step('endgame.js', await runToEnd('endgame.js', ['--next', String(Number(opt('next', 0)) || node), '--dry'], { timeoutMs: 60e3 }))
   judge('entry')
+  phases[phases.length - 1].findings.push(...againDrift)
 
   // 2b. accepted: stanek.js took the gift on the chain's verdict — the next pass prices the route WITH it
   // from the live state; the accept must survive its own re-pricing (evaluate.acceptConsistencyOf)
   const entryRoute = read('/tel/plan.txt')?.decisions?.bladeRoute ?? null
-  const genesis = (i) => [...(i.ownedAugs?.keys?.() ?? [])].includes("Stanek's Gift - Genesis")
   if (canAccessCotMG(infoNow()) && genesis(infoNow()) && entryRoute?.gift?.chain) {
     const s1 = await snapshots()
     step('snapshots (accepted)', { ok: !s1.length, why: s1.join('; ') || null })
     await plannerPass('progress.js (accepted)')
     judge('accepted')
-    phases[phases.length - 1].findings.push(...acceptConsistencyOf({ entry: entryRoute, accepted: read('/tel/plan.txt')?.decisions?.bladeRoute ?? null }))
+    phases[phases.length - 1].findings.push(...acceptConsistencyOf({ entry: entryRoute, accepted: read('/tel/plan.txt')?.decisions?.bladeRoute ?? null }), ...driftSince('accepted'))
   }
 
   // 3. joined: the Bladeburner division (SF7.3's Simulacrum at the join)
@@ -239,6 +264,7 @@ async function one() {
     for (const s of ['strength', 'defense', 'dexterity', 'agility']) P.exp[s] = Math.max(P.exp[s], G.calculateExp(100, P.mults[s] * (G.currentNodeMults[`${s[0].toUpperCase()}${s.slice(1)}LevelMultiplier`] ?? 1)) + 1)
     P.updateSkillLevels()
     if (!P.bladeburner) P.startBladeburner()
+    since.push('join')
     step('joined Bladeburner', { combat: ['strength', 'defense', 'dexterity', 'agility'].map((s) => P.skills[s]), simulacrum: P.augmentations.some((a) => a.name === "The Blade's Simulacrum") })
     killAll(['progress.js'])
     const s2 = await snapshots()
@@ -246,11 +272,13 @@ async function one() {
     await plannerPass('progress.js (joined)')
     step('act.js cycle (joined)', await cycle('act.js', '/tel/act.txt', 45e3))
     judge('joined')
+    phases[phases.length - 1].findings.push(...driftSince('joined'))
   }
   clearInterval(ticker)
 
   const findings = phases.flatMap((p) => p.findings)
-  return { label: `BN${node}.${facts.level}`, node, level: facts.level, ok: !findings.some((f) => f.level === 'fail'), facts, findings, phases, steps, ms: Date.now() - t0 }
+  const passes = passInputs.map((x) => ({ label: x.label, events: x.events, route: x.route, exitH: x.exitH, eRep: x.inputs?.eRep ?? null, eBudget: x.inputs?.eBudget ?? null }))
+  return { label: `BN${node}.${facts.level}`, node, level: facts.level, ok: !findings.some((f) => f.level === 'fail'), facts, findings, phases, passes, steps, ms: Date.now() - t0 }
 }
 
 // ------------------------------------------------------------------ a chain, one child process per node
@@ -311,6 +339,7 @@ function print(r) {
     const d = p.decisions
     console.log(`  [${p.phase}] route ${d.route?.key ?? 'null'} (hack ${d.route?.hackH ?? '-'}h, blade ${d.route?.bladeH ?? '-'}h) gift accept ${d.gift ? JSON.stringify(d.gift.accept) : '-'} exit ${d.exitH ?? '-'}h slot ${d.slot?.owner ?? 'null'} income ${d.income?.perSec ?? '-'}/s (${d.incomeModel ?? '-'})`)
   }
+  for (const x of r.passes ?? []) console.log(`  pass ${x.label}${x.events?.length ? ` (after ${x.events.join(' + ')})` : ''}: route ${x.route?.key ?? '-'} hack ${x.route?.hackH ?? '-'}h blade ${x.route?.bladeH ?? '-'}h exit ${x.exitH ?? '-'}h eRep ${x.eRep} eBudget ${x.eBudget}`)
   for (const f of r.findings ?? []) console.log(`  ${f.level === 'fail' ? '!!' : '--'} [${f.phase}] ${f.kind} ${f.decision}: ${f.what}${f.cause ? `\n       cause: ${f.cause}` : ''}`)
 }
 
