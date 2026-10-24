@@ -651,6 +651,22 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
   for (const p of probs) fail(`${p.problem}: ${p.detail}`, `progress.txt ${prog?.at ?? "absent"} route ${JSON.stringify(prog?.route ? { route: prog.route.route, priced: prog.route.priced, pinned: prog.route.pinned } : null)}`);
   if (!probs.length && prog?.route?.node === now.bitNode) note(`route: acting on '${prog.route.route}' (priced '${prog.route.priced ?? "none"}'${prog.route.pinned ? `, PINNED by ${prog.route.pin?.file}` : ""}${prog.route.gift?.accepted ? `, gift priced in: ${prog.route.gift.pricedWithGift}` : ""})`);
 }
+// NEXT NODE ENTRY UNPRICED (tools/sim/entry/health.mjs): the next node's entry, dry-run offline by
+// tools/plan-on-node.sh after the plan names it, must price every decision — so a start-of-node hold
+// (BN11.1 ~0.8h) or broken pricing (BN10.3 ~5.5h) is found before the exit, not live.
+{
+  const { entryHealthOf } = await import("./sim/entry/health.mjs");
+  const rd = (p) => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const r = entryHealthOf({ dry: rd(".telemetry/entry-dryrun.json"), next: rd("next-node.txt"), node: state.bitNode ?? null });
+  if (r.fail) fail(r.fail.what, r.fail.detail);
+  if (r.note) note(r.note);
+}
 // GO NOT PLAYING IN A GO NODE (tools/gohealth.mjs): where the placers'
 // priced verdict (goplace.js) places go.js, absent or idle for > 10 min of the
 // life. Live BN14.1 2026-10-03: nothing ran it for the node's first 17 minutes.

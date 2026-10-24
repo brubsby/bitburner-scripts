@@ -979,6 +979,20 @@ that actually stop the run working are `ServerWeakenRate`/`ServerGrowthRate`
 buyserv buy the wrong fleet shape). Full narrative and the structural
 assumptions the multipliers do not capture: `docs/bitnode-assumptions.md`.
 
+**The next node's entry is dry-run before the exit** (`tools/sim/entry/`, 2026-10-23). BN11.1 lost
+~0.8h to a start-of-node gift pricing hold and BN10.3 ~5.5h to an absurd Covenant leg, hack + gift
+unpriced and a 35x-low income model — each found live. `dryrun.mjs` loads the live save into the game's
+own code (`loadGame`), destroys the current node and enters the target by `Prestige.ts
+prestigeSourceFile` (home RAM, $1262, the SF9.3 server, the sleeves, augs reset, the /tel files
+surviving), then runs THIS checkout's stack against it with the game's real `ns` (NetscriptFunctions
+over WorkerScripts; the one seam is `compile()`, hooked so node imports the module): boot.js and what it
+starts for 90s with the game loop ticking, then the snapshots, one full progress.js pass, one act.js /
+stanek.js cycle, endgame.js --dry, and again after a Bladeburner join (SF7.3's Simulacrum).
+`evaluate.mjs` names every decision unpriced / held / absurd (> 1000h) / blocked with its cause.
+`node tools/sim/entry/dryrun.mjs --chain 5.2,5.3 [--save F]` (~5 min a node). `tools/plan-on-node.sh`
+runs it for next-node.txt's node into `.telemetry/entry-dryrun.json`; healthcheck fails NEXT NODE
+ENTRY UNPRICED (or NOT DRY-RUN past 2h). Tests ED1-ED4.
+
 **When a script gains a constant that depends on a multiplier, add it to the
 `ASSUMPTIONS` table in bncheck.mjs in the same commit.** That table is what
 turns arriving in a new BitNode into a checklist rather than a debugging
