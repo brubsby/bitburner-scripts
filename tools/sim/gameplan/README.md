@@ -49,6 +49,8 @@ process, 2GB heap is plenty (peak RSS ~0.6GB).
 | `stanektest.mjs` | ST1's game-source half: stanekplan.js against the game's own CotMG classes (tools/sim bundle), its own child |
 | `sleeves.mjs` | the sleeve fleet: the count rule (min(3, SF10 + (BN10 ? 1 : 0)) + 4 Covenant), the hacking route's DERIVED d10 (an extra sleeve's money-crime trajectory through exitplan's per-life lift on the measured lives) and the 5th Covenant sleeve's price; its CLI re-derives them |
 | `sleevetest.mjs` | SL1-SL3's game half: the count against the game's recalculateNumberOfOwnedSleeves (tools/sim bundle); 5 sleeves = the old surrogate, monotone in sleeves (the cache) |
+| `bn8.mjs` | BitNode 8's own exit (routes `stocks`): the trader the only income through installs (traderw `rwAgeRate` x BN8's factor, a fresh market each life), the game's catalogue with the rep donated, Daedalus' 30 / $100b / 2500, The Red Pill, the climb; the policy searched (life length x lives), the gift both ways. BN8.1 replayed (`node bn8.mjs`); `bn8test.mjs` is B81/B82's child |
+| `giftcal.mjs` | Stanek's Gift per life MEASURED (the hacking multiplier's rise within each gift life, history.jsonl: BN13.1 + BN10.3) against stanekplan's charge model -> `stanekplan.GIFT_CAL` (kappa on the ln effect, the charger's start delay) |
 | `go.mjs` | the IPvGO model (phase 2): the Go bonus scale GoPower x the SF14 doubling, the favor life, the w0r1d_d43m0n exit divisor over its window (the post-TRP climb fixed point), the derived w0 prior, the g channel — source formulas, measured BN9 farm, ASSUMED bounds, each labelled |
 | `selftest.mjs` | the game-dependent half of `tools/test/gameplan.test.mjs` (GP2, GP3, GP4's simulation half), run in a child process |
 | `gotest.mjs` | GP4's game-source half: go.mjs against the game's own CalculateEffect / getMaxRep / endGoGame / favor (tools/sim bundle), its own child |
@@ -69,7 +71,19 @@ C(node, state) is `min` over the routes that apply:
   with Stanek's Gift accepted at the node's start — `g x gMul`, `W x W_gift`, `favor x favorMul`
   (stanek.mjs). The min over routes IS the accept-or-never decision, per node and world.
   MODELLED from source; the Bladeburner route with the gift is NOT PRICED.
-- **stocks (BN8), corp (BN3)**: placeholders, return null — NOT CALIBRATED.
+- **stocks (BN8)** (bn8.mjs, 2026-10-23): BN8's whole exit simulated a life at a time — the book from $250m on a
+  fresh market each life (`traderw.rwAgeRate`: the ledger's r(W, market age), x kappa8(home) MEASURED on BN8.1),
+  the cheapest augmentations first with each faction's rep DONATED ($1e6 / faction_rep), NeuroFlux, home RAM with
+  the rest; Daedalus (30 installed, $100b cash, hacking 2500), The Red Pill's 2.5m rep donated, the climb to 3000;
+  the exp model MEASURED on BN8.1 (`exp/s = 1.82 (home/512GB)^0.02 (L + 50) x hacking_exp x speed x int`).
+  The policy (life length x lives before the final one) is searched, the gift both ways (`STOCK_GIFT_PRICED` is
+  the same pricing for the live accept). It REPLACES the hacking and stanek routes in BN8 (`--bn8-hack` restores
+  them). CALIBRATION (printed, B81): BN8.1 replayed on its own lives (install times, augmentations, home) —
+  hacking 2500 +0.04h, Daedalus -0.21h, The Red Pill -0.25h, the exit -0.24h (tolerance 15%, >= 2h); in sample
+  (the exp model and kappa8 are fitted on the same node). NOT CALIBRATED: the purchase policy (cheapest first;
+  the live augplan prices by the exit), sleeves and the IPvGO farm (NOT PRICED), factions past the hacking /
+  city / gang ones (megacorps, Syndicate, Illuminati: a floor on what a life buys).
+- **corp (BN3)**: placeholder, returns null — NOT CALIBRATED.
 
 ### The IPvGO model (go.mjs) — what is measured, from source, assumed
 
@@ -582,3 +596,18 @@ them, update the expected values in `selftest.mjs` in the same commit and say wh
 or, as the IPvGO model does, put the change behind `worldOf(..., {phase1: true})`
 (and `hackHours(..., {speed1: true})`) so GP3 keeps reproducing phase 1 exactly
 and the new terms get their own check (GP4).
+
+## BitNode 8 and the gift recalibrated (2026-10-23, BN13.3 in progress)
+
+- **The trader by market age** (`tools/sim/stocks/rwage.mjs`, `traderw.RW_AGE`): r(W, a) = r0 ramp(W) sat(W / W*(a)),
+  W*(a) = W1 max(a, 0.5h)^1.43, fitted on all 62 ledger market-lives (1091 bins; pre-4S r0 0.943/h W1 $5.3e10,
+  4S r0 1.046/h W1 $9.6e10 with the exponent shared). Over the books BN8 trades (<= $3e13) its money is -4% / -3%
+  of the measured against RW_PRIOR's -81% / -68%; leave-one-node-out mean |rate error| 0.147/h vs 0.203/h without
+  age. BN8's own factor (BN8.1: shorts + the fleet manipulating) kappa8 = 0.956 (home/256GB)^0.133, held past 16TB.
+- **The gift per life** (`giftcal.mjs`, `stanekplan.GIFT_CAL`): 43 measured lives; the model's ln effect x 0.886
+  and no charge for the first 0.35h of a life; rms ln error 0.264 -> 0.165. BN13 at SF13.2's exit divisor W 2.10 ->
+  1.55 (the 2.25 the backlog named).
+- **BN8.2 / BN8.3**: 38.9h / 38.8h (the stanek placeholder) -> **30.4h / 30.4h** (gift accepted; 31.7h never), from
+  3-4 lives of 6-8h, the final life ~5.6h, the climb 0.7h; kappa8 x0.8 / x1.25: 38.1h / 26.0h. The order is
+  unchanged (next BN5.2; robust BN5.2 BN5.3 BN8.2 BN2.2 BN2.3 BN8.3), E[T] 114.3h -> 94.8h.
+

@@ -83,6 +83,66 @@ export const RW_PRIOR = {
   },
 }
 
+/**
+ * THE KNEE MOVES WITH THE MARKET'S AGE (tools/sim/stocks/rwage.mjs, fitted on
+ * every market-life of the live ledger /tel/stock-rw.txt + BN8.1's minute rows).
+ * RW_PRIOR's W* is a fresh 5h simulated market's; live, a market some hours old
+ * absorbs a far larger book. Every install re-initialises the market
+ * (Prestige.ts:166-170), so the age restarts at each install:
+ *   r(W, a) = r0 x ramp(W) x sat(W / W*(a)),  W*(a) = W1 x max(a, aMin)^beta
+ * a = hours since the market's last initialisation; ramp/gate/n from RW_PRIOR's
+ * shape. tools/test/rwage.test.mjs holds these to the frozen ledger fixture.
+ */
+export const RW_AGE = {
+  'pre-long': { r0PerHour: 0.943, W1: 5.28e10, beta: 1.431, aMin: 0.5, n: 1.91, source: 'rwage.mjs 2026-10-23: 714 ledger bins / 180h, 47 pre-4S market-lives, IRLS relative weights, books <= $3e13' },
+  // beta shared with pre-4S: the free 4S beta (1.865) fits in sample but loses out of sample (leave-one-node-out
+  // mean |rate error| 0.336/h vs 0.246/h shared, 0.241/h no age) — 14 4S market-lives over 5 nodes
+  '4S-long': { r0PerHour: 1.046, W1: 9.58e10, beta: 1.431, aMin: 0.5, n: 1.13, source: 'rwage.mjs 2026-10-23: 365 ledger bins / 119h, 14 4S market-lives, beta shared with pre-4S, IRLS relative weights, books <= $3e13' },
+}
+/** The knee at market age ageH (hours) under p (RW_AGE[regime] by default). */
+export function rwAgeKnee(ageH, regime = 'pre-long', p = RW_AGE[regime]) {
+  return p.W1 * Math.pow(Math.max(num(ageH) ? ageH : 0, p.aMin ?? 0.5), p.beta ?? 0)
+}
+const ageShapes = new Map()
+/** The trader's log return per HOUR at book W in a market ageH hours old (RW_AGE's curve; p overrides). */
+export function rwAgeRate(W, ageH, regime = 'pre-long', p = RW_AGE[regime]) {
+  const base = RW_PRIOR[regime] ?? RW_PRIOR['pre-long']
+  const n = p.n ?? base.shape.n
+  let sh = ageShapes.get(`${regime}|${n}`)
+  if (!sh) ageShapes.set(`${regime}|${n}`, (sh = { ...base.shape, n }))
+  return p.r0PerHour * rwShape(W, rwAgeKnee(ageH, regime, p), sh)
+}
+
+/**
+ * BITNODE 8's TRADER over the ledger's curve (tools/sim/gameplan/bn8.mjs calibrateTrader, BN8.1 in sample):
+ * kappa8(home) = kappa x (home/256GB)^rho on rwAgeRate — shorts allowed in BN8 (StockMarket.ts) and the
+ * whole fleet serving the trader's manipulation (hacking pays nothing there). Measured through BN8.1's two
+ * clean money endpoints (256GB pre-4S: $250m -> $6.35e10 in 6.14h; 16TB 4S: -> $7.33e11 in 5.03h); held
+ * at homeMax past the measured range.
+ */
+export const RW_BN8 = { kappa: 0.956, rho: 0.133, homeMin: 256, homeMax: 16384, source: 'bn8.mjs calibrateTrader 2026-10-23, BN8.1 history.jsonl' }
+export const rwBn8Kappa = (homeGB) => RW_BN8.kappa * Math.pow(Math.min(RW_BN8.homeMax, Math.max(num(homeGB) ? homeGB : RW_BN8.homeMin, 32)) / RW_BN8.homeMin, RW_BN8.rho)
+
+/**
+ * THE EXIT INPUTS' TRADER WHERE THE TRADER IS THE INCOME (BitNode 8; progress.js exitInputsOf): the
+ * age-aware curve in place of the age-blind posterior — r0 = kappa8(home) x RW_AGE[regime].r0PerHour,
+ * the knee at today's market age, and capitalAge so exitplan's money legs move the knee with each leg's
+ * market age (a fresh market after every install). { capitalReturnPerSec, capitalScaleW, capitalShape,
+ * capitalAge: { W1, beta, aMin, ageNowH, fourS } }.
+ */
+export function capitalAgeInputsOf({ regime = 'pre-long', ageNowH = 0, homeGB = null, bn8 = true } = {}) {
+  const reg = RW_AGE[regime] ? regime : 'pre-long'
+  const p = RW_AGE[reg]
+  const k = bn8 ? rwBn8Kappa(homeGB) : 1
+  const s4 = RW_AGE['4S-long']
+  return {
+    capitalReturnPerSec: (k * p.r0PerHour) / 3600,
+    capitalScaleW: rwAgeKnee(ageNowH, reg, p),
+    capitalShape: { ...RW_PRIOR[reg].shape, n: p.n },
+    capitalAge: { W1: p.W1, beta: p.beta, aMin: p.aMin, ageNowH: num(ageNowH) && ageNowH > 0 ? ageNowH : 0, regime: reg, kappa: k, ...(reg === 'pre-long' ? { fourS: { W1: s4.W1, beta: s4.beta, aMin: s4.aMin } } : {}) },
+  }
+}
+
 /** The regime stock.txt's mode names: '4S-long' when it reads 4S forecasts, else 'pre-long'. */
 export function rwRegimeOf(mode) {
   return /4S/.test(String(mode ?? '')) && !/pre/i.test(String(mode ?? '')) ? '4S-long' : 'pre-long'

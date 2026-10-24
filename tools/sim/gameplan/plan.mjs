@@ -22,6 +22,8 @@
 //          --w0-prior lo,mid,hi (override the derived w0 prior: 0,200,1000 = the old hand one)
 //          --w0-live (the w0r1d_d43m0n bonus worth only the climb's shortening L0 - L*: a final
 //          life that does not anticipate it, as today's exitplan; default: the exit shift ln W/g)
+//          --bn8-hack (BN8 on the hacking/stanek routes: the placeholder pricing before bn8.mjs) | --gift-uncal
+//          (Stanek's Gift at the uncalibrated charge model: stanekplan.GIFT_CAL off)
 //          --rates fit|const (the hacking exit's exp/s and $/s: fit = rates.mjs's progress model fitted to
 //          history.jsonl, the node in progress through its posterior readings; const = the old constants,
 //          expRich/expPoor/incomeL1 — the regression mode, reproducing the numbers before the fit)
@@ -298,7 +300,13 @@ const covLegOf = (lv) => {
 }
 const COV5 = arg('--covenant5', 'auto')
 if (!['auto', '10.2', '10.3', 'none'].includes(COV5)) throw new Error(`--covenant5 ${COV5}: expected auto, 10.2, 10.3 or none`)
-const wOptsBase = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, bladeStanekOff: has('--no-blade-stanek'), w0Window: W0_WINDOW, w0Live: has('--w0-live'), covLegOf }
+// BITNODE 8's OWN MODEL (bn8.mjs, routes 'stocks'): deterministic per state, memoised; --bn8-hack prices BN8 on the
+// hacking/stanek routes instead (the placeholder pricing before 2026-10-23)
+const BN8M = has('--bn8-hack') || has('--phase1') ? null : await import('./bn8.mjs')
+// the gift both ways unless the world turns it off (--no-stanek, SF13's own value: stanekOff / stanekBn13Only)
+const bn8GiftWays = (w) => (w?.stanekOff || w?.stanekBn13Only ? [false] : null)
+const bn8World = BN8M ? { int: entry.int ?? 0, hoursOf: (lv, w) => BN8M.bn8RouteHours(lv, { int: entry.int ?? 0, giftWays: bn8GiftWays(w) }).hours, detailOf: (lv, w) => BN8M.bn8RouteHours(lv, { int: entry.int ?? 0, giftWays: bn8GiftWays(w) }) } : null
+const wOptsBase = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, bladeStanekOff: has('--no-blade-stanek'), w0Window: W0_WINDOW, w0Live: has('--w0-live'), covLegOf, ...(has('--gift-uncal') ? { giftCal: null } : {}), bn8: bn8World }
 const L0 = lattice(entry)
 const L1 = lattice(start)
 const COV_FLEETS = { none: 'live', '10.2': 'cov2', '10.3': 'cov3' }
@@ -539,11 +547,17 @@ if (!NO_STANEK && !has('--phase1')) {
     for (const l13 of levels) {
       const lv = lvWith(start, 13, l13)
       const c = clearTime(n, lv, w, S)
-      const never = Math.min(...Object.entries(c.by).filter(([k, v]) => k !== 'stanek' && k !== 'bladeStanek' && v !== null && isFinite(v)).map(([, v]) => v))
+      let never = Math.min(...Object.entries(c.by).filter(([k, v]) => k !== 'stanek' && k !== 'bladeStanek' && v !== null && isFinite(v)).map(([, v]) => v))
       const p = stanekParts({ node: n, lv, world: w, S })
       const g = gridOf(m, l13)
       const lay = layoutFor(m, l13)
-      const acc = p ? p.h : null
+      let acc = p ? p.h : null
+      // BN8: the gift is priced INSIDE the stock-only model (bn8.mjs, both ways); the f/W/gMul columns stay the hacking model's
+      if (n === 8 && bn8World) {
+        const d = bn8World.detailOf(lv, w).byGift
+        never = d.never?.hours ?? null
+        acc = d.accept?.hours ?? null
+      }
       const label = n === 13 ? `BN13.${l13 + 1}` : `BN${n}`
       console.log(`  ${label.padEnd(8)}  ${l13}  ${`${g.width}x${g.height}`.padEnd(5)} ${m.StaneksGiftPowerMultiplier.toFixed(2).padStart(5)}  ${(layoutText(lay.placed) + (lay.exact ? '' : ' ~')).padEnd(42)} ${p ? p.st.f.toFixed(3).padStart(5) : '    -'} ${p ? p.st.W.toFixed(2).padStart(5) : '    -'} ${p ? p.st.gMul.toFixed(3) : '    -'} ${p ? p.st.favorMul.toFixed(2).padStart(5) : '    -'}  ${p ? `${p.st.giftAt[2] ?? '-'}/${p.st.giftAt[3] ?? '-'}`.padEnd(6) : '-     '} ${f1(never)}  ${f1(acc)} ${f1(acc === null ? null : never - acc)}  ${acc !== null && acc < never ? 'ACCEPT' : 'never'}`)
     }

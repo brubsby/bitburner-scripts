@@ -38,7 +38,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { finalRatesOf } from './rates.mjs'
-import { giftSize, optimiseLayout, hackWeights, bestNodeModel, nodeModel, lifePolicyOf, chargeFactor, threadsOf, homeAt, fragmentById, TYPE, TYPE_NAME } from '../../../stanekplan.js'
+import { giftSize, optimiseLayout, hackWeights, bestNodeModel, nodeModel, lifePolicyOf, chargeFactor, threadsOf, homeAt, fragmentById, TYPE, TYPE_NAME, GIFT_CAL } from '../../../stanekplan.js'
 import { SF_PARAMS } from './effects.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -131,7 +131,10 @@ export function giftRunOf(H0, g, modelAt) {
 export function giftBaseOf(node, l13, world, m, { H0, g }) {
   const lay = layoutFor(m, l13)
   const cycleH = world.cycleHours ?? 2
-  return { lay, base: { layout: lay.placed, nodePower: m.StaneksGiftPowerMultiplier, repCost: m.AugmentationRepCost, cycleH, p: world.sf, Hg: H0 * g, L0: expTermOf(m, world.profile, cycleH, node), ramHours: H0, favorU: FAVOR_U } }
+  // THE CALIBRATED CHARGE (stanekplan.GIFT_CAL, tools/sim/gameplan/giftcal.mjs: the measured per-life factor of
+  // 43 gift lives): world.giftCal null prices the uncalibrated model (plan.mjs --gift-uncal)
+  const cal = world.giftCal === undefined ? GIFT_CAL : world.giftCal
+  return { lay, base: { layout: lay.placed, nodePower: m.StaneksGiftPowerMultiplier, repCost: m.AugmentationRepCost, cycleH, p: world.sf, Hg: H0 * g, L0: expTermOf(m, world.profile, cycleH, node), ramHours: H0, favorU: FAVOR_U, cal } }
 }
 
 /**

@@ -178,7 +178,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 // THE ONE COMMITTED PLAN (plan.js, bayes.js, docs/bayes.md): posteriors over
 // the uncertain inputs, a CRN Monte Carlo through the exit simulators, and
 // the commitment rule. Pure: free to import.
-import { rwRegimeOf, RW_PRIOR } from 'traderw.js'
+import { rwRegimeOf, RW_PRIOR, capitalAgeInputsOf } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
@@ -4034,6 +4034,23 @@ function stockRwLedgerNow(ns, rows, info) {
   return led
 }
 let traderBeliefMemo
+/**
+ * THE TRADER BY MARKET AGE WHERE IT IS THE INCOME (ScriptHackMoneyGain 0: BitNode 8). The belief above
+ * (traderBeliefOf, the ledger's posterior) has one knee for every market age; live 2026-10-23 it read
+ * r0 1.51/h and W* $6.5e12 for a fresh life, where the ledger's own bins by age give a knee of $5e10 at
+ * 1h and $5e12 at 24h (tools/sim/stocks/rwage.mjs). In BN8 every install re-initialises the market and
+ * every dollar is the trader's, so the exit's money legs take traderw.capitalAgeInputsOf: r0 x BN8's
+ * factor at this home (RW_BN8, BN8.1), the knee at today's market age, and capitalAge so each leg's knee
+ * follows its own market's age (exitplan hoursToMoney). {} in every other node.
+ */
+function capitalAgeOverrideOf(ns, info) {
+  if (bitNodeMults(info)?.ScriptHackMoneyGain !== 0) return {}
+  const homeGB = homeRamOf(readJson(ns, '/tel/homeup.txt'), readJson(ns, '/tel/boot.txt'), info?.lastNodeReset) ?? null
+  const ageNowH = typeof info?.lastAugReset === 'number' ? Math.max(0, (Date.now() - info.lastAugReset) / 3.6e6) : 0
+  const o = capitalAgeInputsOf({ regime: rwRegimeOf(stockNow?.mode), ageNowH, homeGB })
+  return { ...o, capitalFit: `traderw r(W, age) (rwage.mjs, the ledger by market age) x BN8 factor ${o.capitalAge.kappa.toFixed(2)} at home ${homeGB ?? '?'}GB (RW_BN8, BN8.1): r0 ${(o.capitalReturnPerSec * 3600).toFixed(2)}/h, knee $${o.capitalScaleW.toExponential(2)} at market age ${ageNowH.toFixed(2)}h (${o.capitalAge.regime})` }
+}
+
 function traderBeliefNow(ns, info) {
   if (traderBeliefMemo !== undefined) return traderBeliefMemo
   traderBeliefMemo = null
@@ -5907,6 +5924,9 @@ function exitInputsBaseOf(ns, info, player, schedule, incomePerSec, contractMone
     // level r0. Null (the flat rate) where the belief is not the curve's.
     capitalScaleW: traderBeliefNow(ns, info)?.Wstar ?? null,
     capitalShape: traderBeliefNow(ns, info)?.shape ?? null,
+    // WHERE THE TRADER IS THE INCOME (BitNode 8): the age-aware curve over the age-blind belief above
+    // (capitalAgeOverrideOf; {} elsewhere, so every other node prices as before)
+    ...capitalAgeOverrideOf(ns, info),
     // What an install leaves: $1262, or BitNode 8's $250m (Prestige.ts:158).
     // ...plus every owned (or queued) augmentation's startingMoney
     // (Prestige.ts:85-88 — CashRoot's $1m), where the node keeps it: live BN9

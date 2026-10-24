@@ -414,8 +414,17 @@ export function hoursToMoney(target, o = {}) {
   // capitalShape the capital earns r0 s(W) W — nothing below the commission
   // threshold, the plateau, then the market's capacity — not r x min(W, cap).
   // Absent, capitalGain is exactly the flat closed form below.
-  const capC = capitalOf(o)
+  let capC = capitalOf(o)
   const shapedCap = r > 0 && isShaped(o)
+  // THE KNEE MOVES WITH THE MARKET'S AGE (o.capitalAge {W1, beta, aMin, ageH0}: traderw.RW_AGE, fitted on every
+  // market-life by tools/sim/stocks/rwage.mjs): W*(a) = W1 max(a, aMin)^beta, a = the leg's market age (hours since
+  // the install that re-initialised the market, Prestige.ts:166-170) + the hours into the leg. Absent: the one
+  // knee capitalScaleW for the whole leg, as before. The knee is quantised to 10% steps so the shape tables
+  // (traderw.shapeTable, cached per knee) are shared across steps, legs and draws.
+  const ageK = shapedCap && o.capitalAge && pos(o.capitalAge.W1) ? o.capitalAge : null
+  const kneeQ = ageK ? (a) => Math.exp(Math.round(Math.log(ageK.W1 * Math.pow(Math.max(a, pos(ageK.aMin) ? ageK.aMin : 0.5), num(ageK.beta) ? ageK.beta : 0)) / 0.1) * 0.1) : null
+  const age0 = ageK && num(ageK.ageH0) && ageK.ageH0 > 0 ? ageK.ageH0 : 0
+  if (ageK) capC = capitalOf({ ...o, capitalScaleW: kneeQ(age0) })
   // MONEY GOING OUT EVERY SECOND (o.spendPerSec): class and gym fees, which
   // the game charges through loseMoney with no balance check
   // (Work/Formulas.ts calculateClassEarnings: money = -cost x costMult per
@@ -524,6 +533,10 @@ export function hoursToMoney(target, o = {}) {
   // The flat rate's own closed form otherwise (no capital in the warm-up).
   const stepFnOf = (m, dt, capOn) => (!capOn ? () => 0 : shapedCap ? capitalStepFn(m, dt, capC, rNow) : m < cap ? (x) => Math.min(m * Math.expm1(r * x), cap - m + r * cap * x) : (x) => r * cap * x)
   while (h < maxHours && iter++ < 4000) {
+    if (ageK) {
+      const Wq = kneeQ(age0 + h)
+      if (Wq !== capC.Wstar) capC = capitalOf({ ...o, capitalScaleW: Wq })
+    }
     const lvl = lvlNext ?? levelAt(exp, mult)
     lvlNext = null
     // The home doubling, bought at the step's start where it repays itself
@@ -1693,6 +1706,12 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // batches (their money is the measured cadence) — both only favour buying.
   const four = o.fourS && pos(o.fourS.cost) && pos(o.fourS.r0PerSec) ? o.fourS : null
   const fourCurve = four ? { r: four.r0PerSec, W: pos(four.Wstar) ? four.Wstar : curve.W, sh: four.shape ?? curve.sh } : null
+  // THE MARKET'S AGE PER LEG (o.capitalAge {W1, beta, aMin, ageNowH, fourS?: {W1, beta, aMin}}, traderw.capitalAgeInputsOf;
+  // progress.js sets it where the trader is the income, BitNode 8): a leg in the current life trades on today's market,
+  // ageNowH + the hours to it; a leg after an install on a fresh one (the install re-initialises the market,
+  // Prestige.ts:166-170). On the 4S curve the 4S knee. Absent: every leg on capitalScaleW, as before.
+  const marketAgeNow = o.capitalAge && num(o.capitalAge.ageNowH) && o.capitalAge.ageNowH > 0 ? o.capitalAge.ageNowH : 0
+  const capAgeOf = (ageH0) => (o.capitalAge && pos(o.capitalAge.W1) ? { ...o.capitalAge, ...(curve === fourCurve && fourCurve && o.capitalAge.fourS ? o.capitalAge.fourS : {}), ageH0 } : null)
   const FOUR_NAME = '4S Market Data TIX API'
   // A hold-to-exit run whose only income is hacknet (BitNode 9's opening) is priceable too.
   const incomeOk = num(incomePerSec) && incomePerSec >= 0 && (incomePerSec > 0 || capR > 0 || lifeInc > 0)
@@ -1751,7 +1770,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
       g.money *= pos(x.money) ? x.money : 1
     }
     const shapedHere = expScalesWithLevel === true && pos(hacking)
-    const moneyH = cost <= money0 ? 0 : hoursToMoney(cost, { money0, incomeAtLevel1, mult: m, exp0, expPerSec, expRateAt: shapedHere ? expRateShape(expPerSec, { scales: true, ref: hacking, flat: pos(expFlatPerSec) ? expFlatPerSec : 0 }) : null, extraAt: steps.length ? (rel) => extraAt(atH + rel) : null, flatPerSec: flatInc + (first && pos(lifeIncome) ? lifeIncome : 0), capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, spendPerSec, capitalWarmupH: !first && num(capitalWarmupH) ? capitalWarmupH : 0 })
+    const moneyH = cost <= money0 ? 0 : hoursToMoney(cost, { money0, incomeAtLevel1, mult: m, exp0, expPerSec, expRateAt: shapedHere ? expRateShape(expPerSec, { scales: true, ref: hacking, flat: pos(expFlatPerSec) ? expFlatPerSec : 0 }) : null, extraAt: steps.length ? (rel) => extraAt(atH + rel) : null, flatPerSec: flatInc + (first && pos(lifeIncome) ? lifeIncome : 0), capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, spendPerSec, capitalWarmupH: !first && num(capitalWarmupH) ? capitalWarmupH : 0, capitalAge: capAgeOf(first ? marketAgeNow : 0) })
     if (!num(moneyH)) return { lifeH: null, why: `could not price the money for ${specs.length} graft(s) in an earlier life ($${Math.round(cost)})` }
     const lifeH = moneyH + Math.max(slot, baseH)
     return { lifeH, extraH: lifeH - baseH, moneyH, slotH: slot, cost, n: specs.filter((x) => x.name !== FOUR_NAME).length, g, ...(specs.some((x) => x.name === FOUR_NAME) ? { fourS: true } : {}) }
@@ -2180,7 +2199,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     const ex = steps.length && fleet.length ? (rel) => extraAt(t0 + rel) + fl(age0 + rel) : steps.length ? (rel) => extraAt(t0 + rel) : fleet.length ? (rel) => fl(age0 + rel) : null
     // flatPerSec carries the node's flat income PLUS, under hold-to-exit only,
     // the hacknet stream the next install would destroy (lifeInc).
-    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: ex, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0, incomeAt: incomeAtFn, homeRam: ramState, homeCostAt: imod?.costAt ?? null, homeMaxGB: imod?.maxGB })
+    return hoursToMoney(target, { money0: cash, incomeAtLevel1, mult, exp0: exp, expPerSec: expRate, expRateAt: shaped ? expAt() : null, extraAt: ex, flatPerSec: flatInc + lifeInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, targetAt, spendPerSec, capitalWarmupH: installsFirst > 0 && num(capitalWarmupH) ? Math.max(0, capitalWarmupH - (h - finalStart)) : 0, incomeAt: incomeAtFn, homeRam: ramState, homeCostAt: imod?.costAt ?? null, homeMaxGB: imod?.maxGB, capitalAge: capAgeOf((installsFirst > 0 ? 0 : marketAgeNow) + (h - finalStart)) })
   }
   // The final window starts here; `slotH` is what it needs of the work slot.
   const finalStart = h
@@ -2843,7 +2862,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
   // (Holding through this life the openers are this life's: nothing to re-buy.)
   if (pos(finalRootCost) && !liveClimb) {
     const money0 = num(installCash) && installCash >= 0 ? installCash : 1262
-    const rootIn = { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, expRateAt: shaped ? expAt() : null, flatPerSec: flatInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0 }
+    const rootIn = { money0, incomeAtLevel1, mult, exp0: 0, expPerSec: expRate, expRateAt: shaped ? expAt() : null, flatPerSec: flatInc, capitalReturnPerSec: curve.r, capitalCap, capitalScaleW: curve.W, capitalShape: curve.sh, capitalWarmupH: num(capitalWarmupH) ? capitalWarmupH : 0, capitalAge: capAgeOf(0) }
     // SCREENED FIRST: the leg binds only past the climb, and it almost never
     // does (minutes against hours) — a coarse estimate with 50% to spare
     // settles it at a quarter of the steps; it was half of every exit

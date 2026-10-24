@@ -46,7 +46,9 @@
 //
 // NODE-SPECIAL ROUTES are hooks; a placeholder prices nothing (returns null)
 // and is flagged NOT CALIBRATED in the plan's output. BN14's is a model (phase
-// 2): the hacking route with the Go farm at GoPower 4.
+// 2): the hacking route with the Go farm at GoPower 4. BN8's is a model (bn8.mjs,
+// 2026-10-23): the stock-only exit, which replaces the hacking and stanek routes there
+// (world.bn8; plan.mjs --bn8-hack restores them).
 //
 // world.phase1 prices as phase 1 did (GP3's regression mode): no Go model,
 // SF14.1 = g x 1.02, the opening unscaled, BN14 on the plain hacking route.
@@ -197,7 +199,8 @@ export const ROUTES = [
   {
     id: 'hack',
     status: 'SIMULATED (exitplan via hackexit.mjs) + the IPvGO model (go.mjs); g calibrated on played nodes, NOT CALIBRATED on unplayed',
-    applies: (node, lv, world) => node !== 14 || world.phase1,
+    // BN8 is its own model (bn8.mjs) unless the world turns it off (plan.mjs --bn8-hack: the old placeholder pricing)
+    applies: (node, lv, world) => (node !== 14 || world.phase1) && !(node === 8 && bn8On(world)),
     hours: hackOnCtx,
   },
   {
@@ -217,9 +220,10 @@ export const ROUTES = [
   {
     id: 'stocks',
     node: 8,
-    status: 'NOT CALIBRATED — placeholder: BN8 is priced by the hacking route with the trader as capital; no stock-only exit model',
-    applies: (node) => node === 8,
-    hours: () => null,
+    status:
+      "SIMULATED (bn8.mjs): the trader the only income through installs (traderw.rwAgeRate, the market's age reset each install, x kappa8(home) MEASURED on BN8.1), the game's catalogue at BN8's prices with the rep DONATED, Daedalus (30 installed, $100b, hacking 2500), The Red Pill, the climb to 3000; the gift accepted or never (stanekplan.GIFT_CAL); the policy searched (life length x lives). BN8.1 REPLAYED within tolerance (milestones +-15%); NOT CALIBRATED: the purchase policy (cheapest first), sleeves and the IPvGO farm (NOT PRICED), factions past the hacking/city/gang ones",
+    applies: (node, lv, world) => node === 8 && bn8On(world),
+    hours: (a) => a.world.bn8.hoursOf(a.lv, a.world),
   },
   {
     id: 'corp',
@@ -232,7 +236,7 @@ export const ROUTES = [
     id: 'stanek',
     status: "MODELLED (stanekplan.js, stanek.mjs): the hacking route (BN14: go) with Stanek's Gift accepted at the node's start — in BN13, or anywhere at SF13>=1; source formulas, MEASURED home RAM, ASSUMED elasticities/rep/duty; ONE tabled layout every life (the live per-life layout, priced by tools/sim/stanekperlife.mjs at -0.0..-1.2h on the node model, NOT SIMULATED here); the gift on the Bladeburner route is 'bladeStanek'",
     readsSf13: true, // the only route that reads SF13 (clearTime memoises the others without it)
-    applies: (node, lv, world) => !world.phase1 && !world.stanekOff && giftAvailable(node, lv) && (!world.stanekBn13Only || node === 13),
+    applies: (node, lv, world) => !world.phase1 && !world.stanekOff && giftAvailable(node, lv) && (!world.stanekBn13Only || node === 13) && !(node === 8 && bn8On(world)),
     hours: (a) => stanekParts(a)?.h ?? null,
   },
   {
@@ -250,6 +254,9 @@ export const ROUTES = [
     },
   },
 ]
+/** BitNode 8's own model is on: the world carries its pricer (plan.mjs loads bn8.mjs; the bn8-hack flag or phase 1: off). */
+export const bn8On = (world) => !world.phase1 && typeof world.bn8?.hoursOf === 'function'
+
 /** The (node, SF13, SF7) cells the bladeStanek route found no table entry for (plan.mjs prints them: NOT PRICED there). */
 export const MISSING_BLADE_GIFT = new Set()
 

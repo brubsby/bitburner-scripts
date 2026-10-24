@@ -572,8 +572,21 @@ const lnIncome = (m, pen, f, a = HACK_SHARE) =>
  *   favorU          the node fraction the Daedalus favor life sits at (0.8)
  * Returns { W, dlng, favorMul, J, lives, giftAt: {2: life|null, 3: life|null}, end: mults at the exit, f }.
  */
+/**
+ * THE GIFT'S CALIBRATION (tools/sim/gameplan/giftcal.mjs, the per-life hacking factor
+ * M(end)/M(start) of every gift life in history.jsonl, BN13.1 + BN10.3, against this model at
+ * each life's own home RAM): kappa scales the model's ln effect of every fragment, delayH is the
+ * charger's start after an install (no charge before it). nodeModel applies it when o.cal is
+ * given (the gameplan, the BN8 model); absent, the model as it was.
+ */
+export const GIFT_CAL = { kappa: 0.886, delayH: 0.35, source: 'giftcal.mjs 2026-10-23: 43 gift lives (BN13.1 15, BN10.3 28), rms ln error 0.264 -> 0.165' }
+
 export function nodeModel(o) {
   const { layout, nodePower, repCost = 1, hours, cycleH, f, p, Hg, L0 = 750, favorU = 0.8 } = o
+  // o.cal { kappa, delayH } (GIFT_CAL): each effect's ln x kappa; a life charges only past delayH
+  const calK = o.cal && Number.isFinite(o.cal.kappa) ? o.cal.kappa : 1
+  const calD = o.cal && Number.isFinite(o.cal.delayH) && o.cal.delayH > 0 ? o.cal.delayH : 0
+  const calOf = (m) => (calK === 1 ? m : Object.fromEntries(Object.entries(m).map(([k, v]) => [k, Math.exp(calK * Math.log(v))])))
   const ramHours = o.ramHours ?? hours
   const duty = Math.min(1, Math.max(0, p.stDuty))
   // THE PER-LIFE LAYOUT (lifePolicyOf): o.layouts[i] is life i's layout (an install keeps the charge at
@@ -598,9 +611,11 @@ export function nodeModel(o) {
     const cl = compileLayout(layouts?.[i] ?? layout)
     const k = cl.k
     const bumpT = bump && bump.life === i ? bump : null
-    const mults = (c) => (bumpT ? bumpMults(multsAt(cl, c, nodePower), bumpT.type, bumpT.d) : multsAt(cl, c, nodePower))
+    const mults = (c) => calOf(bumpT ? bumpMults(multsAt(cl, c, nodePower), bumpT.type, bumpT.d) : multsAt(cl, c, nodePower))
     const t0 = i * cycleH
     const len = Math.min(cycleH, hours - t0)
+    // the charging share of this life (the calibrated charger starts calD into it)
+    const chg = calD > 0 ? Math.max(0, len - calD) / len : 1
     const u = Math.min(1, (t0 + len / 2) / hours) // the node's own time fraction (rep, favor life)
     const uRam = Math.min(1, (t0 + len / 2) / ramHours) // hours into the node on the no-gift clock (RAM, augs)
     const home = homeAt(uRam, p.stRam)
@@ -610,9 +625,9 @@ export function nodeModel(o) {
     let lnI = 0
     let lnR = 0
     let mMid = null
-    if (trace) trace.push({ life: i, u, len, T, k, c: chargeFactor(T, (0.5 * tauLife * (len / cycleH)) / k), level })
+    if (trace) trace.push({ life: i, u, len, T, k, c: chargeFactor(T, (0.5 * tauLife * (len / cycleH) * chg) / k), level })
     for (const q of quad) {
-      const N = (q * tauLife * (len / cycleH)) / k
+      const N = (q * tauLife * (len / cycleH) * chg) / k
       const m = mults(chargeFactor(T, N))
       lnI += lnIncome(m, pen, f) / quad.length
       lnR += Math.log(pen * m.faction_rep) / quad.length
@@ -625,12 +640,12 @@ export function nodeModel(o) {
     if (u <= favorU) favorMul = 1 / (pen * mMid.hacking * pen * mMid.faction_rep)
     // the Church: rep this life from charging (one call per second at T threads); the
     // player's faction_rep = the augmentations' part x the gift's (lnR holds the penalty)
-    const rep = cl.charged.length ? tauLife * (len / cycleH) * chargeRep(T, frAug * Math.exp(lnR), favor) : 0 // nothing to charge, no rep
+    const rep = cl.charged.length ? tauLife * (len / cycleH) * chg * chargeRep(T, frAug * Math.exp(lnR), favor) : 0 // nothing to charge, no rep
     if (i === nLives - 1) {
       // the exit: the end of the final life, home at its exit RAM
       const he = homeAt(Math.min(1, hours / ramHours), p.stRam)
       const Te = o.T > 0 ? o.T : threadsOf(he.ram * f, he.cores)
-      const N = (tauLife * (len / cycleH)) / k
+      const N = (tauLife * (len / cycleH) * chg) / k
       end = mults(chargeFactor(Te, N))
       const lnX = Math.log(pen * end.hacking_exp) + Math.log(pen * end.hacking) + Math.log(pen * end.hacking_speed) + Math.log(1 - f)
       W = pen * end.hacking * Math.max(0.5, 1 + (32 * lnX) / L0)
@@ -1372,6 +1387,19 @@ export const GENESIS = "Stanek's Gift - Genesis" // Augmentation/Enums.ts (sfgat
  */
 export const GIFT_NODES = new Set([13])
 /**
+ * THE GIFT WHERE THERE IS NO BLADEBURNER ROUTE TO CHAIN IT TO, PRICED (BitNode 8: BladeburnerRank 0,
+ * so the L4 route+gift chain never runs and the gift used to be declined unpriced — the entry dry-run,
+ * tools/sim/entry, 2026-10-24). tools/sim/gameplan/bn8.mjs giftTable(): per `${node}|${SF13}` BN8's whole
+ * exit [withoutH, withH] — the stock-only model's policy search never accepting vs accepting at the
+ * node's start (Genesis x0.9 on every multiplier, the 2x3 grid's layout charged on home x f, each life's
+ * charge from zero after its install, the charger calibrated on 43 measured gift lives: GIFT_CAL), from
+ * the plan's BN8.2 entry. NOT CALIBRATED in BN8 (no BN8 life has run the gift). Pure data, no RAM;
+ * tools/test/bn8cal.test.mjs B84 holds it to bn8.mjs. A node in STOCK_GIFT_NODES without an entry for
+ * its SF13 level HOLDS the option (pending): never a silent decline.
+ */
+export const STOCK_GIFT_NODES = new Set([8])
+export const STOCK_GIFT_PRICED = { '8|1': [31.68, 30.44], '8|2': [31.68, 30.44], '8|3': [31.68, 30.44] }
+/**
  * THE MANUAL PRICING HOLD (reversible, stated): nodes where the option is held open
  * by hand while something is priced — act.js refuses every non-NeuroFlux buyaug /
  * graft / install while the gift is unaccepted, and stanek.js does NOT accept.
@@ -1473,6 +1501,8 @@ export function giftVerdictOfProgress(text, resetInfo, now = Date.now(), maxAgeM
 /**
  * WHETHER THE STACK WANTS THE GIFT HERE (the per-node decision, at its start):
  *   BitNode 13 (GIFT_NODES)        the hacking route + gift (the gameplan's 'stanek' route) — basis 'hack'
+ *   BitNode 8 (STOCK_GIFT_NODES)   STOCK_GIFT_PRICED (bn8.mjs): accept iff withH < withoutH — basis 'hack';
+ *                                  no entry for the SF13 level: HOLD (pending)
  *   the Bladeburner route (route)  BLADE_GIFT_PRICED: accept iff withH < withoutH — basis 'blade'
  *   route unknown (no fresh progress.txt of this node and life) and the Bladeburner gift wins here:
  *                                  HOLD (pending) — never accept on an unknown route, keep the option
@@ -1481,6 +1511,13 @@ export function giftVerdictOfProgress(text, resetInfo, now = Date.now(), maxAgeM
  */
 export function giftWantOf({ node, l13, l7, route, verdict = null }) {
   if (GIFT_NODES.has(node)) return { want: true, pending: false, basis: 'hack', priced: null, why: `BitNode ${node}: the stack accepts the gift (GIFT_NODES, the hacking route + gift)` }
+  if (STOCK_GIFT_NODES.has(node)) {
+    const s = STOCK_GIFT_PRICED[`${node}|${l13}`] ?? null
+    if (!s) return { want: false, pending: true, basis: 'hack', priced: null, why: `BitNode ${node}: the gift is not priced at SF13.${l13} (stanekplan.STOCK_GIFT_PRICED, tools/sim/gameplan/bn8.mjs --gift-table): HELD open, not accepted` }
+    const p = { withoutH: s[0], withH: s[1], d: +(s[1] - s[0]).toFixed(4) }
+    const win = p.d < 0
+    return { want: win, pending: false, basis: win ? 'hack' : null, priced: p, why: `BitNode ${node}: the exit ${p.withoutH}h never accepting vs ${p.withH}h accepting at the start (bn8.mjs, the stock-only model, STOCK_GIFT_PRICED) — ${win ? 'accept' : 'never'}` }
+  }
   const e = BLADE_GIFT_PRICED[`${node}|${l13}|${Math.max(1, Math.min(3, l7 ?? 1))}`] ?? null
   const priced = e ? { withoutH: e[0], withH: e[1], d: +(e[1] - e[0]).toFixed(4) } : null
   const wins = !!priced && priced.d < 0
@@ -1528,7 +1565,7 @@ export function giftStateOf(resetInfo, available, route = null, verdict = null) 
   // to the priced route decision, never a pin — so a route switch moves the layout decision with it:
   // 'blade' -> the L3 epoch, 'hack' -> L1's per-life layout and the f allocation); no route known yet:
   // BN13's is the hacking route's, anywhere else only the Bladeburner route accepts.
-  const basis = !available ? null : (accepted || (want && w.chained)) && (route === 'hack' || route === 'blade') ? route : GIFT_NODES.has(node) ? 'hack' : accepted || want || hold ? 'blade' : null
+  const basis = !available ? null : (accepted || (want && w.chained)) && (route === 'hack' || route === 'blade') ? route : GIFT_NODES.has(node) || STOCK_GIFT_NODES.has(node) ? 'hack' : accepted || want || hold ? 'blade' : null
   return {
     node,
     l13: sf(13),

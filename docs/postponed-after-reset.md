@@ -11,7 +11,8 @@ before starting each subagent.
    nodes came from a shared difficulty factor; BN13 was priced 0.078 ln(M)/h vs 0.007
    measured (~11x, 28h vs 150-500h). Add node money multipliers (ServerMaxMoney x
    ScriptHackMoney, hacknet, crime, FactionWorkRepGain, aug cost) as explicit covariates.
-2. **Gift value over-assumed.** The stanek route assumes x3 hacking on a 2PB home; BN13
+2. ~~**Gift value over-assumed.**~~ DONE 2026-10-23 (giftcal.mjs -> stanekplan.GIFT_CAL: 43 measured gift lives,
+   kappa 0.886 on the ln effect + a 0.35h charger start; rms 0.264 -> 0.165; BN13 W 2.10 -> 1.55). Original: The stanek route assumes x3 hacking on a 2PB home; BN13
    measured ~x1.5 on 128-512GB with charges wiped every install (~12% exit saving vs 30%).
    Recalibrate stanek.mjs from BN13 observations.
 3. **Missing CLEAR_LEGS Go-farm entries** — observe.mjs WITHHELD the k readings for
@@ -24,9 +25,15 @@ before starting each subagent.
    22:08Z) — different builders for the next life's pricing; not the search (f0c87ad).
 6. **Aug catalogue frozen at the factions joined now** — later lives can't buy from new
    factions (largest pessimistic gap per the BN13 audit).
-7. **Daedalus 30-aug requirement absent from the BN13 exit** (optimistic gap).
+7. **Daedalus 30-aug requirement absent from the BN13 exit** (optimistic gap). 2026-10-23: priced in BN8's own
+   model (gameplan bn8.mjs: 30 installed, $100b, hacking 2500); still absent from the general exitplan (BN8 live
+   has countplan's count route).
 8. **eBudget / eRep measure 0 in BN13** — later lives credit nothing for extra money/rep.
-9. **Trader model far too optimistic** ($1.5b/12h projected vs ~$2.7m realised).
+9. **Trader model far too optimistic** ($1.5b/12h projected vs ~$2.7m realised). 2026-10-23: r(W, market age) fitted
+   on every ledger market-life (rwage.mjs -> traderw.RW_AGE; -4%/-3% in money over BN8's books vs -81%/-68% for the
+   fresh-market prior); used by BN8's exit (exitplan capitalAge, progress.js capitalAgeOverrideOf). Still open:
+   every OTHER node's live belief (bayes.traderRwPosterior) has no age (live 2026-10-23: r0 1.51/h, W* $6.5e12 for a
+   fresh life against a $5e10 knee at 1h).
 10. **Fresh-life income formula still ~x19 high** (opener purchase schedule copied from BN9).
     2026-10-18 (BN10.3, incomecal.mjs): the steady formula (freshlife.steadyIncomeOf) at the
     WHOLE fleet reads ~x13 over the live income because the split holds the fleet on the exp
@@ -106,6 +113,15 @@ before starting each subagent.
 0e. **Body slot lent to crime/faction work after the Bladeburner join costs time** (bbboot.mjs, f49e76b):
     in bbsim the 29% post-join lend measured +0.19h BN5.2, +0.63h BN13.3 (−0.03h BN2.2). progress.js owns the
     slot policy; price the lend as a trajectory on the Bladeburner exit rather than assuming it free.
+0g. **BN8: the live exit's growth is not the trader's money** (bn8 calibration 2026-10-23, the dry run of
+    exitplan.bestExitPolicy at BN8.2's start with live-shaped inputs): ~118h, 37 installs of 2.7h ("install cycles
+    100.7h") against bn8.mjs's 30-32h — the per-life gain is the cadence posterior (BN8.1's 1.0376 a 2.72h life) and
+    lifeplan's purchase model buys rep by work only ("NOT MODELLED: donations"), where in BN8 (FavorToDonate 0)
+    every rep point is money. Make lifeplan.lifeBatch donate the rep shortfall at $1e6/faction_rep where the
+    threshold is 0, and price freshLifeMoney on a fresh market (capitalAge age 0). Risk: BN8.1's one-aug lives.
+0h. **Stale source guards red at HEAD** (2026-10-23): bn8.test B8w flags `readJson(ns, STATUS)` (a read) as a
+    writer; B8af's regex wants `placeTrader(ns, all, hosts)` (seed.js passes liteHold). Both FAIL at b60e48e, so a
+    real regression in either would be masked. Also planperf PP3/PP3c CPU guards (1217ms vs 800ms, loaded machine).
 0f. **BR3 CPU budget** failed once at 1248ms vs 1200ms right after f49e76b (machine loaded by 4 agents) —
     re-run alone; if it holds, slice the bootstrap pricing step.
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
