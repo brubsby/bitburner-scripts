@@ -124,6 +124,11 @@ before starting each subagent.
     real regression in either would be masked. Also planperf PP3/PP3c CPU guards (1217ms vs 800ms, loaded machine).
 0f. **BR3 CPU budget** failed once at 1248ms vs 1200ms right after f49e76b (machine loaded by 4 agents) —
     re-run alone; if it holds, slice the bootstrap pricing step.
+0h. **Exit inputs drift between passes** (c249a8f's author): the hack arm moved 14.3h -> 18.2h one pass after a
+    blade accept in BN5.2 — eRep 0.11 -> 0 and the income formula evaluated at a different age (1.67h vs 2.08h).
+    exitInputsOf should give the same inputs for the same state.
+0i. **Stanek allocation f is still priced on the fleet held at entry**, not the charger ramp — the accepted pass
+    picks a different f than the chain (BN5.2: 0.1 vs 0.3; ~0.6h drift).
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
