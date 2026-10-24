@@ -78,6 +78,11 @@ Then in-game: Options → Remote API → port `12525` → Connect.
   thing** — the game keeps running on wake, the socket does not, and telemetry
   silently freezes at the moment of sleep while the run carries on. Avoid
   restarting it while agents are working.
+- `npm run daemon` holds a BLOCK inhibitor on `sleep:handle-lid-switch` (logind's own lid
+  action ignores sleep locks, `LidSwitchIgnoreInhibited=yes`). It worked on 10-19: the 5.2h
+  hibernate (22:50Z-04:04Z) was a Claude session told "sleep my laptop", which SIGTERMed the
+  daemon to drop the lock and ran `systemctl hibernate`. Asked to sleep the machine, say what
+  it costs the run first; every sleep now lands in `events.jsonl` (`sleep-gap`, `daemon-start` downSec).
 
 **Reconnecting does NOT need a human.** This said "reconnect by hand in Options",
 which is wrong: it is reachable from the page, so an agent with browser access
@@ -543,7 +548,11 @@ save-derived files only refresh every 30s.
 | File | Source | Contains |
 | --- | --- | --- |
 | `state.json` | game save, decoded | money, skills, karma, augs, factions, servers, playtime |
-| `history.jsonl` | same, appended | the above over time, so rates are measurable |
+| `history.jsonl` | same, appended | the above over time, so rates are measurable; plus `bladeburner` (rank, action, black ops, stamina), `sleeves` (task, sync, shock), `lastNodeReset`/`lastAugReset`. Thinned past 64MB (older lines 1 in k) |
+| `run.jsonl` | the daemon, every 30s poll (`tools/telrecord.mjs`) | Bladeburner actor (bladeburner.js / bb-lite.js / none), rank, action, black ops, stamina, slot owner + Simulacrum; sleeve tasks; route; plan exit (mean/q10/q50/q90). Thinned past 32MB |
+| `decisions.jsonl` | the daemon | a compact row when installgate / factionplan / progress CHANGES (clocks and dollar figures masked). Was tools/dash.mjs's, dead since 09-17 |
+| `installs.jsonl` | the daemon | one row per install (lastAugReset moved): augs added, money/hacking before |
+| `events.jsonl` | the daemon | `node-entry` (node, SFs, entry time, next-node.txt, the plan's estimate), `node-plan` (first in-node exit estimate), `daemon-start` (`downSec` unrecorded), `daemon-stop`, `sleep-gap` (the machine was suspended) |
 | `status.txt` | `tel.js` running in-game | processes, income/sec, per-server money and security |
 | `errors.txt` | `errlog.js` running in-game | **the error modals the player sees** — type, script, server, pid, occurrences, message |
 | `hacknet.txt` | hacknet.js | `phase` (`netburners` / `claimant` / `refused`), `best` upgrade, `verdict.why`, `spendable`, `bought`. Phase 2 buys only when payback < remaining life AND budget.js leaves the money (money-return exception through the home claim). |

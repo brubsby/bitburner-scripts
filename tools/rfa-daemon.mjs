@@ -17,6 +17,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DirWatcher, PushLedger, TRACKED_EXT } from "./pushwatch.mjs";
+import { RunRecorder, bladeburnerOfSave, sleevesOfSave } from "./telrecord.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RFA_PORT = Number(process.env.RFA_PORT ?? 12525);
@@ -50,6 +51,14 @@ const SKIP_DIRS = new Set(["node_modules", "tools", "variants", "archive", "min"
 fs.mkdirSync(TEL_DIR, { recursive: true });
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+
+// The append-only run record (tools/telrecord.mjs): run.jsonl per poll,
+// decisions/installs/events.jsonl, sleep gaps, bounded sample files.
+const recorder = new RunRecorder({ dir: TEL_DIR, root: ROOT, log });
+recorder.start();
+recorder.bound();
+setInterval(() => recorder.heartbeat(), 10_000);
+setInterval(() => recorder.bound(), 3600_000);
 
 /* ------------------------------------------------------------------ files */
 
@@ -441,6 +450,13 @@ function digest(save) {
     // reported a pass: a check that examines nothing looks exactly like a
     // check that passed.
     exp: p.exp,
+    // Node and life clocks: the run record keys node entries and installs on them.
+    lastNodeReset: p.lastNodeReset ?? null,
+    lastAugReset: p.lastAugReset ?? null,
+    // Bladeburner and the sleeves from the save itself, whichever script acts
+    // (bladeburner.txt is overwritten each pass and keeps only an hour of samples).
+    bladeburner: bladeburnerOfSave(p),
+    sleeves: sleevesOfSave(p),
   };
 }
 
@@ -458,21 +474,25 @@ async function pollTelemetry({ save } = {}) {
       lastDigest = d;
       fs.writeFileSync(path.join(TEL_DIR, "state.json"), JSON.stringify(d, null, 2));
       fs.appendFileSync(path.join(TEL_DIR, "history.jsonl"), JSON.stringify(d) + "\n");
+      recorder.onDigest(d);
     } catch (e) {
       log("telemetry poll failed:", e.message ?? e);
     }
   }
   // Anything the in-game scripts leave in /tel/ gets mirrored out to disk.
+  const mirrored = {};
   try {
     const names = await rpc("getFileNames", { server: "home" });
     for (const name of names.filter((n) => n.startsWith("tel/"))) {
       const content = await rpc("getFile", { filename: name, server: "home" });
-      const dest = path.join(TEL_DIR, name.slice(4).replace(/\//g, "_"));
-      fs.writeFileSync(dest, content);
+      const base = name.slice(4).replace(/\//g, "_");
+      fs.writeFileSync(path.join(TEL_DIR, base), content);
+      mirrored[base] = content;
     }
   } catch {
     /* non-fatal */
   }
+  if (Object.keys(mirrored).length) recorder.onTelFiles(mirrored);
   // The Go dashboard keeps its history even while no page is open.
   try {
     (await loadGoDash())?.onTelemetry?.(goDashCtx);
@@ -739,6 +759,10 @@ else log("gosolver: disabled by GO_SOLVER=0");
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
+    // Said out loud: on 10-19 the daemon was SIGTERMed (to drop its sleep lock
+    // for a requested hibernate) and the log just stopped mid-line.
+    log(`daemon stopping on ${sig}`);
+    recorder.stop(sig);
     stopSolver();
     process.exit(0);
   });

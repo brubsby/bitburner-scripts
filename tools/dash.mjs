@@ -240,30 +240,8 @@ async function pollDeep() {
       ? zlib.gunzipSync(Buffer.from(raw.save, "latin1")).toString("utf8")
       : Buffer.from(raw.save, "base64").toString("utf8");
     const next = deepDigest(JSON.parse(text));
-    // INSTALL AUDIT TRAIL. An install is irreversible and its justification is
-    // only checkable afterwards, so record the augmentation set WITH LEVELS
-    // whenever it changes. One line per change, not per poll, so the file stays
-    // small and every row is an event rather than a sample.
-    try {
-      const sig = (a) => (a ?? []).map((x) => `${x.name}@${x.level ?? 1}`).sort().join("|");
-      if (cache.deep && sig(cache.deep.player.augs) !== sig(next.player.augs)) {
-        fs.appendFileSync(
-          path.join(TEL, "installs.jsonl"),
-          JSON.stringify({
-            at: new Date().toISOString(),
-            before: cache.deep.player.augs,
-            after: next.player.augs,
-            moneyBefore: cache.deep.player.money,
-            hackingBefore: cache.deep.player.skills?.hacking,
-            hackingAfter: next.player.skills?.hacking,
-            multBefore: cache.deep.player.mults?.hacking,
-            multAfter: next.player.mults?.hacking,
-          }) + "\n",
-        );
-      }
-    } catch {
-      /* the audit trail must never break the poll */
-    }
+    // installs.jsonl moved to the daemon (tools/telrecord.mjs): written only
+    // while this dashboard ran, it stopped silently on 09-17 when nobody restarted it.
     cache.deep = next;
     cache.deepAt = Date.now();
     cache.deepError = null;
@@ -286,29 +264,7 @@ async function pollFast() {
   }
 }
 
-/**
- * Decisions worth a HISTORY, and the signature that says one changed.
- *
- * Every /tel/*.txt is overwritten in place, so the game keeps only the latest
- * state of anything. That is fine for "is it healthy right now" and useless for
- * "why did it do that" — and the most consequential thing in the stack, the
- * install gate, is exactly the thing whose reasoning vanished. After twelve
- * installs it was not possible to answer what any of them bought or why the
- * gate held for six hours, because each pass overwrote the last.
- *
- * So changes to DECISION files are appended to .telemetry/decisions.jsonl. The
- * signature deliberately excludes timestamps: these files rewrite every pass,
- * and logging every rewrite would bury the handful of rows where something
- * actually changed. High-frequency STATE files (batch.txt and friends) are not
- * here on purpose — they are samples, not decisions, and history.jsonl already
- * covers that shape.
- */
-const DECISIONS = {
-  installgate: (d) => JSON.stringify([d.install, d.why, d.queued, d.M, d.Meff, d.favorGain, d.goBonusPct]),
-  factionplan: (d) => JSON.stringify([d.workingFaction, (d.segments ?? []).map((g) => [g.faction, Math.round(g.untilRep)])]),
-  progress: (d) => JSON.stringify([d.did, d.todo]),
-};
-const lastDecision = {};
+// Decision history (decisions.jsonl) is the daemon's now: tools/telrecord.mjs DECISIONS.
 
 /** The /tel/*.txt the daemon already mirrors to disk. Free — no game traffic. */
 function pollFiles() {
@@ -321,18 +277,7 @@ function pollFiles() {
         const body = JSON.parse(fs.readFileSync(path.join(TEL, f), "utf8"));
         out[key] = { mtime: fs.statSync(path.join(TEL, f)).mtimeMs, body };
 
-        // Append a row only when the DECISION changed, not on every rewrite.
-        const sign = DECISIONS[key];
-        if (sign) {
-          const sig = sign(body);
-          if (lastDecision[key] !== undefined && lastDecision[key] !== sig) {
-            fs.appendFileSync(
-              path.join(TEL, "decisions.jsonl"),
-              JSON.stringify({ at: new Date().toISOString(), source: key, ...body }) + "\n",
-            );
-          }
-          lastDecision[key] = sig;
-        }
+        // decisions.jsonl moved to the daemon (tools/telrecord.mjs DECISIONS).
       } catch {
         /* a file mid-write, or not JSON */
       }
