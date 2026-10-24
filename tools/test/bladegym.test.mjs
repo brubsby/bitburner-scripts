@@ -139,6 +139,13 @@ export async function run() {
     // join, so a startup copy never shows it (BN3.1 2026-10-21: 17h at rank 300).
     const bj = fs.readFileSync(path.join(REPO_ROOT, 'bladeburner.js'), 'utf8')
     c.examined(1)
+    // bb-lite's actor too (BN5.2 2026-10-24: 'slot-not-ours' on a 'body' claim with the Simulacrum installed —
+    // the actor's claim had only lastAugReset): bb-lite reads the installed augs fresh and hands them over.
+    const bl = fs.readFileSync(path.join(REPO_ROOT, 'bb-lite.js'), 'utf8')
+    const ba = fs.readFileSync(path.join(REPO_ROOT, 'bb-lite-act.js'), 'utf8')
+    c.examined(2)
+    if (!/ownedAugs = \[\.\.\.\(ns\.getResetInfo\(\)\.ownedAugs[\s\S]{0,400}lastAugReset: info\.lastAugReset, ownedAugs \}/.test(bl)) c.fail('bb-lite.js must read the installed augs fresh and pass them to its actor')
+    if (!/slotClaim\(ns, 'home', \{ lastAugReset: want\.lastAugReset, ownedAugs:/.test(ba)) c.fail("bb-lite-act.js's slot claim must see the installed augs (the Simulacrum)")
     if (!/export function slotClaim\(ns, host, info\) \{[\s\S]{0,700}fresh = ns\.getResetInfo\(\)[\s\S]{0,200}return slotClaimHere\(ns, host, fresh\)/.test(bj)) c.fail('bladeburner.js slotClaim must read getResetInfo() fresh (the Simulacrum arrives at the join)')
   }
 

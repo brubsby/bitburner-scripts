@@ -327,7 +327,16 @@ async function loop(ns, { info, host, mults, say: say0, sayBB, setOwns }) {
     // ---- 6. decide and act (the claim is re-read in the actor) ------------------
     mirrorFrom(ns, host, ...SLOT_FILES)
     const claimHere = slotClaim(ns, host, info) // for the record; the actor's own read decides
-    const r = await act(ACTOR.act, { person, reads, levels, bnRank, resting, lastAugReset: info.lastAugReset }, { withSlot: true })
+    // the INSTALLED augs, read fresh: SF7.3's Simulacrum is pushed at the join (PlayerObjectBladeburnerMethods.ts
+    // :13-18), after this script's startup `info` — the actor's slot claim needs it (BN5.2 2026-10-24: rank 4,
+    // 'slot-not-ours' on a 'body' claim with the Simulacrum installed).
+    let ownedAugs = []
+    try {
+      ownedAugs = [...(ns.getResetInfo().ownedAugs?.keys?.() ?? [])]
+    } catch {
+      /* none read: the claim sees no Simulacrum */
+    }
+    const r = await act(ACTOR.act, { person, reads, levels, bnRank, resting, lastAugReset: info.lastAugReset, ownedAugs }, { withSlot: true })
     let pick = null
     let current = null
     let slot = claimHere

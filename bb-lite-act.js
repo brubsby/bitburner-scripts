@@ -27,7 +27,7 @@ export async function main(ns) {
     const pick = leanPick(view)
     Object.assign(out, { stamina, maxStamina, rank, resting, pick, started: null })
     const same = !!current && current.type === pick.type && current.name === pick.name
-    const claim = slotClaim(ns, 'home', { lastAugReset: want.lastAugReset })
+    const claim = slotClaim(ns, 'home', { lastAugReset: want.lastAugReset, ownedAugs: Array.isArray(want.ownedAugs) ? want.ownedAugs : [] })
     out.slot = { owner: claim.owner, ours: claim.ours, at: claim.at ?? null, by: claim.by ?? null, why: claim.why }
     if (claim.ours && !same) {
       out.started = bb.startAction(pick.type, pick.name)
