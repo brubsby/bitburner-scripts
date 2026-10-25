@@ -75,7 +75,8 @@ export function acceptConsistencyOf({ entry, accepted, phase = 'accepted' }) {
  * consecutive planner passes may differ only by the state that moved between them (backlog 0h: BN5.2's
  * entry read eRep 0.63 off BN13's gate, its own pass measured 0, and the next pass moved the hack arm
  * 8.0h -> 18.2h with nothing decided). Each input is listed under the events that may move it:
- *   clock   real time between the passes: money, the measured rates and their ages, the market, the fleet
+ *   clock   real time between the passes: money, the measured rates and their ages, the market, the fleet, and the
+ *           life cadence built on the measured income (cadence.table money, cadenceShape: BN2.3 2026-10-25, 0.001%)
  *   accept  Stanek's Gift accepted (Genesis x0.9 on every multiplier, Augmentations.ts:1593-1617): what is a
  *           function of the multipliers, and the gift's own life context; hackingMult must move by exactly x0.9
  *   act     act.js ran its orders (money spent, work started, factions joined): what the plan and the
@@ -87,7 +88,7 @@ export function acceptConsistencyOf({ entry, accepted, phase = 'accepted' }) {
  */
 export const DRIFT_REL_TOL = 1e-6
 export const DRIFT_DRIVERS = {
-  clock: /^(money|incomePerSec|incomeFlatPerSec|incomeFromPrior|flatIncomePerSec|contractMoney\w*|lifeIncome|hacknet\.nodeMoney|hacking|hackingExp|expPerSec|expFlatPerSec|freshExpLagH|capital\w*|go|goCadenceMult|favorStream\w*|preInstallRepMult|split|incomeSplitDelta|incomeModel\.(otherGB|homeGB|moneyGB)|giftLife\.(fleetGB|hosts)|carriedIncome|freshHacknet|contractRep)(\.|$)/,
+  clock: /^(money|incomePerSec|incomeFlatPerSec|incomeFromPrior|flatIncomePerSec|contractMoney\w*|lifeIncome|hacknet\.nodeMoney|hacking|hackingExp|expPerSec|expFlatPerSec|freshExpLagH|capital\w*|go|goCadenceMult|favorStream\w*|preInstallRepMult|split|incomeSplitDelta|incomeModel\.(otherGB|homeGB|moneyGB)|giftLife\.(fleetGB|hosts)|carriedIncome|freshHacknet|contractRep|cadence\w*|cycleHours|multGainPerCycle)(\.|$)/,
   accept: /^(hackingMult|hacknet|freshHackCum|freshExpLagH|incomePerSec|incomeFlatPerSec|expPerSec|repPerSec|repDonate|donationCost|split|incomeSplitDelta|incomeModel|cadence\w*|cycleHours|multGainPerCycle|giftLife|contractRep|freshHacknet)(\.|$)/,
   act: /^(money|rep\w*|eRep|eBudget|nextInstallGain|installGains|persistBaseline|incomeModel|exitFavor|exitRep|rejoin\w*|join\w*|terminalRep|donationCost|cadence\w*|cycleHours|multGainPerCycle|contractRep|fourS|graft\w*|carriedIncome|lifeIncome|hacknet|go|favorStream\w*)(\.|$)/,
   join: null,
