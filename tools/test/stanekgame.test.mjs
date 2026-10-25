@@ -1376,7 +1376,7 @@ async function sg21() {
   c.examined(3)
   if (!/const d = unpricedHoldOf\(d0, \{ pointHack: mUnp \? null : pointHack, pointBlade: mUnp \? null : pointBlade, prev: was, hold, post \}\)/.test(pl)) c.fail('decideBladeRouteGen must pass its decision through unpricedHoldOf')
   if (!/post: !!pc\.post, gift, hold: routeHoldOf\(info, pc\), mandate \}\)/.test(pr)) c.fail('progress.js must hand the route decision the route to hold (routeHoldOf)')
-  if (!/pc\.decisions\.bladeRoute = \{ key: held, held: !!held, unpriced: \['hack', 'blade'\], error: true/.test(pr)) c.fail('a thrown route decision must hold the committed route, not read key null (acted as hack)')
+  if (!/pc\.decisions\.bladeRoute = (?:nodeRouteOf\()?\{ key: held, held: !!held, unpriced: \['hack', 'blade'\], error: true/.test(pr)) c.fail('a thrown route decision must hold the committed route, not read key null (acted as hack)')
   // 3. published and failed loud
   const rep = rp.routeReportOf(rp.routePinOf('', 7), H(50, null, { key: 'blade' }, null), null)
   const probs = rp.routeHealthOf({ route: { ...rep, node: 7 }, node: 7 }).map((x) => x.key)
