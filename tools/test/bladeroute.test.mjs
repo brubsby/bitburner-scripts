@@ -148,7 +148,7 @@ export async function run() {
     [/if \(bladeOn && bladeJoined && !bodyStep && !graftStep\?\.running && canWork && !flags\.dry\) \{\s*workedFaction = null\s*slotOwner = 'bladeburner'/, "slot.owner 'bladeburner' only on the committed route, joined, no body leg, no running graft"],
     [/const bodyStepRaw = covenantStep \?\? bladeGymStep \?\?[\s\S]*const bodyStep = \(\(\) => \{\s*const st = bodyStepRaw/, 'the combat-100 gym is a body leg (priced by gymcredit GC4)'],
     [/bladeRoute: pc\.decisions\.bladeRoute \?\? pc\.prev\?\.decisions\?\.bladeRoute \?\? null/, 'plan.txt publishes decisions.bladeRoute (carried)'],
-    [/br\?\.key === 'blade' && typeof br\.q50 === 'number' \? br :/, "the published exit is the Bladeburner route's when it is committed"],
+    [/const brDist = br\?\.key === 'blade' \? routeDistOf\(br, 'blade'\) : null[\s\S]{0,300}const ex = br\?\.key === 'blade' \? \(instBlade \? inst : brEx\) :/, "the published exit is the Bladeburner route's when it is committed (its blade distribution, never a hacking decision's)"],
     [/else if \(graftStep && \(graftStep\.running \|\| !bladeOn\)/, 'no NEW graft on the Bladeburner route'],
   ]
   for (const [re, what] of guards) {

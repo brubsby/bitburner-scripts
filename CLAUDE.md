@@ -289,8 +289,21 @@ join needs it. Exit bar in BN2 is hacking 15,000; faction rep is halved.
 (labyrinth.ts:419-427 — EternalLab, depth 29, charisma 3000, after the first four labs' augmentations are
 INSTALLED, one lab per life). The economy prices the hacking exit through Daedalus, so the BN15.1 entry dry-run
 read hack 20h vs blade 139h and would have ground Daedalus forever; `routepin.NODE_ROUTE_RULES[15]` makes the
-stack ACT on the black ops (the priced key kept for the commitment rule, `/route-pin.txt` still wins, published
-as `route.nodeRule`) until the labyrinth route is built (`labReady`). The gameplan plays BN15 LAST
+stack ACT on the black ops (`/route-pin.txt` still wins, published as `route.nodeRule`) until the labyrinth route
+is built (`labReady`). **The rule is an input to the route decision, not a wrapper on it** (`routepin.nodeRuleOf`
+-> `plan.decideBladeRouteGen` `rule`, 2026-10-25): wrapped afterwards, the record kept the HACKING distribution
+(published as "the Bladeburner route": exit 30-55h beside a 148h black-op point), the chain accepted the gift on
+hack + gift while the black-op arm priced it worse (the accept flipped a pass later), and the Simulacrum, grafts,
+lend and hash pricing gated on the decided key never ran. Now the black ops are the decision's only option (the
+comparison published as `nodeRule.pricedKey`), the published exit is the acted route's distribution
+(`routepin.routeDistOf`; never a hacking decision's in its place), and `plan.bladeMootOf` keys on the acted route.
+`bitNodeMultipliers.js` dropped every NEGATIVE override until then (StaneksGiftExtraSize: BN15's -2 priced the
+chain on a 7x6 grid against the real 6x5; BN2/3/7/8/10/14 too); [BN1] now parses them. Entry dry-run after:
+blade + gift 137.8h vs 156.1h declining, 137.7h a pass after the accept; published exit mean 146h (q50 135h). BN15's Bladeburner levers in the game's
+classes (bbsim, NOT CALIBRATED live): the bootstrap policy +20.4 +- 5.0h (off there, `bbnodepolicy.js`); the gift
+-10.9 +- 7.4h; grafts (`bbgraft.mjs --node 15 --n 8 --money mid`, $1e11 + $1e10/h; graft prices ignore
+AugmentationMoneyCost, GraftableAugmentation.ts:20-22) -58.6 +- 9.0h of a ~89h rest, the model -49.7h. The exit
+model reads ~21% fast against bbsim with the boot on, -5% with it off (`tools/sim/bb15check.mjs`). The gameplan plays BN15 LAST
 (`state.mjs LAST`, `--sf15 3` prices 15.2/15.3) and prices it on the route the stack can play: blade 104.5h
 point / 113h expected (p10-p90 62-175h); `--lab15-ready` prices the 'lab' route (hack ~34.5h + `routes.mjs LAB15`
 ASSUMED 10/30/120h) at 64.5h / 70h expected. The darknet: `dnet-seed.js` (home, 3.7GB, watchdog-gated on
@@ -429,7 +442,10 @@ done and rank below its 2.5k) the chooser and the skill objective use `bootMinP`
 it) and skill points are spent every `bootSkillEveryS` 120s (`skillEveryOf`). bbsim, fresh paired seeds:
 exit -0.37h BN5.2, -0.73h BN2.2, +0.06 +- 0.24h BN13.3 (first black op -0.5..-0.9h). The exit model prices
 it with Raid at minP (its low-chance Raid dynamics are uncalibrated: +21h vs bbsim's -1.2h in BN13 without
-the gift). `bbboot.mjs --calib` checks bbsim's opening against history.jsonl (start state = the node's
+the gift). **Not in BitNode 15** (`bbnodepolicy.js` BOOT_OFF_NODES, 2026-10-25): at BladeburnerRank 0.2 the
+boot to rank 2.5k lasts ~50h and the policy costs +20.4 +- 5.0h (bbboot.mjs --cells BN15.1, 16 paired seeds);
+bladeburner.js, bb-lite (its actors get the node), the exit model (`bladeStartOf policy`) and the gameplan's
+bbsim specs all play `nodePolicyOf(node)`. `bbboot.mjs --calib` checks bbsim's opening against history.jsonl (start state = the node's
 measured gym share; charger = live H 400); it runs SLOW in BN13 after ~2.5h (rank -23% at 5h). Tests
 BBOOT1-5.
 

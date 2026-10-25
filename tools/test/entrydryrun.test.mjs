@@ -20,13 +20,15 @@
 //   ED4  chain extras: each entry carries the earlier entries' Source-Files and SF N at L-1
 //   ED5  the accept re-priced one pass after it (evaluate.acceptConsistencyOf): worse than declining
 //        fails (BN2.2 measured), a +30% re-price notes, an agreeing one is silent
+//   ED7  the published exit is the acted route's (evaluate.exitOffRouteOf): BN15.1's hacking distribution
+//        published as "the Bladeburner route" beside a 147.9h black-op point fails OFF ROUTE
 import './gameresolve.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { Check } from './harness.mjs'
 import { REPO_ROOT } from './gameresolve.mjs'
 
-const { evaluate, ABSURD_H, acceptConsistencyOf, hourFieldsOf } = await import('../sim/entry/evaluate.mjs')
+const { evaluate, ABSURD_H, acceptConsistencyOf, hourFieldsOf, exitOffRouteOf } = await import('../sim/entry/evaluate.mjs')
 const { entryHealthOf, DRYRUN_GRACE_MIN } = await import('../sim/entry/health.mjs')
 const { chainExtras, parseChain } = await import('../sim/entry/dryrun.mjs')
 
@@ -199,5 +201,21 @@ export async function run() {
     if (!paths.includes('bladeRoute.simulacrum.moneyH') || !paths.includes('bladeRoute.bladeH')) c6.fail('the real hours fields must still be read', paths.join(', '))
   }
   out.push(c6)
+
+  const c7 = new Check('ED7', "the published exit is the acted route's: the hacking distribution under the black ops fails OFF ROUTE (BN15.1 entry dry-run)")
+  {
+    const SRC = 'the Bladeburner route (21 black ops, bbplan.bladeExit)'
+    // BN15.1 2026-10-25 as published: the node rule wrapped a decision priced on 'hack' (q50 29.862h)
+    const bad = { exit: { meanH: 55.338, q10: 0, q50: 29.862, q90: 218.059, source: SRC }, decisions: { bladeRoute: { key: 'blade', q50: 29.862, hackH: 26.232, bladeH: 147.889, nodeRule: { route: 'blade', forced: true, pricedKey: 'hack' } } } }
+    const good = { exit: { meanH: 146.267, q10: 17.993, q50: 135.049, q90: 303.241, source: SRC }, decisions: { bladeRoute: { key: 'blade', q50: 135.049, hackH: 26.339, bladeH: 137.775, nodeRule: { route: 'blade', inDecision: true, forced: true, pricedKey: 'hack' } } } }
+    const hackSrc = { exit: { meanH: 30, q10: 10, q50: 28, q90: 60, source: 'install decision (w1.2)' }, decisions: { bladeRoute: { key: 'blade', bladeH: 140, hackH: 26 } } }
+    const onHack = { exit: { meanH: 30, q10: 10, q50: 28, q90: 60, source: 'install decision (w1.2)' }, decisions: { bladeRoute: { key: 'hack', bladeH: 140, hackH: 26 } } }
+    c7.examined(4)
+    if (!exitOffRouteOf(bad)) c7.fail('the hacking distribution published under the black ops must fail OFF ROUTE')
+    if (exitOffRouteOf(good)) c7.fail('the black-op distribution under the black ops is on route', JSON.stringify(exitOffRouteOf(good)))
+    if (!exitOffRouteOf(hackSrc)) c7.fail("a hacking decision's exit published while the stack acts on the black ops must fail OFF ROUTE")
+    if (exitOffRouteOf(onHack)) c7.fail('on the hacking route the check is silent')
+  }
+  out.push(c7)
   return out
 }

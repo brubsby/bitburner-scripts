@@ -3,10 +3,10 @@
 // the lean view (LITE_POLICY — the same objective the lean pick serves), and
 // buy. Stops at the first purchase the game disagrees with.
 //
-//   args[0]  JSON {person, reads, stamina, maxStamina, rank, bnRank, costMult}
+//   args[0]  JSON {person, reads, stamina, maxStamina, rank, bnRank, costMult, node}
 //
 // RAM: base 1.6 + getSkillPoints 4 + getSkillLevel 4 + upgradeSkill 4 = 13.6GB.
-import { LITE_PORT, LITE_POLICY, leanViewOf } from 'bbliteplan.js'
+import { LITE_PORT, litePolicyOf, leanViewOf } from 'bbliteplan.js'
 import { SKILLS, planSkills } from 'bbplan.js'
 
 export async function main(ns) {
@@ -20,7 +20,8 @@ export async function main(ns) {
     out.before = sp
     if (sp >= 1) {
       const view = leanViewOf({ person: want.person, reads: want.reads, levels, stamina: want.stamina, maxStamina: want.maxStamina, rank: want.rank, bnRank: want.bnRank ?? 1 })
-      for (const b of planSkills(view, sp, LITE_POLICY, want.costMult ?? 1, LITE_POLICY.skillChunks)) {
+      const pol = litePolicyOf(Number.isInteger(want.node) ? want.node : null)
+      for (const b of planSkills(view, sp, pol, want.costMult ?? 1, pol.skillChunks)) {
         const before = bb.getSkillLevel(b.name)
         bb.upgradeSkill(b.name, b.count)
         const after = bb.getSkillLevel(b.name)

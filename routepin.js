@@ -100,10 +100,30 @@ export const NODE_ROUTE_RULES = {
   },
 }
 
+/**
+ * THE RULE AS AN INPUT TO THE DECISION (2026-10-25): where a node's rule binds — a rule, the route not built
+ * (labReady false) and no /route-pin.txt pin (the user's word wins, and it pins 'hack') — the route decision
+ * decides among the routes the node leaves (plan.decideBladeRouteGen `rule`): its distribution, its gift
+ * accept and every sub-decision gated on its key (the Simulacrum, the grafts, the lend, the hash exchange)
+ * are the ACTED route's. Wrapping a decision priced on the other route afterwards (nodeRouteOf alone) left
+ * all of those on the hacking arm: the BN15.1 entry dry-run published the hacking distribution (q50 29.9h,
+ * mean 55.3h) as "the Bladeburner route" and the chain accepted the gift on hack + gift (26.2h vs 27.0h)
+ * while the black-op arm it acted on priced the gift WORSE (150.3h vs 147.9h declining).
+ * Returns {route, why} or null.
+ */
+export function nodeRuleOf(node, pin = null) {
+  const rule = NODE_ROUTE_RULES[node]
+  if (!rule || rule.labReady) return null
+  if (pin?.pinned === true && pin.file === ROUTE_PIN) return null
+  return { route: rule.route, why: rule.why }
+}
+
 /** The route the stack ACTS on after the node's rule (NODE_ROUTE_RULES). `d` is the (pinned) record. */
 export function nodeRouteOf(d, node, pin = null) {
   const rule = NODE_ROUTE_RULES[node]
   if (!rule || rule.labReady || !d || typeof d !== 'object') return d
+  // decided under the rule (nodeRuleOf -> plan.decideBladeRouteGen): the record is already the acted route's
+  if (d.nodeRule?.inDecision === true && d.key === rule.route) return d
   if (pin?.pinned === true && pin.file === ROUTE_PIN) return { ...d, nodeRule: { route: rule.route, forced: false, pricedKey: d.pin?.pricedKey ?? d.key ?? null, overriddenBy: ROUTE_PIN, why: rule.why } }
   if (d.key === rule.route) return { ...d, nodeRule: { route: rule.route, forced: false, pricedKey: d.key, why: rule.why } }
   return {
@@ -121,11 +141,28 @@ export function unpinnedOf(prev) {
     const { pin, nodeRule, ...rest } = prev
     return { ...rest, key: pin.pricedKey ?? null }
   }
-  if (prev.nodeRule && typeof prev.nodeRule === 'object') {
+  // decided under the rule (inDecision): its key IS the decision's, the comparison is only published
+  if (prev.nodeRule && typeof prev.nodeRule === 'object' && prev.nodeRule.inDecision !== true) {
     const { nodeRule, ...rest } = prev
     return { ...rest, key: nodeRule.pricedKey ?? null }
   }
   return prev
+}
+
+/**
+ * THE ACTED ROUTE'S EXIT DISTRIBUTION in a route record: {meanH, q10, q50, q90, n, of} or null. The record's
+ * own fields are the distribution of the option the DECISION chose — after a pin (pin.pricedKey) or a node
+ * rule applied outside the decision (nodeRule.pricedKey, not inDecision) that is another route's, so the
+ * acted route's row in `options` is read instead (null when that route has no row: unpriced, never the
+ * other route's numbers under its name). progress.js publishPlan's exit reads it.
+ */
+export function routeDistOf(d, route = d?.key) {
+  if (!d || typeof d !== 'object' || (route !== 'hack' && route !== 'blade')) return null
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  const decided = d.pin && typeof d.pin === 'object' ? d.pin.pricedKey ?? null : d.nodeRule && d.nodeRule.inDecision !== true && d.nodeRule.forced === true ? d.nodeRule.pricedKey ?? null : d.key ?? null
+  const pick = (x, of) => (x && fin(x.q50) ? { meanH: x.meanH, q10: x.q10, q50: x.q50, q90: x.q90, n: x.n, of } : null)
+  if (decided === route) return pick(d, 'decision')
+  return pick(Array.isArray(d.options) ? d.options.find((o) => o?.key === route) : null, 'option row')
 }
 
 /**

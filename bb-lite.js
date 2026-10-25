@@ -51,6 +51,7 @@ import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { slotClaim, SLOT_FILES } from 'bbslot.js'
 import { hacknetLast, isHacknetServerHost } from 'hacknetplan.js'
 import { POLICY, BBC, joinedAtOf, skillEveryOf } from 'bbplan.js'
+import { nodePolicyOf } from 'bbnodepolicy.js'
 import { LITE_FILE, BB_FILE, LITE_PORT, ACTOR, LITE_ACTOR_GB, reserveHostOf, fullTakingOverOf, joinableOf, liteRecordOf, carriedOf, passWaitMs, rankPerHourOf, leanViewOf } from 'bbliteplan.js'
 
 const ACTOR_WAIT_MS = 15e3
@@ -313,8 +314,8 @@ async function loop(ns, { info, host, mults, say: say0, sayBB, setOwns }) {
 
     // ---- 5. skills, hourly ----------------------------------------------------
     // bbplan.skillEveryOf: the bootstrap's cadence before the first black op and its rank (reads.done, rank), then POLICY.skillEveryS
-    if (Date.now() - lastSkills > skillEveryOf(POLICY, Number.isFinite(reads.done) ? reads.done : Infinity, rank ?? Infinity) * 1000 && stamina !== null) {
-      const r = await act(ACTOR.skill, { person, reads, stamina, maxStamina, rank, bnRank, costMult })
+    if (Date.now() - lastSkills > skillEveryOf(nodePolicyOf(info.currentNode, POLICY), Number.isFinite(reads.done) ? reads.done : Infinity, rank ?? Infinity) * 1000 && stamina !== null) {
+      const r = await act(ACTOR.skill, { person, reads, stamina, maxStamina, rank, bnRank, costMult, node: info.currentNode })
       if (r.ok) {
         levels = r.out.levels
         skillPoints = r.out.skillPoints
@@ -336,7 +337,7 @@ async function loop(ns, { info, host, mults, say: say0, sayBB, setOwns }) {
     } catch {
       /* none read: the claim sees no Simulacrum */
     }
-    const r = await act(ACTOR.act, { person, reads, levels, bnRank, resting, lastAugReset: info.lastAugReset, ownedAugs }, { withSlot: true })
+    const r = await act(ACTOR.act, { person, reads, levels, bnRank, resting, lastAugReset: info.lastAugReset, ownedAugs, node: info.currentNode }, { withSlot: true })
     let pick = null
     let current = null
     let slot = claimHere

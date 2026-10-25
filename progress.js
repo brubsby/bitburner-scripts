@@ -183,7 +183,8 @@ import { enter, leave, pageBoot } from 'trace.js'
 import { rwRegimeOf, RW_PRIOR, RW_AGE, rwAgeKnee, capitalAgeInputsOf } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
-import { ROUTE_PIN, routePinOf, pinnedRouteOf, nodeRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
+import { nodePolicyOverrideOf } from 'bbnodepolicy.js'
+import { ROUTE_PIN, routePinOf, pinnedRouteOf, nodeRouteOf, nodeRuleOf, routeDistOf, unpinnedOf, routeReportOf } from 'routepin.js'
 import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT, routeGiftChainOptionsOf } from 'stanekepoch.js'
 import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, HACK_CHARGER_RAMP, bladeChargerThrOf, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
@@ -2883,7 +2884,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
     // not measured yet is the previous life's (the plan record carries it).
     const prevGo = pc.prevAny?.decisions?.bladeRoute?.start?.goCombat ?? null
     const goCombat = bladeGoCombatOf(readJson(ns, '/tel/go.txt'), { node: info.currentNode, lastAugReset: info.lastAugReset, now: Date.now(), carried: prevGo && prevGo.perHour > 0 && typeof prevGo.rateSource === 'string' && !prevGo.rateSource.startsWith('prior') ? { perHour: prevGo.perHour, source: `${prevGo.rateSource} (the plan record of ${pc.prevAny?.at ?? '?'})` } : null })
-    const startFor = (spec) => bladeStartOf({ tel, person, sleeves: armSleeves(), sleeveBodies: fl.bodies, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf, goCombat })
+    const startFor = (spec) => bladeStartOf({ tel, person, sleeves: armSleeves(), sleeveBodies: fl.bodies, gymExpPerSec, bnRank: mults.BladeburnerRank, skillCostMult: mults.BladeburnerSkillCost, install: bladeInstallOfSpec(spec), simulacrum: simOwned, rankScale, successScale, rankSdLn: rankPost0.sdLn, successSdLn: sCal.sdLn, leanUntilH, retrainSecsOf, goCombat, policy: nodePolicyOverrideOf(info.currentNode) })
     pc.bladeCtx = { startFor, simOwned }
     // REAL STATE MOVES ARE EVENTS (bbplan.bladeStateOf / bladeEventsOf): the
     // fleet, a black op, a random event in the best city, a calibration
@@ -2950,7 +2951,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       } catch (e) {
         mandate = { covenant: null, unpriced: true, why: `covenantMandateOf threw: ${String(e).slice(0, 160)}` }
       }
-      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, node: info.currentNode, post: !!pc.post, gift, hold: routeHoldOf(info, pc), mandate })
+      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, node: info.currentNode, post: !!pc.post, gift, hold: routeHoldOf(info, pc), mandate, rule: nodeRuleOf(info.currentNode, pin) })
       let simulacrum = null
       if (d?.key === 'blade' && typeof d.bladeH === 'number') {
         try {
@@ -4685,7 +4686,14 @@ function publishPlan(ns, info, extra = {}) {
     // On it, the install decision priced on the black ops (route 'blade') is
     // the committed trajectory — the same one the route's blade arm prices.
     const instBlade = inst?.key && inst.route === 'blade' && typeof inst.q50 === 'number'
-    const ex = br?.key === 'blade' && instBlade ? inst : br?.key === 'blade' && typeof br.q50 === 'number' ? br : inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
+    // THE ACTED ROUTE DECIDES WHICH EXIT IS PUBLISHED (2026-10-25): on the black ops the route record's
+    // distribution of the BLADE option (routepin.routeDistOf — never the fields of a decision priced on the
+    // other route and relabelled by a pin or a node rule; the BN15.1 entry dry-run published the hacking
+    // distribution, q50 29.9h, as "the Bladeburner route" beside a 147.9h black-op point), and NEVER a hacking
+    // decision's (install / count route / trajectory): no blade distribution is an unpriced exit, not hack's.
+    const brDist = br?.key === 'blade' ? routeDistOf(br, 'blade') : null
+    const brEx = brDist ? { meanH: brDist.meanH, q10: brDist.q10, q50: brDist.q50, q90: brDist.q90, n: brDist.n } : null
+    const ex = br?.key === 'blade' ? (instBlade ? inst : brEx) : inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
     // THE PAGE-FREEZE METRIC is the longest stretch of work between yields
     // (maxBlockMs), not the total: the searches run in slices, so a pass may
     // spend seconds of work while never holding the page for more than a
@@ -4704,8 +4712,8 @@ function publishPlan(ns, info, extra = {}) {
     // through the life; /tel/exitjump.txt keeps it past the next install.
     let exitJump = pc.prev?.exitJump ?? null
     try {
-      const pointH = ex === inst ? inst?.pointH : ex === br ? br?.bladeH ?? null : ex?.pointH ?? null
-      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : ex === br ? 'the Bladeburner route' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION, node: info?.currentNode ?? null, lastNodeReset: info?.lastNodeReset ?? null })
+      const pointH = ex === inst ? inst?.pointH : ex === brEx ? br?.bladeH ?? null : ex?.pointH ?? null
+      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : ex === brEx ? 'the Bladeburner route' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION, node: info?.currentNode ?? null, lastNodeReset: info?.lastNodeReset ?? null })
       if (exitJump?.install && JSON.stringify(exitJump) !== JSON.stringify(pc.prev?.exitJump ?? null)) ns.write('/tel/exitjump.txt', JSON.stringify({ at, lastAugReset: info?.lastAugReset ?? null, node: info?.currentNode ?? null, lastNodeReset: info?.lastNodeReset ?? null, ...exitJump }), 'w')
     } catch (e) {
       exitJump = { ok: null, why: `exit jump check threw: ${String(e).slice(0, 120)}` }
@@ -4727,7 +4735,8 @@ function publishPlan(ns, info, extra = {}) {
       // THE EXIT INTERVAL RECALIBRATED (exitcal.recalIntervalOf): q10/q90 scaled
       // about the median by the width multiplier, the raw pair kept beside it
       // (rawQ10/rawQ90 — the exit samples carry the raw one, never this).
-      exit: ex ? { meanH: ex.meanH, ...recalIntervalOf({ q10: ex.q10, q50: ex.q50, q90: ex.q90 }, pc.post?.calibration?.recal?.applied ?? 1), source: ex === br ? 'the Bladeburner route (21 black ops, bbplan.bladeExit)' : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
+      ...(!ex && br?.key === 'blade' ? { exitUnpriced: `the acted route is the black ops and neither the install decision nor the route record carries a Bladeburner exit distribution${br.unpriced?.length ? ` (the ${br.unpriced.join(' and ')} arm unpriced)` : ''}: never the hacking exit in its place` } : {}),
+      exit: ex ? { meanH: ex.meanH, ...recalIntervalOf({ q10: ex.q10, q50: ex.q50, q90: ex.q90 }, pc.post?.calibration?.recal?.applied ?? 1), source: ex === brEx ? `the Bladeburner route (21 black ops, bbplan.bladeExit${brDist.of === 'option row' ? "; its option row: the decision's fields are another route's" : ''})` : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
       // markBladeMoot: on the committed Bladeburner route the hack arm's decisions
       // (grafts, lifeLength, fourS, batch) say they are not on the committed exit.
       decisions: markBladeMoot({

@@ -27,7 +27,8 @@ function overridesFromSource(src) {
   for (let m; (m = re.exec(src)); ) {
     const node = Number(m[1]);
     const body = {};
-    for (const [, k, v] of m[2].matchAll(/(\w+):\s*([0-9.]+)\s*,/g)) body[k] = Number(v);
+    // negative values too (StaneksGiftExtraSize: BN2 -6 ... BN15 -2 were silently skipped until 2026-10-25)
+    for (const [, k, v] of m[2].matchAll(/(\w+):\s*(-?[0-9.]+)\s*,/g)) body[k] = Number(v);
     // Symbolic entries (BitNode 12's `dec`/`inc`, which scale with the level)
     // are recorded as present-but-unvalued so a node that HAS them is not
     // mistaken for one that has none.

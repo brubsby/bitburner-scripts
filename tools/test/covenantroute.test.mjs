@@ -110,7 +110,7 @@ export async function run() {
   const fnBody = fnAt >= 0 ? prog.slice(fnAt, prog.indexOf('\n}\n', fnAt)) : ''
   const guards = [
     [/mandate = covenantMandateOf\(ns, info, player, readFleet\(ns, info\)\)/.test(prog), 'bladeRouteOf builds the mandate with covenantMandateOf'],
-    [/yield\* decideBladeRouteGen\(\{[^\n]*\bmandate \}\)/.test(prog), 'bladeRouteOf passes `mandate` to decideBladeRouteGen'],
+    [/yield\* decideBladeRouteGen\(\{[^\n]*\bmandate(, rule: nodeRuleOf\(info\.currentNode, pin\))? \}\)/.test(prog), 'bladeRouteOf passes `mandate` to decideBladeRouteGen'],
     [/covenantMandated\(info\?\.currentNode, from, sfLevel\(info, 10\)\)/.test(fnBody), 'covenantMandateOf binds on sleeveplan.covenantMandated'],
     [/covenantSleeveCost\(from\)/.test(fnBody) && /covenantCombatHours\(/.test(fnBody) && /joinMoney: COVENANT\.joinMoney/.test(fnBody), "covenantMandateOf prices the next sleeve, the combat legs and the invite money"],
     [/withoutH: d\.mandate\?\.priced \? d\.mandate\.bladeExitH : d\.bladeH/.test(prog), 'the Simulacrum verdict prices against the black-op exit alone'],

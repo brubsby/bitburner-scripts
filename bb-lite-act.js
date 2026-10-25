@@ -7,7 +7,7 @@
 // player's work first (Bladeburner.ts:179-181), so a stale claim must not
 // start anything.
 //
-//   args[0]  JSON {person, reads, levels, bnRank, resting, lastAugReset}
+//   args[0]  JSON {person, reads, levels, bnRank, resting, lastAugReset, node}
 //
 // RAM: base 1.6 + getStamina 4 + getRank 4 + startAction 4 + getCurrentAction 1
 // = 14.6GB (bbslot.js and bbliteplan.js are 0GB).
@@ -24,7 +24,7 @@ export async function main(ns) {
     let current = bb.getCurrentAction()
     const resting = restingOf(want.resting, stamina, maxStamina)
     const view = leanViewOf({ person: want.person, reads: want.reads, levels: want.levels ?? {}, stamina, maxStamina, rank, bnRank: want.bnRank ?? 1, resting })
-    const pick = leanPick(view)
+    const pick = leanPick(view, Number.isInteger(want.node) ? want.node : null)
     Object.assign(out, { stamina, maxStamina, rank, resting, pick, started: null })
     const same = !!current && current.type === pick.type && current.name === pick.name
     const claim = slotClaim(ns, 'home', { lastAugReset: want.lastAugReset, ownedAugs: Array.isArray(want.ownedAugs) ? want.ownedAugs : [] })

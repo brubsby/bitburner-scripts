@@ -211,6 +211,48 @@ export async function run() {
       if (steady.held !== true || steady.key !== 'hack') c9.fail(`the expected order unchanged since the last pass: the decision holds, got ${steady.key} held ${steady.held}`)
     }
     out.push(c9)
+
+    // RC10: THE NODE'S RULE IS AN INPUT TO THE DECISION (BN15.1 entry dry-run, 2026-10-25). Wrapped AFTER a
+    // decision priced on the hacking route (routepin.nodeRouteOf alone), the record kept the hacking
+    // distribution (published as "the Bladeburner route": q50 29.9h beside a 147.9h black-op point) and the
+    // chain's accept followed hack + gift (26.2h vs 27.0h) while the black-op arm the stack acted on priced the
+    // gift worse (150.3h vs 147.9h): the accept flipped one pass later.
+    const c10 = new Check('RC10', "the node rule decides INSIDE the route decision: the acted route's distribution, its gift accept, the comparison only published (BN15.1 entry dry-run)")
+    {
+      const RP = await import('routepin.js')
+      const PL = await import('plan.js')
+      const hp = bladeH * 0.2
+      // the chain: hack + gift faster than hack; the black ops priced without the gift only (bladeWithGift false)
+      const chain = { chain: true, hackOptions: [{ src: 'without the gift', inputs: { fakeH: hp, cycleHours: 2 }, withGift: false }, { src: 'accept now + the hacking layout', f: 0.2, inputs: { fakeH: hp * 0.95, cycleHours: 2 }, withGift: true }], bladeOptions: [{ src: 'without the gift', make: null }], switchCostH: 0.2 }
+      const rule = RP.nodeRuleOf(15, null)
+      const run = (extra) => drain(P.decideBladeRouteGen({ base: { fakeH: hp, cycleHours: 2 }, traj: (x) => x.fakeH, trajGen, bladeStart: s0, draws, post: true, budgetMs: 1e9, prev: null, gift: chain, ...extra }))
+      const free = run({})
+      const ruled = run({ rule })
+      const wrapped = RP.nodeRouteOf(free, 15, null)
+      const bladeRow = (free.options ?? []).find((o) => o.key === 'blade')
+      const ruledRow = (ruled.options ?? []).find((o) => o.key === 'blade')
+      c10.examined(8)
+      c10.note(`free: ${free.key} q50 ${free.q50}h accept ${free.gift?.accept}; ruled: ${ruled.key} q50 ${ruled.q50}h accept ${ruled.gift?.accept} nodeRule ${JSON.stringify(ruled.nodeRule)}; wrapped dist ${JSON.stringify(RP.routeDistOf(wrapped, 'blade'))}`)
+      if (!rule || rule.route !== 'blade') c10.fail('routepin.nodeRuleOf(15) must bind the black ops while the labyrinth route is not built', JSON.stringify(rule))
+      if (RP.nodeRuleOf(15, { pinned: true, file: RP.ROUTE_PIN, route: 'hack' }) !== null) c10.fail('/route-pin.txt still wins over the node rule')
+      if (RP.nodeRuleOf(6, null) !== null) c10.fail('no rule outside BN15')
+      if (free.key !== 'hack' || free.gift?.accept !== true) c10.fail('the fixture: unruled, hack + gift wins and the chain accepts', JSON.stringify({ key: free.key, accept: free.gift?.accept }))
+      if (ruled.key !== 'blade') c10.fail(`under the rule the decision is the black ops, got ${ruled.key}`, ruled.why)
+      if (ruled.gift?.accept !== false) c10.fail("under the rule the chain's accept follows the black-op arm (priced without the gift only): false, never hack + gift's true", JSON.stringify(ruled.gift?.accept))
+      if (!(ruledRow && Math.abs(ruled.q50 - ruledRow.q50) < 1e-9 && (ruled.options ?? []).every((o) => o.key === 'blade'))) c10.fail("the ruled record's distribution must be the black-op option's, and its only option", JSON.stringify({ q50: ruled.q50, row: ruledRow, keys: (ruled.options ?? []).map((o) => o.key) }))
+      if (!(ruled.nodeRule?.inDecision === true && ruled.nodeRule.forced === true && ruled.nodeRule.pricedKey === 'hack' && Math.abs(ruled.hackH - hp * 0.95) < 1e-3)) c10.fail('the comparison is published, never decided on: nodeRule {inDecision, forced, pricedKey hack} and hackH (the hacking arm with its best gift option)', JSON.stringify({ nodeRule: ruled.nodeRule, hackH: ruled.hackH }))
+      c10.examined(5)
+      if (RP.nodeRouteOf(ruled, 15, null) !== ruled) c10.fail('nodeRouteOf leaves a record decided under the rule unchanged')
+      if (RP.unpinnedOf(ruled)?.key !== 'blade') c10.fail("unpinnedOf keeps a ruled record's key (it is the decision's): the commitment rule runs on blade", JSON.stringify(RP.unpinnedOf(ruled)?.key))
+      const rep = RP.routeReportOf({ pinned: false }, ruled, null)
+      if (rep.route !== 'blade' || rep.priced !== 'hack' || RP.routeHealthOf({ route: { ...rep, node: 15 } }).length) c10.fail('the report: acted blade, the comparison hack, no ROUTE NOT THE PRICED ONE', JSON.stringify({ rep, h: RP.routeHealthOf({ route: { ...rep, node: 15 } }) }))
+      // a record wrapped after the decision (an old record, or a pin): its fields are hack's; the exit reads blade's row
+      const wd = RP.routeDistOf(wrapped, 'blade')
+      if (wrapped.key !== 'blade' || !(wd && bladeRow && wd.q50 === bladeRow.q50 && wd.of === 'option row' && Math.abs(wrapped.q50 - free.q50) < 1e-12)) c10.fail("routeDistOf on a record wrapped after the decision reads the black-op option row, never the hacking fields", JSON.stringify({ wd, bladeRow: bladeRow?.q50, fields: wrapped.q50 }))
+      if (RP.routeDistOf(ruled, 'blade')?.of !== 'decision') c10.fail('routeDistOf on a ruled record reads its own fields')
+      if (PL.bladeMootOf({ bladeRoute: { key: 'blade' }, install: { key: null } }).on !== true) c10.fail("the hacking arm's decisions are moot on the acted black ops before the install decision prices them")
+    }
+    out.push(c10)
   }
   {
     const c = new Check('RC6', 'the wiring: progress.js names the node to the route decision; the gameplan plans on the band by default')

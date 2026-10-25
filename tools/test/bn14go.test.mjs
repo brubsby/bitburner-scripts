@@ -154,7 +154,7 @@ export async function run() {
   const bbj = SRC('bbplan.js')
   c6.examined(5)
   if (!/const goCombat = bladeGoCombatOf\(readJson\(ns, '\/tel\/go\.txt'\)/.test(pj)) c6.fail('progress.js must read the farm from /tel/go.txt through bladeGoCombatOf')
-  if (!/retrainSecsOf, goCombat \}\)/.test(pj)) c6.fail("progress.js's startFor must pass goCombat")
+  if (!/retrainSecsOf, goCombat(, policy: nodePolicyOverrideOf\(info\.currentNode\))? \}\)/.test(pj)) c6.fail("progress.js's startFor must pass goCombat")
   if (!/goCombat: goCombat\.effect === null \?/.test(pj)) c6.fail("the plan's start must publish goCombat (sleeve.js and the next life read it)")
   if (!/goCombat: plan\?\.decisions\?\.bladeRoute\?\.start\?\.goCombat/.test(slj)) c6.fail("sleeve.js must price its fleet on the plan's goCombat")
   if (!/if \(goC\) \{\s*for \(const c of \['strength', 'defense', 'dexterity', 'agility'\]\) person\.mults\[c\] = lvMult\(c\) \/ goE/.test(bbj)) c6.fail("the install must divide the farm's effect out (bladeExitGen)")

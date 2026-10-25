@@ -313,7 +313,7 @@ async function sg7() {
   if (!(fi < fk) || !(fi < 1) || inst.clears() !== 2) c.fail("an install on the route must clear the gift's charge in the Bladeburner arm (the factor drops below the live one; one clear per install)", JSON.stringify({ fk, fi, clears: inst.clears() }))
   // the wiring: progress.js hands the gift to the route decision
   c.examined(2)
-  if (!/decideBladeRouteGen\(\{[^\n]*\bgift, hold: routeHoldOf\(info, pc\), mandate \}\)/.test(pr) || !/gift = routeGiftOf\(ns, info, base, bladeS0\)/.test(pr)) c.fail('progress.js bladeRouteOf must price the route with the gift (routeGiftOf -> decideBladeRouteGen gift)')
+  if (!/decideBladeRouteGen\(\{[^\n]*\bgift, hold: routeHoldOf\(info, pc\), mandate, rule: nodeRuleOf\(info\.currentNode, pin\) \}\)/.test(pr) || !/gift = routeGiftOf\(ns, info, base, bladeS0\)/.test(pr)) c.fail('progress.js bladeRouteOf must price the route with the gift (routeGiftOf -> decideBladeRouteGen gift)')
   if (!/routeReportOf\(routePin, bladeRoute, giftStateOf\(info, canAccessCotMG\(info\)\)\)/.test(pr)) c.fail('progress.js must publish the gift beside the route (routeReportOf giftState)')
   // 6. health: acted != priced with no file pin; a non-file pin; accepted but not priced with the gift
   const base = { node: 7, lastAugReset: 1, route: 'blade', priced: 'blade', pinned: false, pin: { file: rp.ROUTE_PIN }, gift: { accepted: true, pricedWithGift: true } }
@@ -1374,8 +1374,8 @@ async function sg21() {
   const pl = rd('plan.js')
   const pr = rd('progress.js')
   c.examined(3)
-  if (!/const d = unpricedHoldOf\(d0, \{ pointHack: mUnp \? null : pointHack, pointBlade: mUnp \? null : pointBlade, prev: was, hold, post \}\)/.test(pl)) c.fail('decideBladeRouteGen must pass its decision through unpricedHoldOf')
-  if (!/post: !!pc\.post, gift, hold: routeHoldOf\(info, pc\), mandate \}\)/.test(pr)) c.fail('progress.js must hand the route decision the route to hold (routeHoldOf)')
+  if (!/const d = only\s*\?[^\n]*unpricedHoldOf\(d0, \{[^\n]*hold: only, post \}\)\s*: unpricedHoldOf\(d0, \{ pointHack: mUnp \? null : pointHack, pointBlade: mUnp \? null : pointBlade, prev: was, hold, post \}\)/.test(pl)) c.fail('decideBladeRouteGen must pass its decision through unpricedHoldOf')
+  if (!/post: !!pc\.post, gift, hold: routeHoldOf\(info, pc\), mandate, rule: nodeRuleOf\(info\.currentNode, pin\) \}\)/.test(pr)) c.fail('progress.js must hand the route decision the route to hold (routeHoldOf)')
   if (!/pc\.decisions\.bladeRoute = (?:nodeRouteOf\()?\{ key: held, held: !!held, unpriced: \['hack', 'blade'\], error: true/.test(pr)) c.fail('a thrown route decision must hold the committed route, not read key null (acted as hack)')
   // 3. published and failed loud
   const rep = rp.routeReportOf(rp.routePinOf('', 7), H(50, null, { key: 'blade' }, null), null)
@@ -1489,7 +1489,14 @@ async function sg23() {
   const se = await import('../../stanekepoch.js')
   const { bitNodeMults } = await import('../../bitNodeMultipliers.js')
   const { drain } = await import('../../coop.js')
-  const nm = bitNodeMults(10, 3)
+  // THE GRID: BN10's StaneksGiftExtraSize is -3 (BitNode.tsx case 10), so SF13.1 gives baseSize 7 = a 4x4 grid
+  // (StaneksGift.ts:21-30) — but bitNodeMultipliers.js dropped every NEGATIVE value until 2026-10-25 and the chain
+  // priced BN10 on a 6x5. On the real 4x4 hack + gift LOSES at this economy (180.9h vs 179.9h without; the
+  // 'slow' case below covers a losing gift); the accept-follows-the-faster-option mechanism is checked on the
+  // 6x5 grid (ExtraSize 0), where it wins.
+  const nmReal = bitNodeMults(10, 3)
+  if (nmReal.StaneksGiftExtraSize !== -3) c.fail('bitNodeMults(10) must carry StaneksGiftExtraSize -3 (BitNode.tsx case 10)', nmReal.StaneksGiftExtraSize)
+  const nm = { ...nmReal, StaneksGiftExtraSize: 0 }
   // a BN10.3 entry (SF10.2 held), the builder covenantroute's MC checks use, at the lo economy
   const { freshInputs, defaultProfile } = await import('../sim/nodechoice/hackexit.mjs')
   const SF = [[1, 3], [2, 1], [4, 2], [5, 1], [6, 3], [7, 2], [8, 1], [9, 3], [10, 2], [11, 1], [12, 1], [13, 2], [14, 3]]

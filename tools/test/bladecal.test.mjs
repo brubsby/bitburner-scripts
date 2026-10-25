@@ -338,7 +338,7 @@ export async function run() {
     const need = [
       [pr, /const fl = bladeFleetOf\(ours \? fleet : null, \{ lifeStart: info\.lastAugReset \}\)/, 'progress.js: the fleet as it runs (none from before the install)'],
       [pr, /rankWindowOkOf\(\{ tel, fleetSource: fl\.source \}\)/, 'progress.js: only the model\'s own trajectory is a rank window'],
-      [pr, /rankScale, successScale, (rankSdLn: rankPost0\.sdLn, successSdLn: sCal\.sdLn, )?leanUntilH(, retrainSecsOf)?(, goCombat)? \}\)/, 'progress.js: the calibration (its posterior sds for the members, and the lean phase) into the one builder'],
+      [pr, /rankScale, successScale, (rankSdLn: rankPost0\.sdLn, successSdLn: sCal\.sdLn, )?leanUntilH(, retrainSecsOf)?(, goCombat)?(, policy: nodePolicyOverrideOf\(info\.currentNode\))? \}\)/, 'progress.js: the calibration (its posterior sds for the members, and the lean phase) into the one builder'],
       [pr, /bladeEventsOf\(pc\.prev\?\.decisions\?\.bladeRoute\?\.state/, 'progress.js: the state events before the decision'],
       [pr, /rankCalStep\(prevCal/, 'progress.js: the rank ledger'],
       [pr, /blackOps: tel\?\.blackOps\?\.done \?\? 0, bnRank: mults\.BladeburnerRank/, 'progress.js: the v3 ledger leaves black ops apart (the reward at the node\'s BladeburnerRank)'],

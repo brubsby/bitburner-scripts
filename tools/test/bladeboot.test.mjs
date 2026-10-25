@@ -86,7 +86,7 @@ export async function run() {
     for (const f of ['bladeburner.js', 'bb-lite.js']) {
       const src = fs.readFileSync(path.join(REPO_ROOT, f), 'utf8')
       c.examined(1)
-      if (!/skillEveryOf\(\s*POLICY\s*,.*\brank\b.*\)\s*\*\s*1000/.test(src)) c.fail(`${f} does not spend on skillEveryOf(POLICY, blackOpsDone, rank)`)
+      if (!/skillEveryOf\(\s*(POLICY|POL|nodePolicyOf\([^)]*\bPOLICY\))\s*,.*\brank\b.*\)\s*\*\s*1000/.test(src)) c.fail(`${f} does not spend on skillEveryOf(POLICY, blackOpsDone, rank)`)
       if (/POLICY\.skillEveryS\s*\*\s*1000/.test(src)) c.fail(`${f} still times its spends on the bare POLICY.skillEveryS`)
     }
     const src = fs.readFileSync(path.join(REPO_ROOT, 'bbplan.js'), 'utf8')

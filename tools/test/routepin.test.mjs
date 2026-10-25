@@ -85,7 +85,7 @@ export async function run() {
     const at = p.indexOf("async function bladeRouteOf(");
     const fn = p.slice(at, at + 40000);
     if (!/const priced = await planDecide\(pc, 'bladeRoute'/.test(fn)) c.fail("bladeRouteOf must keep the priced decision to apply the pin to");
-    if (!/const acted = pinnedRouteOf\(priced, pin\)\s*if \(acted !== priced\) pc\.decisions\.bladeRoute = acted\s*return acted/.test(fn)) c.fail("bladeRouteOf must return AND publish (pc.decisions.bladeRoute) the pinned record");
+    if (!/const acted = nodeRouteOf\(pinnedRouteOf\(priced, pin\), info\.currentNode, pin\)\s*if \(acted !== priced\) pc\.decisions\.bladeRoute = acted\s*return acted/.test(fn)) c.fail("bladeRouteOf must return AND publish (pc.decisions.bladeRoute) the pinned record");
     if (!/prev: unpinnedOf\(pc\.prev\?\.decisions\?\.bladeRoute \?\? null\)/.test(fn)) c.fail("decideBladeRouteGen must compare against the unpinned record");
     if (!/routePinOf\(ns\.read\(ROUTE_PIN\), info\?\.currentNode \?\? null\)/.test(p)) c.fail("act() must read the pin (ns.read, 0GB) for this node");
     const call = p.indexOf("? await bladeRouteOf(ns, info, player");

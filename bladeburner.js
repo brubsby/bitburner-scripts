@@ -57,6 +57,7 @@ import { reporter, describe, record } from 'status.js'
 import { raiseRam } from 'ramgrow.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { BBC, TYPE, GENERAL, LEVELED, CONTRACTS, OPERATIONS, BLACK_OPS, SKILLS, POLICY, JOIN_COMBAT, DAEDALUS, CITY_NAMES, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, planSkills, actionTime, envOf, maxStaminaOf, staminaGainOf, staminaBonusOf, pFrom, bestCity, successChance, popRatioFromRange, popRatioFromRanges, unreadPopOf, anchorAfter, POP_PROBE, rankGainOf, rankLossOf, successPosterior, attemptsOf, COUNT_TWIN, SUCCESS_CAL, joinedAtOf, divisionCarryOf, skillEveryOf } from 'bbplan.js'
+import { nodePolicyOf } from 'bbnodepolicy.js'
 
 const STATUS = '/tel/bladeburner.txt'
 /** bb-lite.js's heartbeat: while it is alive this daemon does not act (the handover, bbliteplan.liteAliveOf). */
@@ -163,6 +164,8 @@ export function slotClaim(ns, host, info) {
 }
 
 async function operate(ns, say, info, mults, carry = { rec: {} }) {
+  // THE POLICY AS PLAYED IN THIS NODE (bbnodepolicy.nodePolicyOf: BN15's bootstrap phase off, priced) — the exit model prices the same
+  const POL = nodePolicyOf(info.currentNode, POLICY)
   const bb = ns.bladeburner
   const host = ns.getHostname()
   const flags = ns.flags([
@@ -436,9 +439,9 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
     // (skillsAt: the model's spends fall where these do).
     const nextBo = sp >= 1 ? bb.getNextBlackOp() : null
     const boDone = nextBo ? (dataOf(nextBo.name)?.n ?? Infinity) : sp >= 1 ? BLACK_OPS.length : Infinity
-    if (sp >= 1 && Date.now() - lastSkills > skillEveryOf(POLICY, boDone, rank) * 1000) {
+    if (sp >= 1 && Date.now() - lastSkills > skillEveryOf(POL, boDone, rank) * 1000) {
       const v = readEnv()
-      for (const b of planSkills(v, sp, POLICY, costMult, POLICY.skillChunks)) {
+      for (const b of planSkills(v, sp, POL, costMult, POL.skillChunks)) {
         const before = bb.getSkillLevel(b.name)
         bb.upgradeSkill(b.name, b.count)
         const after = bb.getSkillLevel(b.name)
@@ -476,7 +479,7 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       } else if (a.n === null) unmeasured = { name: obs.name, why: a.why }
       obs = null
     }
-    let pick = chooseAction(v, POLICY)
+    let pick = chooseAction(v, POL)
     // HOLD A CONTRACT/OPERATION PARTWAY DONE UNLESS RESTARTING PAYS.
     // startAction restarts an action from zero, so a pick that flips between
     // passes completes nothing: live 2026-10-05 00:54-01:09Z rank sat at
@@ -513,11 +516,11 @@ async function operate(ns, say, info, mults, carry = { rec: {} }) {
       city = pick.city
       bb.switchCity(city)
       v = readEnv()
-      pick = chooseAction(v, POLICY)
+      pick = chooseAction(v, POL)
       // Still pointing elsewhere: the new probe disagrees with the old city's
       // estimate. Act HERE, on what was just measured here, and let the next
       // pass move again if it still prices better.
-      if (pick.city && pick.city !== city) pick = chooseAction({ ...v, cities: v.cities.filter((c) => c.name === city) }, POLICY)
+      if (pick.city && pick.city !== city) pick = chooseAction({ ...v, cities: v.cities.filter((c) => c.name === city) }, POL)
     }
     const slot = flags['own-slot'] ? { owner: 'bladeburner', ours: true, why: '--own-slot (testing): acting without a claim' } : slotClaim(ns, host, info)
     const exitReady = !v.blackOp

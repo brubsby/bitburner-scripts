@@ -35,6 +35,9 @@
 //   hash exchanges, BN13.3's 6 rank + 4 SP over 1.5-4.8h          -0.05 / -0.16 / -0.41  [-0.50 / -2.68]  live already (hashspend.js)
 //   the body slot lent 29% of the time after the join (BN13.3)   +0.19 / -0.03 / +0.63  [+0.19 / -0.33]  progress.js's slot: not this file's
 //   the gift (off)                                                +2.02 / +1.15 / +12.5                    live already
+// BN15.1 2026-10-25 (--cells BN15.1, seeds 501-516, the gift on; BladeburnerRank 0.2: the boot to rank 2.5k
+// lasts ~50h): the bootstrap policy +20.43 +- 5.02h on the exit (96.9h vs 76.5h; first black op +10.04 +-
+// 2.95h) -> OFF in BN15 (bbnodepolicy.BOOT_OFF_NODES); the gift -10.94 +- 7.41h (no gift 107.9h).
 // Earlier rounds (seeds 1-48, 401-432) picked the bars and the cadence and found the boot must end at the
 // first black op's RANK, not the op (the priced rule holds a rank-gated op: BN13 without the gift booted ~20h).
 // THE SLEEVES' START 2026-10-24 (SLEEVE_ARMS, seeds 701-760, BN5.2 / BN2.2): fleet 1h after the join +0.20 /
@@ -300,6 +303,10 @@ export const CELLS = {
   // phase's side effects (the Raids' population and chaos) have the longest to act
   'BN5.2-nogift': { node: 5, level: 2, sf: SF_NOW, int: 156, hack: 150, gift: false, maxH: 80 },
   'BN13.3-nogift': { node: 13, level: 3, sf: SF_NOW.map(([n, l]) => [n, n === 13 ? 2 : l]), int: 156, hack: 70, gift: false, maxH: 160 },
+  // THE LAST NODE (2026-10-25: BN8.2 -> BN8.3 -> BN15.1): SF8.3 by then, the live intelligence 157; the black ops
+  // are its exit (routepin.NODE_ROUTE_RULES[15]) at BladeburnerRank 0.2 / SkillCost 3, combat x0.7, the gift's
+  // 6x5 grid at power 0.7 (BitNode.tsx case 15) — every one the game's own (nodeMults), the exit ~100-160h
+  'BN15.1': { node: 15, level: 1, sf: SF_NOW.map(([n, l]) => [n, n === 8 ? 3 : l]), int: 157, hack: 150, maxH: 400 },
 }
 
 /**

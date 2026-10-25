@@ -55,6 +55,7 @@ import { hackExitHours, nodeMults, profileFor, finalRatesOf } from '../nodechoic
 import { lattice, lvl, NODES } from './state.mjs'
 import { EFFECTS, LIVE_SFS, sfKeyStr } from './effects.mjs'
 import { bladeGoOf } from './go.mjs'
+const { nodePolicyOf } = await import('bbnodepolicy.js')
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const NC = path.join(HERE, '../nodechoice')
@@ -165,7 +166,8 @@ export const hackKeyOf = (curve, g, profile) => sha(HACK_CODE, JSON.stringify({ 
  */
 export const bbSpec = (n, l6, l7, seed, bbPolicy, fleet = null, go = null) => ({
   node: n, sf: [...BB_BASE, ...(l6 ? [[6, l6]] : []), ...(l7 ? [[7, l7]] : [])], g: 0, installEveryH: null, intelligence: BB_INT, hacking: 200, seed, maxH: 400,
-  policy: { shared: true, sharedPolicy: bbPolicy, sleeves: fleet ? { infiltrate: fleet.infiltrate, support: fleet.support, fa: fleet.fa, ...(fleet.gym > 0 ? { gym: fleet.gym, gymStats: bbGymStatsOf(fleet) } : {}) } : { infiltrate: BB_SLEEVES }, gymTo: 100, useEst: false },
+  // the node's policy as the stack plays it (bbnodepolicy.nodePolicyOf: BN15's bootstrap off); unchanged elsewhere (the same object)
+  policy: { shared: true, sharedPolicy: nodePolicyOf(n, bbPolicy), sleeves: fleet ? { infiltrate: fleet.infiltrate, support: fleet.support, fa: fleet.fa, ...(fleet.gym > 0 ? { gym: fleet.gym, gymStats: bbGymStatsOf(fleet) } : {}) } : { infiltrate: BB_SLEEVES }, gymTo: 100, useEst: false },
   ...(go ? { go } : {}),
 })
 /**

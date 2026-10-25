@@ -35,6 +35,7 @@
 
 import { RAISED, FREEABLE, EVICTABLE, RESERVE_FRESH_MS, routeWantsOf, raisedPlacementOf, reserveRecordOf, reserveOf, BB_HOST, cloudHostBuyOf } from 'raiseplace.js'
 import { POLICY, TYPE, LEVELED, BLACK_OPS, dataOf, typeOf, skillMultsOf, envFromChance, chooseAction, staminaGainOf, staminaBonusOf, actionTime, JOIN_COMBAT, BBC } from 'bbplan.js'
+import { nodePolicyOf } from 'bbnodepolicy.js'
 
 export const LITE_FILE = '/tel/bb-lite.txt'
 export const BB_FILE = '/tel/bladeburner.txt'
@@ -175,9 +176,11 @@ export function restingOf(prev, stamina, maxStamina, pol = POLICY) {
   return !!prev
 }
 
-/** The lean decision: bbplan.chooseAction under LITE_POLICY. */
-export function leanPick(view) {
-  return chooseAction(view, LITE_POLICY)
+/** The lean policy as played in BitNode `node` (bbnodepolicy.nodePolicyOf: BN15's bootstrap off); node unknown: LITE_POLICY. */
+export const litePolicyOf = (node = null) => (Number.isInteger(node) ? nodePolicyOf(node, LITE_POLICY) : LITE_POLICY)
+/** The lean decision: bbplan.chooseAction under the node's lean policy (litePolicyOf). */
+export function leanPick(view, node = null) {
+  return chooseAction(view, litePolicyOf(node))
 }
 
 /** How long until the next pass: the picked action's own time (bbplan.actionTime), in [PASS_MIN_MS, PASS_MAX_MS]. */

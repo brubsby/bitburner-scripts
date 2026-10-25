@@ -128,6 +128,23 @@ export function inputDriftOf({ prev, next, events = [], from = 'prev', to = 'nex
   return F
 }
 
+/**
+ * THE PUBLISHED EXIT IS THE ACTED ROUTE'S (2026-10-25): on the black ops (decisions.bladeRoute.key 'blade') the
+ * plan's exit must be the Bladeburner route's — its source says so and its median sits within x3 of the
+ * black-op point. The BN15.1 entry dry-run published the hacking distribution (q50 29.9h, source "the
+ * Bladeburner route") beside a 147.9h black-op point: the node rule was applied after a decision priced on
+ * the hacking route. Returns {what, cause} or null.
+ */
+export const EXIT_POINT_RATIO = 3
+export function exitOffRouteOf(plan) {
+  const br = plan?.decisions?.bladeRoute
+  const ex = plan?.exit
+  if (br?.key !== 'blade' || !ex) return null
+  if (!/Bladeburner route/.test(String(ex.source ?? ''))) return { what: `the stack acts on the black ops but the published exit is '${short(ex.source, 120)}'`, cause: 'progress.js publishPlan: the exit of a decision priced on the hacking route' }
+  if (fin(br.bladeH) && br.bladeH > 0 && fin(ex.q50) && (ex.q50 > br.bladeH * EXIT_POINT_RATIO || ex.q50 * EXIT_POINT_RATIO < br.bladeH)) return { what: `the published exit's median ${ex.q50}h is not the black ops' (point ${br.bladeH}h, hack ${br.hackH ?? 'null'}h)`, cause: `the route record's distribution is another route's (pin ${br.pin?.pricedKey ?? '-'}, node rule ${br.nodeRule ? `${br.nodeRule.pricedKey} inDecision ${br.nodeRule.inDecision === true}` : '-'}): routepin.routeDistOf / plan.decideBladeRouteGen rule` }
+  return null
+}
+
 export function evaluate({ read, info, canCotMG, now = Date.now(), phase = 'entry' }) {
   const F = []
   const add = (level, kind, decision, what, cause = null) => F.push({ level, kind, decision, what, cause: short(cause, 400), phase })
@@ -149,6 +166,8 @@ export function evaluate({ read, info, canCotMG, now = Date.now(), phase = 'entr
     const ex = plan.exit
     if (!ex || !fin(ex.meanH)) add('fail', 'UNPRICED', 'exit', 'the node exit is unpriced', ex?.why ?? ex?.source ?? `plan health '${plan.health}'`)
     else if (ex.meanH > ABSURD_H) add('fail', 'ABSURD', 'exit', `the node exit reads ${ex.meanH}h`, ex.source)
+    const off = exitOffRouteOf(plan)
+    if (off) add('fail', 'OFF ROUTE', 'exit', off.what, off.cause)
   }
 
   // ---- the route (+ the gift chained into it, + the Covenant mandate)
