@@ -1094,9 +1094,12 @@ if (ADAPT && DRAWS >= 10) {
   console.log('  first     E[T]     CVaR.9   CVaR.9 (learning)   CVaR.9 (perfect info after)')
   for (const r of kgRows) console.log(`  ${lab(r.n).padEnd(7)} ${f1(r.EJ0)}   ${f1(r.cv)}       ${f1(r.cvJ)}             ${f1(r.cvPI)}`)
   console.log(`  the robust fixed order (held-out): E[T] ${mean(ol.robust).toFixed(1)}h, CVaR.9 ${robustCv.toFixed(1)}h`)
-  const tailGap = learnBest.cv - ru.cv
+  // ONE first move left (2026-10-25: only BN8 after BN2.3) has no runner-up: the tail and the multi-fidelity
+  // comparisons are between first moves, so they are skipped, said so, never crashed on.
+  const tailGap = ru ? learnBest.cv - ru.cv : 0
   const tailFlag = tailGap > 5
-  console.log(`  ${tailFlag ? 'FLAG' : 'ok  '}: the risk-neutral choice ${lab(learnBest.n)} has CVaR.9 ${learnBest.cv.toFixed(1)}h vs the runner-up ${lab(ru.n)}'s ${ru.cv.toFixed(1)}h (${tailGap >= 0 ? '+' : ''}${tailGap.toFixed(1)}h; flagged when > +5h)`)
+  if (ru) console.log(`  ${tailFlag ? 'FLAG' : 'ok  '}: the risk-neutral choice ${lab(learnBest.n)} has CVaR.9 ${learnBest.cv.toFixed(1)}h vs the runner-up ${lab(ru.n)}'s ${ru.cv.toFixed(1)}h (${tailGap >= 0 ? '+' : ''}${tailGap.toFixed(1)}h; flagged when > +5h)`)
+  else console.log(`  ok  : one first move left (${lab(learnBest.n)}): no runner-up to compare tails with`)
 
   // the surrogate against the simulation: multi-fidelity Monte Carlo on two fixed orders
   const Sd = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: true })
@@ -1112,7 +1115,7 @@ if (ADAPT && DRAWS >= 10) {
   const K = Math.min(MF_K, DRAWS)
   const mfOrders = [
     { name: `the robust order (${lab(robust[0].n)} first)`, seq: robust.map((x) => x.n) },
-    { name: `${lab(ru.n)} first, then the best fixed order`, seq: ol.fits[0].cont.get(ru.n) },
+    ...(ru ? [{ name: `${lab(ru.n)} first, then the best fixed order`, seq: ol.fits[0].cont.get(ru.n) }] : []),
   ]
   const mfRows = mfOrders.map((o) => {
     const lfN = Zs.map((z) => orderTotal(o.seq, worldOf(econ, z, wOpts), S))
@@ -1121,9 +1124,9 @@ if (ADAPT && DRAWS >= 10) {
   })
   console.log(`\nMULTI-FIDELITY CHECK (Peherstorfer et al. 2018) — ${K} draws re-priced on the simulation itself (hackexit called directly, no interpolation) as the high fidelity, the surrogate on all ${DRAWS} as the control variate:`)
   for (const m of mfRows) console.log(`  ${m.name.padEnd(46)} surrogate E[T] ${m.lfMean.toFixed(2)}h   multi-fidelity ${m.est.toFixed(2)}h   surrogate bias ${m.bias >= 0 ? '+' : ''}${m.bias.toFixed(3)} +- ${m.biasSe.toFixed(3)}h (corr ${m.rho.toFixed(4)}, alpha ${m.alpha.toFixed(3)})`)
-  const dLF = mfRows[0].lfMean - mfRows[1].lfMean
-  const dMF = mfRows[0].est - mfRows[1].est
-  console.log(`  robust minus runner-up: surrogate ${dLF.toFixed(2)}h, corrected ${dMF.toFixed(2)}h — the correction ${Math.sign(dLF) === Math.sign(dMF) ? 'does not change' : 'CHANGES'} which is better`)
+  const dLF = mfRows[1] ? mfRows[0].lfMean - mfRows[1].lfMean : 0
+  const dMF = mfRows[1] ? mfRows[0].est - mfRows[1].est : 0
+  if (mfRows[1]) console.log(`  robust minus runner-up: surrogate ${dLF.toFixed(2)}h, corrected ${dMF.toFixed(2)}h — the correction ${Math.sign(dLF) === Math.sign(dMF) ? 'does not change' : 'CHANGES'} which is better`)
   tick('adaptive (KG, bound, CVaR, multi-fidelity)', t0)
   adaptOut = { kg: kgRows.map(({ J, J0, ...r }) => r), ir: { openLoop: irOL, kgPolicy: irKG, gap: gapV }, risk: { robustCvar: robustCv, tailFlag, tailGap }, mfmc: mfRows, learnBest: learnBest.n }
 }
