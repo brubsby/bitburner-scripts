@@ -79,7 +79,13 @@ export async function measureEconomy({ rates = 'fit', inRun = null, posteriorFil
   if (rates !== 'fit' && rates !== 'const') throw new Error(`economy: rates '${rates}' is neither 'fit' nor 'const'`)
   const segs = await nodeSegments()
   const runs = MEASURED_RUNS.map((r) => {
-    const s = segs.find((x) => x.bitNode === r.bn && x.startedAt?.startsWith(r.start))
+    // Within 90 min, not by prefix: the run record thins history.jsonl's older lines (1 in k, c1366cf), so a
+    // segment's first surviving sample can sit minutes after the node's real start (2026-10-25: BN2.1's 16:32
+    // sample was thinned away and every plan.mjs run threw here).
+    const want = Date.parse(r.start.length <= 16 ? r.start + ':00Z' : r.start)
+    const s = segs
+      .filter((x) => x.bitNode === r.bn && Number.isFinite(Date.parse(x.startedAt ?? '')) && Math.abs(Date.parse(x.startedAt) - want) <= 90 * 60e3)
+      .sort((a, b) => Math.abs(Date.parse(a.startedAt) - want) - Math.abs(Date.parse(b.startedAt) - want))[0]
     if (!s) throw new Error(`measured run ${r.name} (${r.start}) not in telemetry`)
     return { ...r, s }
   })

@@ -339,7 +339,7 @@ const bn10ModelIncomeOf = (sfPairs) => freshInputs({ node: 10, sf: sfPairs, g: 1
 // uses that run's entry Source-Files. Several BN10 runs (BN10.1, BN10.3 since 2026-10-20): the latest
 // window that has its run — never a window from one run against another run's SFs.
 const loos10 = (econ.rates?.channels?.income?.loo ?? []).filter((l) => l.bn === 10)
-const paired10 = loos10.map((l) => ({ l, r: econ.runs.find((r) => r.bn === 10 && String(l.key).startsWith(String(r.start))) })).filter((x) => x.r)
+const paired10 = loos10.map((l) => ({ l, r: econ.runs.find((r) => r.bn === 10 && (String(l.key).startsWith(String(r.start)) || Math.abs(Date.parse(l.key) - Date.parse(String(r.start).length <= 16 ? r.start + ':00Z' : r.start)) <= 90 * 60e3)) })).filter((x) => x.r)
 if (loos10.length && !paired10.length) throw new Error(`plan: ${loos10.length} measured BN10 final window(s) and none matches an econ.runs BN10 key — the Covenant leg has no anchor (windows ${JSON.stringify(loos10.map((l) => l.key))}; runs ${JSON.stringify(econ.runs.filter((r) => r.bn === 10).map((r) => ({ start: r.start, key: r.key })))})`)
 const loo10 = paired10.at(-1)?.l ?? null
 const r10 = paired10.at(-1)?.r ?? econ.runs.find((r) => r.bn === 10)

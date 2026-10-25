@@ -101,7 +101,11 @@ export function routeCalibrate({ econ, readings, segs, world, S, gifts }) {
   const items = []
   const giftIn = (bn, a, b) => gifts.some((x) => x.bn === bn && x.t >= Date.parse(a) && x.t <= Date.parse(b))
   for (const r of econ.runs) {
-    const s = segs.find((x) => x.bitNode === r.bn && x.startedAt?.startsWith(r.start))
+    // within 90 min, not by prefix: history.jsonl's older lines are thinned (c1366cf; see economy.mjs)
+    const want = Date.parse(r.start.length <= 16 ? r.start + ':00Z' : r.start)
+    const s = segs
+      .filter((x) => x.bitNode === r.bn && Number.isFinite(Date.parse(x.startedAt ?? '')) && Math.abs(Date.parse(x.startedAt) - want) <= 90 * 60e3)
+      .sort((a, b) => Math.abs(Date.parse(a.startedAt) - want) - Math.abs(Date.parse(b.startedAt) - want))[0]
     items.push({ name: r.name, bn: r.bn, T: r.T, sfOnEntry: r.sfOnEntry, gSim: r.g, from: 'run', seg: s })
   }
   for (const o of readings) {
