@@ -166,6 +166,10 @@ before starting each subagent.
 0i. ~~**Stanek allocation f is still priced on the fleet held at entry**~~ DONE 2026-10-24: decisions.stanek prices
     every f on the route arms' charger (hackGiftInputsOf on chainHackChargerOf), one grid with the chain; BN5.2's
     accepted state replayed: f 0.1 -> 0.3, the chain's (SG26).
+0j. **BN15 leftovers** (4e2a70e): stock.js buys 4S on the hack-priced decision while BN15 plays the black ops;
+    the hack arm swung 26h -> 5.7h after the accept (published only); CLAUDE.md's BN15 figure (104.5/113h) is stale;
+    the in-game exit model declines the gift in BN15 (155.9 vs 154.2h, noisy: a member 125 -> 225h) while the
+    game-class sim says the gift saves ~11h — decide on the sim before BN15's entry.
 22. **An alert path that doesn't need the session** (autogtnh has a chat sentinel + phone
     push): healthcheck -> notification while the session is out of usage.
 23. **PP3c timing budget** was raised to 0.9 of 1.2s (f0c87ad) — review.
