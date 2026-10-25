@@ -114,7 +114,7 @@ export function drawZ(r, nodes, econ, { rho = econ.rho ?? RHO, rDisc = null, rSt
  * `phase1: true` prices exactly as phase 1 did (no IPvGO model, SF14.1 = g x 1.02, the
  * Bladeburner opening unscaled, HackingSpeedMultiplier unread): GP3's regression mode.
  */
-export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false, stanekOff = false, stanekBn13Only = false, bladeStanekOff = false, w0Window = null, w0Live = false, fleet = 'live', covLegOf = null, giftCal = undefined, bn8 = undefined } = {}) {
+export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = false, phase1 = false, stanekOff = false, stanekBn13Only = false, bladeStanekOff = false, w0Window = null, w0Live = false, fleet = 'live', covLegOf = null, giftCal = undefined, bn8 = undefined, lab15 = null, lab15Ready = false } = {}) {
   // econ from posterior.mjs posteriorOf().applied carries the update: zMap (a
   // scalar's prior z -> posterior z), gShift/gScale (the unplayed latent's
   // location and spread), gSd (a node observed since the base: its own log sd).
@@ -161,6 +161,10 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     giftCal,
     // BitNode 8's own exit model (bn8.mjs, routes 'stocks'): its options, or null = BN8 on the hacking route (plan.mjs --bn8-hack)
     bn8,
+    // BN15's labyrinth leg over its hacking exit (routes.mjs 'lab', LAB15 ASSUMED): null = LAB15.mid; plan.mjs --lab15 H
+    lab15,
+    // price BN15's 'lab' route as if the stack could play it (plan.mjs --lab15-ready; routepin NODE_ROUTE_RULES[15].labReady)
+    lab15Ready,
     // the sleeve fleet (sleeves.mjs): 'live' = min(3, SF10 + (BN10 ? 1 : 0)) + 4; 'five' = 5 everywhere
     // (SF10.2/10.3 and BN10's own sleeve worth nothing: the pre-fleet plan); 'noBn10' = no BN10 extra
     fleet,
@@ -171,7 +175,7 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     profile: econ.profile,
     z,
     // THE ROUTE CALIBRATION BAND (routecal.js; routes.mjs clearTime): null without econ.routeErr (plan.mjs sets it)
-    routeErr: econ.routeErr && !phase1 ? routeErrOf(econ, z, { sigmaPlayed, bbOff, phase1, stanekOff, stanekBn13Only, bladeStanekOff, w0Window, w0Live, fleet, covLegOf }) : null,
+    routeErr: econ.routeErr && !phase1 ? routeErrOf(econ, z, { sigmaPlayed, bbOff, phase1, stanekOff, stanekBn13Only, bladeStanekOff, w0Window, w0Live, fleet, covLegOf, lab15, lab15Ready }) : null,
     // the discrepancy factor on node n's hacking-route hours (1 without one; discrepancy.mjs)
     disc: (n) => (econ.disc && !phase1 && econ.disc.applies(n) ? Math.exp(econ.disc.sd * (z[`delta${n}`] ?? 0)) : 1),
     go: {

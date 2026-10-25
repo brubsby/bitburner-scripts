@@ -179,6 +179,10 @@ export const EFFECTS = {
     source: 'Go/effects/effect.ts:18-21 every Go bonus x2 at SF14>=1; effect.ts:30-43 favor cap 100k->200/300/400k rep; cheats netscriptGoImplementation.ts:486-497,564',
     go: true, // read by routes.mjs through go.mjs, for every node (the scale is GoPower x the doubling, so it is not a node-free gFactor)
     note: 'x2 on the g channel (eps14), on the favor life (Daedalus rep bonus and the favor cap), on w0r1d_d43m0n and on the Bladeburner leg (the Tetrads farm in bbsim); 14.2/14.3 cheats PRICED AT 0 on 5x5 (MEASURED release 3: Illuminati -13%, Daedalus -5%, Slum Snakes -15%, Tetrads +-0, 7cd9ffe), NOT PRICED on the 19x19 hidden board',
+  },  15: {
+    status: 'NOT PRICED',
+    source: 'BitNode.tsx:540-556 SF15.1 TOR + DarkscapeNavigator.exe at every start and the full dark web; 15.2 charisma -> salary/company rep, auth x0.8; 15.3 charisma -> faction rep, .cache x1.5 (effects.ts:301, Prestige.ts:100,238)',
+    note: 'BN15 is played LAST (state.mjs LAST, the user 2026-10-25): no clear follows it, so its Source-File reaches no other clear time',
   },
 }
 

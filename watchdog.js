@@ -106,7 +106,7 @@ import { reporter, describe, record } from 'status.js'
 // Pure, no ns surface: free to import.
 import { reserveFor as budgetHold, augClaim, joinClaim, marginalLnPerDollar, gateNewLifeWait } from 'budget.js'
 // Pure arithmetic over resetInfo, no ns surface: free to import.
-import { canUseGang, singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseSleeve, canUseGrafting, hasHacknetServers, sfLevel, SF_FILE } from 'sfgate.js'
+import { canUseGang, singularityRamMultiplier, canAccessFeature, canJoinBladeburner, canUseSleeve, canUseGrafting, hasHacknetServers, hasDarknetAccess, sfLevel, SF_FILE } from 'sfgate.js'
 // Pure: the game's hacknet-server hostname marker. A GB used on one costs that
 // share of its hashes (Hacknet/formulas/HacknetServers.ts:14).
 import { isHacknetServerHost } from 'hacknetplan.js'
@@ -312,6 +312,10 @@ const WATCHED = [
   // kills it; its positions are sold first (act.js stocksell) because the
   // install re-initialises the market and every share is lost.
   { script: 'stock.js', host: 'anywhere', args: [], invariant: (ns) => ns.stock.hasTixApiAccess() },
+  // THE DARKNET (BitNode 15 / SF15): dnet-seed.js keeps a crawler (dnet.js) on darkweb and drains its
+  // reports into /tel/dnet.txt. A DAEMON on home (the port must be drained); the crawlers themselves run on
+  // darknet RAM only. Gated on the game's own access rule (sfgate.hasDarknetAccess, 0GB).
+  { script: 'dnet-seed.js', host: 'home', args: [], invariant: (ns) => hasDarknetAccess(ns.getResetInfo()) },
   // THE FULL BLADEBURNER DAEMON (bladeburner.js): placed wherever the division
   // can exist, the 128GB tier admits it and the route wants it
   // (bbliteplan.fullPlacementOf). Before this entry only boot.js placed it —
@@ -1275,14 +1279,17 @@ function restoreLaunchClock(ns) {
 /**
  * endgame.js's --next FROM THE PLAN (tools/sim/gameplan/plan.mjs writes next-node.txt; the daemon pushes it
  * to /next-node.txt): used when it was solved for the node in progress (`from` = currentNode) and names a
- * node 1-14 (BN15 excluded by the user). Otherwise the hand-set args. endgame.js still refuses a maxed node.
+ * node 1-15 (BN15 allowed since the user's 2026-10-25 decision: BN8.3 -> BN15.1, the last node). Otherwise the
+ * hand-set args. endgame.js still refuses a maxed node (SF level 3, every node but BN12 — BN15 included).
  */
+/** The highest BitNode the plan's --next may name (BN15, The Secrets of the Dark Net, is the game's last). */
+export const NEXT_NODE_MAX = 15
 export function nextNodeArgsOf(ns, fallback) {
   try {
     const r = JSON.parse(ns.read('/next-node.txt') || 'null')
     const node = ns.getResetInfo().currentNode
     const lvl = ns.getResetInfo().ownedSF?.get?.(node) ?? 0
-    if (r && Number.isInteger(r.next) && r.next >= 1 && r.next <= 14 && r.from === node && r.fromSF === lvl) return ['--next', r.next]
+    if (r && Number.isInteger(r.next) && r.next >= 1 && r.next <= NEXT_NODE_MAX && r.from === node && r.fromSF === lvl) return ['--next', r.next]
   } catch {
     /* the hand-set args */
   }

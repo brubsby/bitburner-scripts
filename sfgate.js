@@ -110,6 +110,12 @@ const optionOff = (resetInfo, key) => !resetInfo?.bitNodeOptions?.[key]
 
 /** ns.singularity.* is callable at all. */
 export const canUseSingularity = (resetInfo) => canAccessFeature(resetInfo, 4)
+/**
+ * The darknet (ns.dnet) is reachable: BitNode 15 or SF15 (Prestige.ts:100,238 give TOR + DarkscapeNavigator.exe
+ * at every start, effects.ts getDarkscapeNavigator). Buying the program elsewhere ($50m on the dark web,
+ * darknetAuthUtils.ts:7) also opens it — this stack never buys it, so the gate is the Source-File's.
+ */
+export const hasDarknetAccess = (resetInfo) => canAccessFeature(resetInfo, 15)
 
 /**
  * What a Singularity call actually costs, as a multiple of its base price

@@ -78,11 +78,54 @@ export function pinnedRouteOf(d, pin) {
   }
 }
 
-/** The record the commitment rule compares against: the PRICED key, never the pin's. */
+/**
+ * THE NODE ROUTE RULES (2026-10-25): a route the GAME makes impossible in a node, whatever the route
+ * decision prices it at. Not a pin and not a preference: the priced record is kept (nodeRule.pricedKey),
+ * the commitment rule keeps running on it (unpinnedOf), and /route-pin.txt still wins (the user's word).
+ *
+ *   BitNode 15  The Red Pill is NOT sold by Daedalus there (FactionHelpers.tsx:205); it is the 5th darknet
+ *               labyrinth's reward (labyrinth.ts:419-427: EternalLab, depth 29, charisma 3000, after the
+ *               first four labs' augmentations are INSTALLED). exitplan prices the hacking exit through
+ *               Daedalus — an exit that does not exist here: the BN15.1 entry dry-run (2026-10-25) priced
+ *               'hack' at 20h vs 'blade' at 139h, and acting on it would grind Daedalus for a Red Pill
+ *               that never appears (endgame.js: 'need-the-red-pill' forever). The labyrinth route
+ *               (dnet.js / dnetplan.js) cannot yet reach depth 29 and charisma 3000 headlessly, so the
+ *               stack acts on the black ops. Set `labReady` (the route built and tested) to lift it.
+ */
+export const NODE_ROUTE_RULES = {
+  15: {
+    route: 'blade',
+    labReady: false,
+    why: "BitNode 15: The Red Pill is not sold by Daedalus (FactionHelpers.tsx:205) but by the 5th darknet labyrinth (labyrinth.ts:419-427), which the stack cannot reach headlessly yet — the hacking exit priced through Daedalus does not exist here, so the black ops are the exit",
+  },
+}
+
+/** The route the stack ACTS on after the node's rule (NODE_ROUTE_RULES). `d` is the (pinned) record. */
+export function nodeRouteOf(d, node, pin = null) {
+  const rule = NODE_ROUTE_RULES[node]
+  if (!rule || rule.labReady || !d || typeof d !== 'object') return d
+  if (pin?.pinned === true && pin.file === ROUTE_PIN) return { ...d, nodeRule: { route: rule.route, forced: false, pricedKey: d.pin?.pricedKey ?? d.key ?? null, overriddenBy: ROUTE_PIN, why: rule.why } }
+  if (d.key === rule.route) return { ...d, nodeRule: { route: rule.route, forced: false, pricedKey: d.key, why: rule.why } }
+  return {
+    ...d,
+    key: rule.route,
+    nodeRule: { route: rule.route, forced: true, pricedKey: d.key ?? null, why: rule.why },
+    why: `NODE RULE (BitNode ${node}) acts on '${rule.route}' (priced '${d.key ?? 'none'}'${typeof d.hackH === 'number' && typeof d.bladeH === 'number' ? `: hack ${d.hackH.toFixed(1)}h vs blade ${d.bladeH.toFixed(1)}h` : ''}): ${rule.why} — ${String(d.why ?? '').slice(0, 160)}`,
+  }
+}
+
+/** The record the commitment rule compares against: the PRICED key, never the pin's or the node rule's. */
 export function unpinnedOf(prev) {
-  if (!prev || typeof prev !== 'object' || !prev.pin || typeof prev.pin !== 'object') return prev
-  const { pin, ...rest } = prev
-  return { ...rest, key: pin.pricedKey ?? null }
+  if (!prev || typeof prev !== 'object') return prev
+  if (prev.pin && typeof prev.pin === 'object') {
+    const { pin, nodeRule, ...rest } = prev
+    return { ...rest, key: pin.pricedKey ?? null }
+  }
+  if (prev.nodeRule && typeof prev.nodeRule === 'object') {
+    const { nodeRule, ...rest } = prev
+    return { ...rest, key: nodeRule.pricedKey ?? null }
+  }
+  return prev
 }
 
 /**
@@ -92,7 +135,7 @@ export function unpinnedOf(prev) {
  */
 export function routeReportOf(pin, d, giftState = null) {
   const acted = d ? d.key ?? null : 'hack'
-  const priced = d ? (d.pin ? d.pin.pricedKey ?? null : d.key ?? null) : null
+  const priced = d ? (d.pin ? d.pin.pricedKey ?? null : d.nodeRule?.forced ? d.nodeRule.pricedKey ?? null : d.key ?? null) : null
   return {
     route: acted ?? 'hack',
     priced,
@@ -103,6 +146,8 @@ export function routeReportOf(pin, d, giftState = null) {
     // an arm that could not be priced (plan.unpricedHoldOf): published, never a silent loss for it
     unpriced: Array.isArray(d?.unpriced) && d.unpriced.length ? d.unpriced : null,
     held: d?.held === true,
+    // the node's structural rule (NODE_ROUTE_RULES): forced = the acted route is the rule's, not the priced one
+    nodeRule: d?.nodeRule ? { route: d.nodeRule.route, forced: d.nodeRule.forced === true, pricedKey: d.nodeRule.pricedKey ?? null, overriddenBy: d.nodeRule.overriddenBy ?? null, why: d.nodeRule.why } : null,
     why: d ? null : 'no Bladeburner route in this node (no division): the hacking route is the only one',
   }
 }
@@ -140,7 +185,7 @@ export function routeHealthOf({ route, stanek = null, node = null }) {
   const R = 'ROUTE NOT THE PRICED ONE'
   const filePin = route.pinned === true && (route.pin?.file ?? ROUTE_PIN) === ROUTE_PIN
   if (route.pinned === true && !filePin) out.push({ key: R, problem: R, detail: `the route is pinned by ${route.pin?.file} — only ${ROUTE_PIN} may pin (the gift's pin is gone: L4)` })
-  else if (!filePin && route.priced != null && route.route !== route.priced) out.push({ key: R, problem: R, detail: `the stack acts on '${route.route}' while the priced route is '${route.priced}', and no ${ROUTE_PIN} pins it` })
+  else if (!filePin && route.priced != null && route.route !== route.priced && !(route.nodeRule?.forced === true && route.route === route.nodeRule.route)) out.push({ key: R, problem: R, detail: `the stack acts on '${route.route}' while the priced route is '${route.priced}', and no ${ROUTE_PIN} pins it` })
   if (Array.isArray(route.unpriced) && route.unpriced.length) {
     const U = 'ROUTE ARM UNPRICED'
     out.push({ key: U, problem: U, detail: `the ${route.unpriced.join(' and ')} arm of the route decision is unpriced — ${route.held ? `held on '${route.route}'` : 'no route decided (the stack defaults to the hacking route)'}; it never loses by default (plan.unpricedHoldOf)` })

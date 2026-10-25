@@ -5,9 +5,13 @@
 // game's own rules are the ground truth for it:
 //   - a clear of BitNode n raises Source-File n by one level, to a maximum of 3
 //     (BitNode/BitNode.tsx:42), except SF12 which has no maximum (BitNode.tsx:439);
-//   - the target ("the entire game") is every SF to level 3 except SF15 (ruled
-//     out by the user) and SF12 once — the set nodechoice/run.mjs and
-//     nextnode.mjs used.
+//   - the target ("the entire game") is every SF to level 3, SF12 once, and
+//     SF15 to SF15_TARGET (default 1).
+//   - BN15 ("The Secrets of the Dark Net") is the LAST node (the user's decision,
+//     2026-10-25: BN8.2 -> BN8.3 -> BN15.1). It was ruled out until then. LAST is
+//     a hard order constraint (search.mjs edgeCost/solveDP): a clear of a LAST
+//     node is not an edge while any other owed clear remains. --sf15 3
+//     (plan.mjs) prices BN15.2/15.3 after BN15.1 too.
 //
 // Pure: no game import, so the search and its tests run without the bundle.
 //
@@ -17,10 +21,20 @@
 // one seed: 24.7h vs 29.2h, the seed stream diverging — the sims are stochastic).
 // The Bladeburner grid is built at a pinned intelligence (surrogate.mjs).
 
-export const NODES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-export const EXCLUDED = new Set([15])
+export const NODES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+/** No node is excluded any more (BN15 was, until the user's 2026-10-25 decision). Kept as the hook. */
+export const EXCLUDED = new Set([])
+/** The nodes played only once nothing else is owed (the user's order: BN15 last). */
+export const LAST = new Set([15])
+/** SF15's target level: 1 = the user's decision (BN15.1, the last node); 3 prices BN15.2/15.3 (plan.mjs --sf15). */
+let SF15_TARGET = 1
+export const setSf15Target = (l) => {
+  if (!(Number.isInteger(l) && l >= 0 && l <= 3)) throw new Error(`setSf15Target: level ${l} (want 0-3)`)
+  SF15_TARGET = l
+}
+export const sf15Target = () => SF15_TARGET
 /** The level each SF must reach for the game to be "finished". */
-export const targetOf = (n) => (EXCLUDED.has(n) ? 0 : n === 12 ? 1 : 3)
+export const targetOf = (n) => (EXCLUDED.has(n) ? 0 : n === 12 ? 1 : n === 15 ? SF15_TARGET : 3)
 
 /** A state is a plain object {sf: Map<n, level>, int?: number}. */
 export function makeState(pairs, int = null) {
@@ -84,5 +98,14 @@ export function lattice(start) {
     for (const d of dims) sf.set(d.n, d.lo + (Math.floor(idx / d.stride) % d.size))
     return { sf, int: start.int }
   }
-  return { start, dims, size, stride, index, decode }
+  // the LAST nodes' dims (search.mjs: their clears are edges only once every other dim is at target)
+  const last = dims.map((d) => LAST.has(d.n))
+  return { start, dims, size, stride, index, decode, last }
+}
+
+/** True when clearing dims[d] from `digits` breaks the LAST order (a LAST node while another clear is owed). */
+export function lastBlocked(L, digits, d) {
+  if (!L.last?.[d]) return false
+  for (let j = 0; j < L.dims.length; j++) if (!L.last[j] && digits[j] < L.dims[j].size - 1) return true
+  return false
 }

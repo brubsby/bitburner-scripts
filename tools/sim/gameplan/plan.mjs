@@ -1,6 +1,6 @@
 // THE WHOLE-GAME PLAN: which BitNode next, and the full order of every clear
 // still owed, minimising the total hours to finish the game (every SF to 3,
-// SF12 once, BN15 excluded by the user).
+// SF12 once, SF15 to --sf15 (1): BN15 played LAST, the user's decision 2026-10-25).
 //
 //   node tools/sim/gameplan/plan.mjs                     state + node in progress from telemetry
 //   node tools/sim/gameplan/plan.mjs --state 1.3,2.1,4.2,5.1,6.1,8.1,9.1,10.1 --in-progress 4
@@ -19,6 +19,9 @@
 //          --five-sleeves (5 sleeves everywhere: SF10.2/10.3 and BN10's own extra sleeve worth nothing — the pre-fleet plan)
 //          --kg-bins 5 | --mf-k 20 (draws re-priced on direct sims for the multi-fidelity check)
 //          --w0-window H (the w0r1d_d43m0n window fixed at H hours: 1 = the old model)
+//          --sf15 1|2|3 (SF15's target: 1 = the user's decision 2026-10-25, BN15.1 played LAST; 3 prices
+//          BN15.2/15.3 after it) | --lab15 H (BN15's labyrinth leg, routes.mjs LAB15 ASSUMED; default mid)
+//          --lab15-ready (price BN15's 'lab' route as if the stack could play it: routepin NODE_ROUTE_RULES[15].labReady)
 //          --w0-prior lo,mid,hi (override the derived w0 prior: 0,200,1000 = the old hand one)
 //          --w0-live (the w0r1d_d43m0n bonus worth only the climb's shortening L0 - L*: a final
 //          life that does not anticipate it, as today's exitplan; default: the exit shift ln W/g)
@@ -75,7 +78,7 @@ const T_START = performance.now()
 const phase = {}
 const tick = (name, t0) => (phase[name] = (phase[name] ?? 0) + (performance.now() - t0) / 1000)
 
-const { makeState, parseState, plus, lvl, owed, lattice, sig, clearLabel, pairsOf } = await import('./state.mjs')
+const { makeState, parseState, plus, lvl, owed, lattice, sig, clearLabel, pairsOf, NODES } = await import('./state.mjs')
 const { EFFECTS, SF_PARAMS, isInert, LIVE_SFS } = await import('./effects.mjs')
 // --w0-prior lo,mid,hi: replace the DERIVED w0 prior (e.g. 0,200,1000 = the old hand prior; with
 // --w0-window 1 that is the model before the derived prior and the climb window — the comparison run)
@@ -315,6 +318,10 @@ const lvOf = (s) => (n) => lvl(s, n)
 // --phase1: price as phase 1 did (no IPvGO model, no gym scale, BN14 speed 1) — the before/after comparison
 // --w0-window H: the old fixed w0r1d_d43m0n window of H hours (1 = the model before the climb window; regression)
 const W0_WINDOW = arg('--w0-window') !== undefined ? Number(arg('--w0-window')) : null
+// --sf15 L: SF15's target level (state.mjs: 1 = the user's decision, BN15.1 last; 3 prices BN15.2/15.3 after it)
+if (arg('--sf15') !== undefined) (await import('./state.mjs')).setSf15Target(Number(arg('--sf15')))
+// --lab15 H: BN15's labyrinth leg over its hacking exit (routes.mjs LAB15, ASSUMED; default its mid)
+const LAB15_H = arg('--lab15') !== undefined ? Number(arg('--lab15')) : null
 // --five-sleeves: 5 sleeves everywhere (SF10.2/10.3 and BN10's own extra sleeve priced at nothing: the pre-fleet plan)
 // --covenant5 auto|10.2|10.3|none: THE USER'S INVARIANT (2026-10-14) — the 5th Covenant sleeve WILL be
 // bought, in BN10.2 or BN10.3, whichever makes the whole remaining game shortest. auto (the default)
@@ -365,7 +372,7 @@ const BN8M = has('--bn8-hack') || has('--phase1') ? null : await import('./bn8.m
 // the gift both ways unless the world turns it off (--no-stanek, SF13's own value: stanekOff / stanekBn13Only)
 const bn8GiftWays = (w) => (w?.stanekOff || w?.stanekBn13Only ? [false] : null)
 const bn8World = BN8M ? { int: entry.int ?? 0, hoursOf: (lv, w) => BN8M.bn8RouteHours(lv, { int: entry.int ?? 0, giftWays: bn8GiftWays(w) }).hours, detailOf: (lv, w) => BN8M.bn8RouteHours(lv, { int: entry.int ?? 0, giftWays: bn8GiftWays(w) }) } : null
-const wOptsBase = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, bladeStanekOff: has('--no-blade-stanek'), w0Window: W0_WINDOW, w0Live: has('--w0-live'), covLegOf, ...(has('--gift-uncal') ? { giftCal: null } : {}), bn8: bn8World }
+const wOptsBase = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, bladeStanekOff: has('--no-blade-stanek'), w0Window: W0_WINDOW, w0Live: has('--w0-live'), lab15: LAB15_H, lab15Ready: has('--lab15-ready'), covLegOf, ...(has('--gift-uncal') ? { giftCal: null } : {}), bn8: bn8World }
 const L0 = lattice(entry)
 const L1 = lattice(start)
 const COV_FLEETS = { none: 'live', '10.2': 'cov2', '10.3': 'cov3' }
@@ -559,7 +566,7 @@ function printRates(econ, st) {
     console.log(`  ${ch.padEnd(6)} ln rate = offset + a_n + b ln(Lpk/${R.LREF}): b ${c.b.toFixed(3)} +- ${c.sdB.toFixed(3)} (pooled within-node), window scatter ${c.sdWin.toFixed(2)}; a_n = ${fe.map((f, i) => `${f} ${c.beta.mean[i].toFixed(2)} +- ${c.beta.sd[i].toFixed(2)}`).join(', ')}, node spread tau ${c.beta.tauMean.toFixed(2)} +- ${c.beta.tauSd.toFixed(2)}`)
   }
   console.log('  node  exit lvl   exp/s (final window)      a_n +- sd    readings          $/s (final window)       a_n +- sd    readings')
-  for (let n = 1; n <= 14; n++) {
+  for (const n of NODES) {
     const m = S.mults(n)
     const fr = finalRatesOf({ m, s: sfm, rates: econ.profile.rates, node: n })
     const cell = (ch) => {

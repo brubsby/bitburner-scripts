@@ -356,6 +356,26 @@ const ASSUMPTIONS = [
     where: "infiltration.js (readBitNodeMults().InfiltrationMoney)",
     breaks: "Infiltration cash rewards are multiplied by this (Infiltration/formulas/victory.ts:24). Infiltration needs a trusted keypress and is not automated; informational.",
   },
+  {
+    id: "lab-red-pill",
+    tol: 0.0001, dangerous: "below", impact: 1,
+    // dnetplan.labOf(installed, node, trpInLab = 1): the default is BN1's 1. Two nodes set it 0
+    // (BitNode.tsx:786,954). Read only by tests and reports today; dnet.js walks whatever lab exists.
+    mult: "DarknetLabyrinthRewardsTheRedPill",
+    expect: 1,
+    where: "dnetplan.js labOf (trpInLab, default 1)",
+    breaks: "Where the darknet is reachable (SF15) The Red Pill is also a labyrinth reward — the 7th lab outside BN15 (labyrinth.ts:404-427, getCurrentLabName) — unless this is 0. labOf called without the node's value reports a labyrinth Red Pill that the node does not have. BN15 itself pays it at the 5th lab whatever this says.",
+  },
+  {
+    id: "lab15-charisma",
+    tol: 0.0001, dangerous: "below", impact: 1,
+    // routes.mjs LAB15's charisma leg is argued at BN15's own CharismaLevelMultiplier (1.1); it is only
+    // ever applied to BN15, so every other node reads as a (harmless) deviation from it.
+    mult: "CharismaLevelMultiplier",
+    expect: 1.1,
+    where: "tools/sim/gameplan/routes.mjs LAB15 (the labyrinth leg's charisma climb, ASSUMED lo/mid/hi)",
+    breaks: "The 5th lab needs charisma 3000 (labyrinth.ts labData); level = mult x (32 ln(exp + 534.6) - 200), so the exp needed is exponential in 1/mult: at a total multiplier of 5.6 it is 1e10, at 4 it is 7.8e12, at 3 2e16. LAB15's lo/mid/hi rest on SF1.3 x SF2.3 x SF3.3 x this (~2.84) plus charisma augmentations; a node where this is lower makes the climb far longer than LAB15 says.",
+  },
 ];
 
 /** Structural facts that are not BitNodeMultipliers but are just as load-bearing. */
@@ -372,6 +392,10 @@ const STRUCTURAL = [
   [
     "An install DESTROYS open stock positions (every node)",
     "Prestige.ts:166-170 re-initialises the market. act.js runs act-liquidate.js before every install (and progress.js prefixes it to any batch that spends stock equity); the install is skipped when the trader reports equity and the book cannot be confirmed flat. Shorts and limit/stop orders are available in BitNode 8 itself or with SF8.2/8.3 (NetscriptFunctions/StockMarket.ts:47, StockTicker.tsx:274-279).",
+  ],
+  [
+    "BitNode 15: The Red Pill is the darknet labyrinth's, not Daedalus' (not a multiplier)",
+    "FactionHelpers.tsx:205 removes The Red Pill from Daedalus when bitNodeN === 15; labyrinth.ts:419-427 puts it in the 5th lab (EternalLab: depth 29, charisma 3000, after The W1ngs/B00ts/H4mmer/St4ff are INSTALLED, one lab per life — cacheFiles.ts getLabReward QUEUES each). exitplan/progress.js price the hacking exit through Daedalus, which does not exist there: the BN15.1 entry dry-run (2026-10-25) priced hack 20h vs blade 139h and would have ground Daedalus forever. routepin.NODE_ROUTE_RULES[15] makes the stack act on the black ops (blade) until the labyrinth route is built (labReady); the gameplan prices BN15 with its 'lab' route (routes.mjs LAB15, ASSUMED) and plays it LAST. dnet-seed.js / dnet.js crawl the darknet (dnetplan.js solvers, tested against the game's generators: tools/test/dnet.test.mjs) and walk a lab they reach.",
   ],
   ["Purchased servers are single-core", "batch.js reads getServer(h).cpuCores per host rather than assuming, so this adapts. Informational."],
   ["Stanek's Gift: accepted only in BitNode 13; layouts tabled for BN13's grid", "stanekplan.GIFT_NODES = {13}: stanek.js accepts the gift there at the node's start and act.js refuses every non-NeuroFlux buyaug/graft/install until it has (stanekplan.giftOrderGate) — outside BN13 nothing accepts, and an install with a non-NFG aug and no gift BANS the Church for that node (Prestige.ts:184-190), which the stack does without asking. stanekplan.LAYOUTS is keyed by grid and StaneksGiftPowerMultiplier (BN13: extra size 1, power 2, SF13 0..3); any other grid is searched in-game with a bounded budget (best found, published as such). StaneksGiftExtraSize / PowerMultiplier are read at run time (the game's giftWidth/Height, bitNodeMults), so they adapt."],
@@ -466,7 +490,7 @@ if (survey) {
   // Ranked by SEVERITY, not by how many things differ. Counting was what made
   // BN12 (every multiplier 0.98) look like the worst node in the game.
   const rows = [];
-  for (let n = 1; n <= 14; n++) {
+  for (let n = 1; n <= 15; n++) {
     try {
       const r = report(n);
       rows.push({ n, ...r });

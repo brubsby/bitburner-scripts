@@ -727,7 +727,7 @@ export const GO_PLAYED = { lives: null, final: 'Daedalus', climb: 'w0r1d_d43m0n'
 /** BN8 from the state lv (lv(n) = SF level) at intelligence int: { hours, gift, policy, milestones, byGift }, the farm as played (GO_PLAYED). */
 export function bn8RouteHours(lv, { int = 0, cal = BN8_CAL, giftWays = null, go = GO_PLAYED } = {}) {
   const sf = []
-  for (let n = 1; n <= 14; n++) if (lv(n) > 0) sf.push([n, lv(n)])
+  for (let n = 1; n <= 15; n++) if (lv(n) > 0) sf.push([n, lv(n)])
   const key = `${sf.map((p) => p.join('.')).join(',')}|${Math.round(int)}|${cal.KAPPA8}|${cal.RHO8}|${cal.EXP_K0}|${cal.EXP_B}|${giftWays ? giftWays.join('/') : 'auto'}|${JSON.stringify(go)}`
   let r = ROUTE_MEMO.get(key)
   if (!r) {

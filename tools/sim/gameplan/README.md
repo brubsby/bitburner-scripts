@@ -1,7 +1,7 @@
 # gameplan — the whole remaining game, ordered
 
 Which BitNode to play next, and the full order of every clear still owed
-(every Source-File to level 3, SF12 once, BN15 excluded), minimising the total
+(every Source-File to level 3, SF12 once, SF15 to `--sf15` (1): BN15 played LAST, the user's 2026-10-25 decision), minimising the total
 hours to finish the game.
 
 ```bash
@@ -73,6 +73,12 @@ section below), committed in every draw; `--route-rule point` restores the `min`
   with Stanek's Gift accepted at the node's start — `g x gMul`, `W x W_gift`, `favor x favorMul`
   (stanek.mjs). The min over routes IS the accept-or-never decision, per node and world.
   MODELLED from source; the Bladeburner route with the gift is NOT PRICED.
+- **lab (BN15)** (2026-10-25): BN15 has no Daedalus Red Pill (FactionHelpers.tsx:205) — it is the 5th darknet labyrinth's
+  reward — so 'hack' and 'stanek' do not apply there; 'lab' = the hack formula without the Daedalus favor life + `LAB15`
+  (ASSUMED lo 10 / mid 30 / hi 120h: the charisma climb to 3000, the crawl to depth 28, five lab lives; `--lab15 H`).
+  It applies only where the stack can play it (`routepin.NODE_ROUTE_RULES[15].labReady`, or `--lab15-ready`); until
+  then BN15 is the Bladeburner route. BN15 is LAST (`state.mjs LAST`: search.mjs refuses any order with it before
+  another owed clear); `--sf15 3` owes BN15.2/15.3 too.
 - **stocks (BN8)** (bn8.mjs, 2026-10-23): BN8's whole exit simulated a life at a time — the book from $250m on a
   fresh market each life (`traderw.rwAgeRate`: the ledger's r(W, market age), x kappa8(home) MEASURED on BN8.1),
   the cheapest augmentations first with each faction's rep DONATED ($1e6 / faction_rep), NeuroFlux, home RAM with

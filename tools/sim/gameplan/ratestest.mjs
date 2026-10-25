@@ -129,7 +129,7 @@ try {
   c.examined++
   if (!(Math.abs(post.mean - want) < 1e-9)) c.fails.push(`BN${bn} exp level with a reading: ${post.mean} vs the precision-weighted ${want}`)
   let others = 0
-  for (let n = 1; n <= 14; n++) {
+  for (const n of (await import('./state.mjs')).NODES) {
     if (n === bn) continue
     c.examined++
     if (JSON.stringify(H.profileFor(e2.profile, n)) !== JSON.stringify(H.profileFor(ef.profile, n))) others++

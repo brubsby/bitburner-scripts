@@ -111,5 +111,5 @@ export async function measureEconomy({ rates = 'fit', inRun = null, posteriorFil
   const { gamma, gScen, ownG } = latentOf(runs)
   const last = segs[segs.length - 1]
   const live = { bitNode: last.bitNode, hours: last.hours, sfOnEntry: last.sfOnEntry, intelligence: last.intelligence, startedAt: last.startedAt, maxLevel: last.maxLevel, bbJoinH: last.bbJoinH, combat100H: last.combat100H }
-  return { runs: runs.map(({ s, ...r }) => ({ ...r, sfOnEntry: s.sfOnEntry, meanLifeH: s.meanLifeH })), profile, gamma, gScen, ownG: [...ownG.entries()], amc: Object.fromEntries([...Array(14)].map((_, i) => [i + 1, AMC(i + 1)])), live, rates: ratesFit, ratesMode: rates }
+  return { runs: runs.map(({ s, ...r }) => ({ ...r, sfOnEntry: s.sfOnEntry, meanLifeH: s.meanLifeH })), profile, gamma, gScen, ownG: [...ownG.entries()], amc: Object.fromEntries([...Array(15)].map((_, i) => [i + 1, AMC(i + 1)])), live, rates: ratesFit, ratesMode: rates }
 }

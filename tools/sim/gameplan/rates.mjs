@@ -61,6 +61,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fitBLR, predictJoint, betaSummary } from './gmodel.mjs'
+import { NODES } from './state.mjs'
 
 export const RATES_VERSION = 'rates-1'
 export const LREF = 1000
@@ -258,7 +259,7 @@ export function fitRates({ runs, multsOf, sfMultsOf, inRun = [], liveKey = null 
     const own = inRun.filter((o) => new RegExp(`^${pIn}\\d+$`).test(o.param)).map((o) => ({ bn: Number(o.param.slice(2)), y: Math.log(o.value), sd: o.sd, key: o.key, inRun: true }))
     const all = [...readings, ...own]
     const nodes = {}
-    for (let n = 1; n <= 14; n++) {
+    for (const n of NODES) {
       const mine = all.filter((d) => d.bn === n)
       // the population is the FINISHED runs: an in-run reading prices its own node only (a partial
       // node, mostly its opening; and a new reading then rebuilds that node's curves alone)
@@ -301,7 +302,7 @@ export function fitRates({ runs, multsOf, sfMultsOf, inRun = [], liveKey = null 
  */
 export function profileRates(fit) {
   const nodes = {}
-  for (let n = 1; n <= 14; n++) nodes[n] = { xa: +fit.channels.exp.nodes[n].mean.toPrecision(8), ia: +fit.channels.income.nodes[n].mean.toPrecision(8) }
+  for (const n of NODES) nodes[n] = { xa: +fit.channels.exp.nodes[n].mean.toPrecision(8), ia: +fit.channels.income.nodes[n].mean.toPrecision(8) }
   return { version: fit.version, LREF: fit.LREF, b: +fit.channels.exp.b.toPrecision(8), bI: +fit.channels.income.b.toPrecision(8), nodes }
 }
 

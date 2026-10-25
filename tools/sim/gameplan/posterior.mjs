@@ -381,7 +381,8 @@ export function regressionG(econ, live, { gModel = 'auto', multsOf, gOpts = {} }
     out.ownG.set(n, Math.exp(num / prec))
     out.gSd.set(n, Math.sqrt(1 / prec))
   }
-  const unplayed = [...Array(14)].map((_, i) => i + 1).filter((n) => !out.ownG.has(n))
+  // BN1-BN15 (BN15 since the user's 2026-10-25 decision), those the multiplier table defines (a synthetic test table may stop at 14)
+  const unplayed = [...Array(15)].map((_, i) => i + 1).filter((n) => !out.ownG.has(n) && !!multsOf(n))
   out.joint = gJointOf(chosen, data, unplayed, multsOf, gOpts)
   return out
 }

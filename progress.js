@@ -183,7 +183,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 import { rwRegimeOf, RW_PRIOR, RW_AGE, rwAgeKnee, capitalAgeInputsOf } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
-import { ROUTE_PIN, routePinOf, pinnedRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
+import { ROUTE_PIN, routePinOf, pinnedRouteOf, nodeRouteOf, unpinnedOf, routeReportOf } from 'routepin.js'
 import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT, routeGiftChainOptionsOf } from 'stanekepoch.js'
 import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, HACK_CHARGER_RAMP, bladeChargerThrOf, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
@@ -3044,7 +3044,8 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         model: 'bbplan.bladeExit — NOT CALIBRATED live; vs the game\'s classes -2..+15% (tools/sim/bb6.mjs)',
       }
     })
-    const acted = pinnedRouteOf(priced, pin)
+    // THE NODE RULE (routepin.NODE_ROUTE_RULES): BitNode 15's hacking exit has no Daedalus Red Pill — the black ops
+    const acted = nodeRouteOf(pinnedRouteOf(priced, pin), info.currentNode, pin)
     if (acted !== priced) pc.decisions.bladeRoute = acted
     return acted
   } catch (e) {
@@ -3057,7 +3058,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
         return null
       }
     })()
-    pc.decisions.bladeRoute = { key: held, held: !!held, unpriced: ['hack', 'blade'], error: true, why: `bladeRouteOf threw${held ? ` (held on '${held}')` : ''}: ${String(e?.stack ?? e).slice(0, 240)}` }
+    pc.decisions.bladeRoute = nodeRouteOf({ key: held, held: !!held, unpriced: ['hack', 'blade'], error: true, why: `bladeRouteOf threw${held ? ` (held on '${held}')` : ''}: ${String(e?.stack ?? e).slice(0, 240)}` }, info.currentNode, pin)
     return pc.decisions.bladeRoute
   }
 }

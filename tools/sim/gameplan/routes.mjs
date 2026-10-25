@@ -47,6 +47,14 @@
 //          gift's exit divisor, the favor life x favorMul — wherever the gift is
 //          available (BN13, or SF13 >= 1); min over routes = accept or never, per node
 //
+//   lab (BN15) the hacking route with The Red Pill from the darknet LABYRINTH instead of Daedalus
+//          (BN15 only: FactionHelpers.tsx:205 removes it from Daedalus' list; labyrinth.ts:419-427 puts
+//          it in the 5th lab, EternalLab, depth 29, charisma 3000, reached after the 4 earlier labs'
+//          augmentations are INSTALLED — 5 lab clears, an install after each): H (the hack formula
+//          without the Daedalus favor life) + LAB15 (ASSUMED: the charisma climb to 3000 and the
+//          crawl to depth 28 the hacking exit does not price). The hack and stanek routes do not
+//          apply in BN15 (there is no Daedalus Red Pill to price them on).
+//
 // NODE-SPECIAL ROUTES are hooks; a placeholder prices nothing (returns null)
 // and is flagged NOT CALIBRATED in the plan's output. BN14's is a model (phase
 // 2): the hacking route with the Go farm at GoPower 4. BN8's is a model (bn8.mjs,
@@ -61,6 +69,7 @@ import { goScale, goGFactor, w0rldDiv, exitShift, favorLifeOf, goWindow } from '
 import { giftAvailable, stanekFactors } from './stanek.mjs'
 import { giftLegOf } from './bladestanek.mjs'
 import { isCovenantBuyClear } from './sleeves.mjs'
+import { NODE_ROUTE_RULES } from '../../../routepin.js'
 
 /** phase 1's SF14.1 effect (nextnode d14 mid): GP3's regression mode only. */
 export const PHASE1_D14 = 0.02
@@ -118,8 +127,9 @@ export function hackParts({ node, lv, world, S, st = null }) {
       win = c ? goWindow({ L0: c.L0, u0: c.u0, w0: world.sf.w0, s }) : { hours: 0, L0: 0, W: 1 }
       W = win.W
     }
-    // BN2's Red Pill is sold by the gang (no Daedalus favor life in its g, nor in a replay)
-    if (node !== 2) {
+    // BN2's Red Pill is sold by the gang (no Daedalus favor life in its g, nor in a replay);
+    // BN15's is in the darknet labyrinth (labyrinth.ts:419-427: no Daedalus rep for it either)
+    if (node !== 2 && node !== 15) {
       favor = favorHours(node, l14, world, S)
       fref = favorRef(node, world, S)
     }
@@ -198,13 +208,43 @@ const hackOnCtx = (a) => {
   return p?.h ?? null
 }
 
+/**
+ * THE LABYRINTH LEG (BN15's 'lab' route), ASSUMED — no model and no measurement (the darknet has never
+ * been played here). Hours over the hacking exit's own (H, which already carries its installs):
+ *   the charisma climb  lab 5 needs 3000 (labyrinth.ts labData), lab 4 2500, lab 3 1500 — level =
+ *                       mult x (32 ln(exp + 534.6) - 200): at a charisma multiplier of 5.6 that is
+ *                       1e10 exp, at 4 it is 7.8e12, at 3 2e16 (out of reach). SF1.3 x SF2.3 x SF3.3 x
+ *                       BN15's 1.1 ~ 2.84 (applySourceFile.ts:31,59,69); the rest must come from
+ *                       charisma augmentations (SmartJaw 1.5, Neotra 1.55, Xanipher/nextSENS/
+ *                       Photosynthetic 1.2 — Bachman, Blade, NWO, Clarke, KuaiGong: corporate factions,
+ *                       AugmentationMoneyCost 3 here) that augplan does not value today
+ *   the crawl           depth 28 across the air gaps at 8/16/24 (Enums.ts AIR_GAP_DEPTH; rows are
+ *                       empty, crossed only by riding a migrating server or inducing one)
+ *   the five lives      each lab's augmentation must be INSTALLED before the next lab exists
+ * lo 10 / mid 30 / hi 120 h. The 'lab' route is priced at world.lab15 ?? mid.
+ */
+export const LAB15 = { lo: 10, mid: 30, hi: 120, status: 'ASSUMED (no darknet model, never played)' }
+
 export const ROUTES = [
   {
     id: 'hack',
     status: 'SIMULATED (exitplan via hackexit.mjs) + the IPvGO model (go.mjs); g calibrated on played nodes, NOT CALIBRATED on unplayed',
     // BN8 is its own model (bn8.mjs) unless the world turns it off (plan.mjs --bn8-hack: the old placeholder pricing)
-    applies: (node, lv, world) => (node !== 14 || world.phase1) && !(node === 8 && bn8On(world)),
+    // BN15: no Daedalus Red Pill (FactionHelpers.tsx:205) — its hacking exit is the 'lab' route
+    applies: (node, lv, world) => (node !== 14 || world.phase1) && !(node === 8 && bn8On(world)) && node !== 15,
     hours: hackOnCtx,
+  },
+  {
+    id: 'lab',
+    node: 15,
+    status: `MODELLED + ASSUMED: the hacking route (hackexit at BN15's multipliers, no Daedalus favor life) + LAB15 ${LAB15.status} (lo ${LAB15.lo} / mid ${LAB15.mid} / hi ${LAB15.hi} h): the charisma climb to 3000, the crawl to depth 28, five lab lives — NOT PLAYABLE yet (routepin NODE_ROUTE_RULES[15].labReady false: the stack acts on the black ops), so it applies only with plan.mjs --lab15-ready`,
+    // only a route the stack can PLAY: routepin.NODE_ROUTE_RULES[15] acts on the black ops until the labyrinth
+    // route is built (labReady); plan.mjs --lab15-ready (world.lab15Ready) prices it as if it were
+    applies: (node, lv, world) => node === 15 && !world.phase1 && (NODE_ROUTE_RULES[15]?.labReady === true || world.lab15Ready === true),
+    hours: (a) => {
+      const h = hackOnCtx(a)
+      return h === null ? null : h + (a.world.lab15 ?? LAB15.mid)
+    },
   },
   {
     id: 'blade',
@@ -239,7 +279,7 @@ export const ROUTES = [
     id: 'stanek',
     status: "MODELLED (stanekplan.js, stanek.mjs): the hacking route (BN14: go) with Stanek's Gift accepted at the node's start — in BN13, or anywhere at SF13>=1; source formulas, MEASURED home RAM, ASSUMED elasticities/rep/duty; ONE tabled layout every life (the live per-life layout, priced by tools/sim/stanekperlife.mjs at -0.0..-1.2h on the node model, NOT SIMULATED here); the gift on the Bladeburner route is 'bladeStanek'",
     readsSf13: true, // the only route that reads SF13 (clearTime memoises the others without it)
-    applies: (node, lv, world) => !world.phase1 && !world.stanekOff && giftAvailable(node, lv) && (!world.stanekBn13Only || node === 13) && !(node === 8 && bn8On(world)),
+    applies: (node, lv, world) => !world.phase1 && !world.stanekOff && giftAvailable(node, lv) && (!world.stanekBn13Only || node === 13) && !(node === 8 && bn8On(world)) && node !== 15,
     hours: (a) => stanekParts(a)?.h ?? null,
   },
   {

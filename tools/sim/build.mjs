@@ -95,6 +95,13 @@ export { StanekConstants } from "${GAME}/src/CotMG/data/Constants";
 // The sleeve count, for tools/sim/gameplan/sleevetest.mjs (SL1): sleeves.mjs's count rule and the
 // Covenant's price against the game's own recalculateNumberOfOwnedSleeves / getSleeveCost.
 export { recalculateNumberOfOwnedSleeves, getSleeveCost, MaxSleevesFromCovenant } from "${GAME}/src/PersonObjects/Sleeve/SleeveCovenantPurchases";
+// The darknet (BitNode 15), for tools/test/dnet.test.mjs (DN1-DN3): dnetplan.js's solvers against the game's own
+// server generators and checkPassword, its lab table against labData, its maze walk on the game's generateMaze.
+export * as DnetGen from "${GAME}/src/DarkNet/controllers/ServerGenerator";
+export { checkPassword as dnetCheckPassword } from "${GAME}/src/DarkNet/effects/authentication";
+export { labData, generateMaze as dnetGenerateMaze } from "${GAME}/src/DarkNet/effects/labyrinth";
+export * as DnetDict from "${GAME}/src/DarkNet/models/dictionaryData";
+export { ModelIds as DnetModelIds } from "${GAME}/src/DarkNet/Enums";
 `;
 
 const rawPlugin = {

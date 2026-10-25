@@ -284,6 +284,22 @@ with reasons, rates, ascensions, purchases, refusals). Nothing can start until
 home reaches the Singularity allocation (~1.3TB at SF4.1, ~9h in BN5) — the
 join needs it. Exit bar in BN2 is hacking 15,000; faction rep is halved.
 
+**BitNode 15 plan (The Secrets of the Dark Net), the LAST node** (the user, 2026-10-25: BN8.2 -> BN8.3 -> BN15.1).
+**There is no Daedalus Red Pill in BN15** (FactionHelpers.tsx:205): it is the 5th darknet labyrinth's reward
+(labyrinth.ts:419-427 — EternalLab, depth 29, charisma 3000, after the first four labs' augmentations are
+INSTALLED, one lab per life). The economy prices the hacking exit through Daedalus, so the BN15.1 entry dry-run
+read hack 20h vs blade 139h and would have ground Daedalus forever; `routepin.NODE_ROUTE_RULES[15]` makes the
+stack ACT on the black ops (the priced key kept for the commitment rule, `/route-pin.txt` still wins, published
+as `route.nodeRule`) until the labyrinth route is built (`labReady`). The gameplan plays BN15 LAST
+(`state.mjs LAST`, `--sf15 3` prices 15.2/15.3) and prices it on the route the stack can play: blade 104.5h
+point / 113h expected (p10-p90 62-175h); `--lab15-ready` prices the 'lab' route (hack ~34.5h + `routes.mjs LAB15`
+ASSUMED 10/30/120h) at 64.5h / 70h expected. The darknet: `dnet-seed.js` (home, 3.7GB, watchdog-gated on
+`sfgate.hasDarknetAccess`) keeps `dnet.js` (8.25GB, darknet RAM only) on darkweb; it solves neighbours'
+passwords (`dnetplan.solverOf`: 22 of 23 models, KingOfTheHill reported `unsolved`), spreads, opens caches and
+walks a lab it reaches; reports land in `/tel/dnet.txt`. The BN15.1 entry dry-run (2026-10-25): 31 servers rooted
+by 30 crawlers to depth 6 in ~3 min, two caches opened, lab 1 seen and charisma-short (300). Not built yet: air-gap crossing
+(induceServerMigration), charisma-aware buying, the lab-install trigger. Tests DN1-DN7.
+
 **BitNode 13 plan (Stanek's Gift).** The accept is per node, at its start:
 `canAcceptStaneksGift` needs nothing but NeuroFlux installed OR queued, so the
 first non-NFG purchase blocks it and the first such install forfeits it.

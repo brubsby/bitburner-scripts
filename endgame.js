@@ -38,6 +38,9 @@
 // INSTALLED (`hasAugmentation(TheRedPill, true)` — installed, not merely
 // queued). So the true order is:
 //
+//   (BitNode 15: steps 1-3 are the darknet LABYRINTH instead — Daedalus does not sell The Red Pill there,
+//   FactionHelpers.tsx:205; the 5th lab's cache queues it, labyrinth.ts:419-427 — and 4-6 are unchanged.
+//   The leaving path below is the same for every node, BN15 included; --next is refused for a maxed node.)
 //   1. join Daedalus            30 augs installed, $100b, hacking 2500
 //   2. 2.5m Daedalus reputation
 //   3. buy The Red Pill         costs $0; progress.js buys it without special-casing
@@ -217,6 +220,8 @@ export async function main(ns) {
       stage: hasTRP ? 'red-pill-installed-but-daemon-still-unlinked' : 'need-the-red-pill',
       detail: hasTRP
         ? `${WD} is still unlinked despite The Red Pill being installed — unexpected, the link is made at prestige (Prestige.ts:174-181). Raw error: ${e}`
+        : reset0?.currentNode === 15
+        ? `${WD} is not on the network yet: in BitNode 15 The Red Pill is not sold by Daedalus (FactionHelpers.tsx:205) — it is the 5th darknet labyrinth's reward (labyrinth.ts:419-427, dnet.js walks it) and must be INSTALLED before the link exists; the black ops (Operation Daedalus) are the other exit. Raw error: ${e}`
         : `${WD} is not on the network yet: The Red Pill must be bought from Daedalus AND installed before the link exists. Raw error: ${e}`,
     })
     published = true

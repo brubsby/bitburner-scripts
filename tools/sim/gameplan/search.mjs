@@ -20,6 +20,13 @@
 // C is a TABLE: C depends on the state only through the levels of the
 // Source-Files some effect reads (effects.LIVE_SFS); INERT dimensions (SF2,
 // SF3, SF13 in phase 1) are pure cost and do not multiply the table.
+//
+// THE LAST ORDER (state.mjs LAST, the user's decision 2026-10-25: BN15 last): a
+// clear of a LAST node is not an edge while any other owed clear remains —
+// solveDP skips it and edgeCost prices it Infinity, so every search below
+// (bestPath, firstMoves, evalOrder, bruteForce, localSearch, prefixTotal) obeys it.
+
+import { lastBlocked } from './state.mjs'
 
 /**
  * The clear-time table over the lattice's live feature space.
@@ -68,6 +75,8 @@ export function solveDP(L, T) {
   const { F, fstride, C } = T
   const V = new Float64Array(L.size)
   const dig = Int32Array.from(sizes, (s) => s - 1)
+  const last = Int8Array.from(L.dims.map((_, d) => (L.last?.[d] ? 1 : 0)))
+  const anyLast = last.some((x) => x)
   for (let idx = L.size - 1; idx >= 0; idx--) {
     if (idx < L.size - 1) {
       // odometer: decrement the mixed-radix digits to match idx
@@ -80,8 +89,12 @@ export function solveDP(L, T) {
       let f = 0
       for (let d = 0; d < nd; d++) f += dig[d] * fstride[d]
       let best = Infinity
+      // the LAST order: is any non-LAST clear still owed here?
+      let pendingOther = false
+      if (anyLast) for (let d = 0; d < nd; d++) if (!last[d] && dig[d] !== sizes[d] - 1) pendingOther = true
       for (let d = 0; d < nd; d++) {
         if (dig[d] === sizes[d] - 1) continue
+        if (last[d] && pendingOther) continue
         const v = C[d * F + f] + V[idx + strides[d]]
         if (v < best) best = v
       }
@@ -95,7 +108,7 @@ const featOf = (L, T, digits) => digits.reduce((a, x, d) => a + x * T.fstride[d]
 const digitsOf = (L, idx) => L.dims.map((d) => Math.floor(idx / d.stride) % d.size)
 
 /** The cost of clearing dims[d] from the state with these digits. */
-export const edgeCost = (L, T, digits, d) => T.C[d * T.F + featOf(L, T, digits)]
+export const edgeCost = (L, T, digits, d) => (lastBlocked(L, digits, d) ? Infinity : T.C[d * T.F + featOf(L, T, digits)])
 
 /** T(first = n) for every owed n at the lattice start: C(n, start) + V(start + n). */
 export function firstMoves(L, T, V) {
@@ -200,6 +213,7 @@ export function localSearch(L, T, first) {
         const dm = di.get(m)
         const a = edgeCost(L, T, digits, dm)
         const b = d2[dm] < L.dims[dm].size - 1 ? edgeCost(L, T, d2, dm) : a
+        if (!isFinite(a) || !isFinite(b)) continue // a LAST node's blocked edge saves nothing (Infinity - Infinity)
         save += (a - b) * cnt
       }
       const score = own - save

@@ -47,7 +47,7 @@ export function setBitNode(n, level = 1) {
 /** Which BitNode the formulas are currently configured for, by signature. */
 export function currentBitNode() {
   const m = game.currentNodeMults;
-  for (let n = 1; n <= 14; n++) {
+  for (let n = 1; n <= 15; n++) {
     const c = game.getBitNodeMultipliers(n, 1);
     if (Object.keys(c).every((k) => c[k] === m[k])) return n;
   }
