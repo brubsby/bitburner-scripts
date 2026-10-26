@@ -557,7 +557,10 @@ function normalise(o) {
       continue
     }
     if (r.m > 1 + 1e-12) {
-      valuable.push(r)
+      // BitNode 15's labyrinth route (o.oneoff.chaLabs): an augmentation with hacking value AND charisma is
+      // worth both (objective.charismaValue) — only there; elsewhere this branch keeps the multiplier alone
+      const full = o.oneoff?.chaLabs ? augValue(r, { channels, weights: o.channelWeights ?? null, ...(o.oneoff ?? {}) }) : null
+      valuable.push(full && full.ln > Math.log(r.m) + 1e-12 ? { ...r, m: Math.exp(full.ln), oneoff: full.why ?? null } : r)
       continue
     }
     // r.m came from valueOf(), which is MULTIPLIER-ONLY by design. An

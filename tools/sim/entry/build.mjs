@@ -50,6 +50,10 @@ export { calculateExp } from "${GAME}/src/PersonObjects/formulas/skill";
 export { FormatsNeedToChange } from "${GAME}/src/ui/formatNumber";
 export { CONSTANTS } from "${GAME}/src/Constants";
 export { loadGame } from "${GAME}/src/SaveObject";
+export { DarknetState } from "${GAME}/src/DarkNet/models/DarknetState";
+export { getLabyrinthDetails, getNetDepth } from "${GAME}/src/DarkNet/effects/labyrinth";
+export { getAllDarknetServers } from "${GAME}/src/DarkNet/utils/darknetNetworkUtils";
+export { installAugmentations } from "${GAME}/src/Augmentation/AugmentationHelpers";
 `;
 
 const rawPlugin = {

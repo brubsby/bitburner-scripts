@@ -51,7 +51,7 @@
 //          (BN15 only: FactionHelpers.tsx:205 removes it from Daedalus' list; labyrinth.ts:419-427 puts
 //          it in the 5th lab, EternalLab, depth 29, charisma 3000, reached after the 4 earlier labs'
 //          augmentations are INSTALLED — 5 lab clears, an install after each): H (the hack formula
-//          without the Daedalus favor life) + LAB15 (ASSUMED: the charisma climb to 3000 and the
+//          without the Daedalus favor life) + LAB15 (DERIVED, tools/sim/lab15.mjs: the charisma climbs and the
 //          crawl to depth 28 the hacking exit does not price). The hack and stanek routes do not
 //          apply in BN15 (there is no Daedalus Red Pill to price them on).
 //
@@ -70,6 +70,7 @@ import { giftAvailable, stanekFactors } from './stanek.mjs'
 import { giftLegOf } from './bladestanek.mjs'
 import { isCovenantBuyClear } from './sleeves.mjs'
 import { NODE_ROUTE_RULES } from '../../../routepin.js'
+import { legOf as lab15LegOf, SCENARIOS as LAB15_SCENARIOS, MEASURED_AT as LAB15_MEASURED_AT } from '../lab15.mjs'
 
 /** phase 1's SF14.1 effect (nextnode d14 mid): GP3's regression mode only. */
 export const PHASE1_D14 = 0.02
@@ -209,8 +210,15 @@ const hackOnCtx = (a) => {
 }
 
 /**
- * THE LABYRINTH LEG (BN15's 'lab' route), ASSUMED — no model and no measurement (the darknet has never
- * been played here). Hours over the hacking exit's own (H, which already carries its installs):
+ * THE LABYRINTH LEG (BN15's 'lab' route), DERIVED (tools/sim/lab15.mjs, 2026-10-25) — it replaces the first
+ * slice's ASSUMED lo 10 / mid 30 / hi 120h. Per lab: the charisma climb (chaplan.climbOf: the farm model,
+ * calibrated -2.7% against the game's heartbleed, dnet.test.mjs DN11) at the multiplier that life has, plus
+ * the crawl / gaps / maze / cache MEASURED in the game's own darknet by the stack's scripts
+ * (tools/sim/entry/dnetlab.mjs), plus an install allowance per extra install. The leg is BIMODAL in the one
+ * input that is not measured — the charisma augmentations the economy buys by labs 4 and 5 (lab15.mjs
+ * SCENARIOS): a product >= ~1.6 / 2.0 makes it a few hours; ~1.25 / 1.45 makes labs 4-5 out of any farm's
+ * reach (capped at 500h each: the route FAILS there, and the black ops are the fallback). mid prices it.
+ * The first slice's notes, still true:
  *   the charisma climb  lab 5 needs 3000 (labyrinth.ts labData), lab 4 2500, lab 3 1500 — level =
  *                       mult x (32 ln(exp + 534.6) - 200): at a charisma multiplier of 5.6 that is
  *                       1e10 exp, at 4 it is 7.8e12, at 3 2e16 (out of reach). SF1.3 x SF2.3 x SF3.3 x
@@ -221,9 +229,15 @@ const hackOnCtx = (a) => {
  *   the crawl           depth 28 across the air gaps at 8/16/24 (Enums.ts AIR_GAP_DEPTH; rows are
  *                       empty, crossed only by riding a migrating server or inducing one)
  *   the five lives      each lab's augmentation must be INSTALLED before the next lab exists
- * lo 10 / mid 30 / hi 120 h. The 'lab' route is priced at world.lab15 ?? mid.
+ * The 'lab' route is priced at world.lab15 ?? mid.
  */
-export const LAB15 = { lo: 10, mid: 30, hi: 120, status: 'ASSUMED (no darknet model, never played)' }
+const lab15Of = (k) => +lab15LegOf(LAB15_SCENARIOS[k]).h.toFixed(2)
+export const LAB15 = {
+  lo: lab15Of('lo'),
+  mid: lab15Of('mid'),
+  hi: lab15Of('hi'),
+  status: `DERIVED (tools/sim/lab15.mjs: climbs by chaplan, calibrated -2.7%; crawl+maze MEASURED by ${LAB15_MEASURED_AT}; the charisma-augmentation trajectory ASSUMED per scenario — hi FAILS at labs 4-5)`,
+}
 
 export const ROUTES = [
   {
@@ -237,7 +251,7 @@ export const ROUTES = [
   {
     id: 'lab',
     node: 15,
-    status: `MODELLED + ASSUMED: the hacking route (hackexit at BN15's multipliers, no Daedalus favor life) + LAB15 ${LAB15.status} (lo ${LAB15.lo} / mid ${LAB15.mid} / hi ${LAB15.hi} h): the charisma climb to 3000, the crawl to depth 28, five lab lives — NOT PLAYABLE yet (routepin NODE_ROUTE_RULES[15].labReady false: the stack acts on the black ops), so it applies only with plan.mjs --lab15-ready`,
+    status: `MODELLED + DERIVED: the hacking route (hackexit at BN15's multipliers, no Daedalus favor life) + LAB15 ${LAB15.status} (lo ${LAB15.lo} / mid ${LAB15.mid} / hi ${LAB15.hi} h): the charisma climb to 3000, the crawl to depth 28, five lab lives — the mechanics PLAYED headlessly (dnetlab.mjs, charisma injected) but NOT the acted route yet (routepin NODE_ROUTE_RULES[15].labReady false: the stack acts on the black ops), so it applies only with plan.mjs --lab15-ready`,
     // only a route the stack can PLAY: routepin.NODE_ROUTE_RULES[15] acts on the black ops until the labyrinth
     // route is built (labReady); plan.mjs --lab15-ready (world.lab15Ready) prices it as if it were
     applies: (node, lv, world) => node === 15 && !world.phase1 && (NODE_ROUTE_RULES[15]?.labReady === true || world.lab15Ready === true),

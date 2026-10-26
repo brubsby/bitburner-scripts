@@ -373,8 +373,8 @@ const ASSUMPTIONS = [
     // ever applied to BN15, so every other node reads as a (harmless) deviation from it.
     mult: "CharismaLevelMultiplier",
     expect: 1.1,
-    where: "tools/sim/gameplan/routes.mjs LAB15 (the labyrinth leg's charisma climb, ASSUMED lo/mid/hi)",
-    breaks: "The 5th lab needs charisma 3000 (labyrinth.ts labData); level = mult x (32 ln(exp + 534.6) - 200), so the exp needed is exponential in 1/mult: at a total multiplier of 5.6 it is 1e10, at 4 it is 7.8e12, at 3 2e16. LAB15's lo/mid/hi rest on SF1.3 x SF2.3 x SF3.3 x this (~2.84) plus charisma augmentations; a node where this is lower makes the climb far longer than LAB15 says.",
+    where: "tools/sim/lab15.mjs BASE.mult (-> routes.mjs LAB15), chaplan.js CHA_NODE_MULT",
+    breaks: "The 5th lab needs charisma 3000 (labyrinth.ts labData); level = mult x (32 ln(exp + 534.6) - 200), so the exp needed is exponential in 1/mult: at a total multiplier of 5.6 it is 1e10, at 4 it is 7.8e12, at 3 2e16. lab15.mjs's BASE is SF1.3 x SF2.3 x SF3.3 x this (2.28) times the charisma augmentations; a node where this is lower makes every climb far longer than LAB15 says (in-game, chaLabsCtxOf reads the node's own value).",
   },
 ];
 

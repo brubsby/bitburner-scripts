@@ -102,6 +102,12 @@ export { checkPassword as dnetCheckPassword } from "${GAME}/src/DarkNet/effects/
 export { labData, generateMaze as dnetGenerateMaze } from "${GAME}/src/DarkNet/effects/labyrinth";
 export * as DnetDict from "${GAME}/src/DarkNet/models/dictionaryData";
 export { ModelIds as DnetModelIds } from "${GAME}/src/DarkNet/Enums";
+// DN8-DN11: the air gap row, the lab's move reply (getSurroundingsVisualized), the authentication time and
+// the skill curve chaplan.js ports (the charisma plan's climb and farm).
+export { AIR_GAP_DEPTH as DNET_AIR_GAP, NET_WIDTH as DNET_NET_WIDTH } from "${GAME}/src/DarkNet/Enums";
+export { getSurroundingsVisualized as dnetSurroundings } from "${GAME}/src/DarkNet/effects/labyrinth";
+export { calculateAuthenticationTime as dnetAuthTime } from "${GAME}/src/DarkNet/effects/effects";
+export { calculateSkill, calculateExp } from "${GAME}/src/PersonObjects/formulas/skill";
 `;
 
 const rawPlugin = {

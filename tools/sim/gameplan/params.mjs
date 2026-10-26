@@ -161,7 +161,7 @@ export function worldOf(econ, z = {}, { sigmaPlayed = SIGMA_PLAYED, bbOff = fals
     giftCal,
     // BitNode 8's own exit model (bn8.mjs, routes 'stocks'): its options, or null = BN8 on the hacking route (plan.mjs --bn8-hack)
     bn8,
-    // BN15's labyrinth leg over its hacking exit (routes.mjs 'lab', LAB15 ASSUMED): null = LAB15.mid; plan.mjs --lab15 H
+    // BN15's labyrinth leg over its hacking exit (routes.mjs 'lab', LAB15 DERIVED by tools/sim/lab15.mjs): null = LAB15.mid; plan.mjs --lab15 H
     lab15,
     // price BN15's 'lab' route as if the stack could play it (plan.mjs --lab15-ready; routepin NODE_ROUTE_RULES[15].labReady)
     lab15Ready,

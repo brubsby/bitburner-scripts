@@ -19,14 +19,17 @@
 // SOLVED HERE (solverOf): every model whose answer follows from the hint, a dictionary, or a bounded
 // feedback search — ZeroLogon, DeskMemo, FreshInstall, CloudBlare, Laika4, TopPass, EuroZone, PrimeTime,
 // BellaCuore, AccountsManager, OctantVoxel, MathML, 110100100, OrdoXenos, Pr0verFl0, NIL, RateMyPix,
-// DeepGreen (exact counts only), 2G_cellular, PHP 5.4, Factori-Os, BigMo%od, OpenWebAccessPoint.
-// NOT SOLVED: KingOfTheHill (a numeric global-maximum search, BN15/SF15 only) — reported by the crawler
-// as `unsolved` per model, never skipped silently. Each solver is checked against the game's own
+// DeepGreen (exact counts only), 2G_cellular, PHP 5.4, Factori-Os, BigMo%od, OpenWebAccessPoint, and
+// KingOfTheHill (a Gaussian hill climb on the altitude, BN15/SF15 only): all 23 guessable models. A model
+// a solver does not know is still reported by the crawler as `unsolved`, never skipped silently. Each solver is checked against the game's own
 // generator and checkPassword in tools/test/dnet.test.mjs.
 
 export const DNET_PORT = 12615 // the crawler's reports (dnet.js -> dnet-seed.js); lock.js 12525, bb-lite 12611
 export const DNET_SCRIPT = 'dnet.js'
-export const DNET_FILES = ['dnet.js', 'dnetplan.js']
+export const LAB_WALKER = 'dnet-lab.js' // the labyrinth walker, run by a crawler next to the lab with its host's threads
+export const RIDER = 'dnet-ride.js' // the air-gap rider: induces a neighbour's migration across a gap
+export const STASIS = 'dnet-stasis.js' // pins a lab-adjacent host before its walker starts (setStasisLink, 12GB)
+export const DNET_FILES = ['dnet.js', 'dnetplan.js', LAB_WALKER, RIDER, STASIS]
 export const DNET_REG = '/dnet-pw.txt' // the passwords a crawler knows, carried to every child (a text file survives a restart of the host? no: a restart kills scripts only)
 export const DNET_TEL = '/tel/dnet.txt'
 
@@ -73,6 +76,54 @@ export function labOf(installed, node, trpInLab = 1) {
   const trpIndex = node === 15 ? 4 : trpInLab ? 6 : null
   const labsToRedPill = has(RED_PILL) ? 0 : trpIndex === null ? null : Math.max(0, trpIndex - index) + 1
   return { index, lab: LABS[index], reward, labsToRedPill }
+}
+
+// ---------------------------------------------------------------- the air gaps (Enums.ts AIR_GAP_DEPTH 8)
+export const AIR_GAP = 8
+/** darknetNetworkUtils.ts isOnAirGap: rows 8, 16, 24, 32 hold no server. */
+export const isAirGap = (row) => row > 0 && row % AIR_GAP === 0
+/** A crawler on `row` has an empty row below it (the rows above a gap: 7, 15, 23 ...). */
+export const gapBelowOf = (row) => Number.isFinite(row) && row >= 0 && isAirGap(row + 1)
+
+/**
+ * The rider's target: of `carriers` ({host, diff, depth}: rooted neighbours with a crawler on them, not
+ * stationary), the one most likely to land PAST the gap below `row` when induced to migrate —
+ * effects.ts chargeServerMigration -> moveDarknetServer(server, 2, 4): an open position in [diff - 2,
+ * diff + 4] (off the gap rows, clipped to the net), uniformly. p = the share of those rows past the gap
+ * (an estimate: open slots per row are not known to the crawler). Null when none can reach.
+ */
+export function riderTargetOf(carriers, row, netDepth = 40) {
+  const gap = row + 1
+  let best = null
+  for (const c of carriers ?? []) {
+    if (!Number.isFinite(c?.diff)) continue
+    const rows = []
+    for (let r = Math.max(0, c.diff - 2); r <= Math.min(netDepth - 1, c.diff + 4); r++) if (!isAirGap(r)) rows.push(r)
+    if (!rows.length) continue
+    const p = rows.filter((r) => r > gap).length / rows.length
+    if (p > 0 && (!best || p > best.p || (p === best.p && c.diff > best.diff))) best = { host: c.host, diff: c.diff, p }
+  }
+  return best
+}
+
+/**
+ * THE LAB INSTALL (installgate.js shouldInstall o.labInstall): on BN15's labyrinth route, the lab this
+ * save faces has its reward QUEUED (its cache opened) -> install now: the next lab is generated from the
+ * INSTALLED set (labyrinth.ts getCurrentLabName), so nothing past it can start until then. The Red Pill
+ * (the 5th lab's reward) is the terminal install's own rule (progress.js `terminal`), not this one.
+ * `installed` a Set of installed names (getResetInfo().ownedAugs), `queued` the queued names, `labRoute`
+ * whether the stack acts on the labyrinth route (routepin NODE_ROUTE_RULES[15].labReady and not the black
+ * ops). Returns {install, aug, lab, why} — install false always says why.
+ */
+export function labInstallOf({ node, labRoute, installed, queued }) {
+  if (node !== 15) return { install: false, aug: null, lab: null, why: 'not BitNode 15' }
+  const inst = installed instanceof Set ? installed : new Set(installed ?? [])
+  const lab = labOf(inst, 15)
+  const q = new Set(queued ?? [])
+  if (!labRoute) return { install: false, aug: null, lab: lab.index + 1, why: 'the stack does not act on the labyrinth route (routepin labReady false, or the black ops route)' }
+  if (lab.reward === RED_PILL) return { install: false, aug: RED_PILL, lab: lab.index + 1, why: "lab 5's reward is The Red Pill: the terminal install's rule" }
+  if (q.has(lab.reward)) return { install: true, aug: lab.reward, lab: lab.index + 1, why: `${lab.reward} (lab ${lab.index + 1}'s reward) is queued; lab ${lab.index + 2} exists only once it is installed` }
+  return { install: false, aug: lab.reward, lab: lab.index + 1, why: `lab ${lab.index + 1} (${lab.lab.name}) not cleared: ${lab.reward} not queued` }
 }
 
 // ---------------------------------------------------------------- dictionaries (models/dictionaryData.ts)
@@ -243,7 +294,7 @@ export function cluesOf(text) {
  * nextGuess returns null when the solver has nothing left to try (a give-up, reported, never looped on).
  * `feedback` says whether the solver reads heartbleed (charisma >= the server's requirement).
  */
-export function solverOf(d, host = null) {
+export function solverOf(d, host = null, retryNo = 0) {
   const model = d?.modelId ?? ''
   const hint = String(d?.passwordHint ?? '')
   const data = String(d?.data ?? '')
@@ -314,7 +365,7 @@ export function solverOf(d, host = null) {
     case MODEL.PacketSniffer:
       return snifferSolver(model, host, n)
     case MODEL.GlobalMaxima:
-      return { model, solvable: false, why: 'KingOfTheHill (a numeric global-maximum search) is not solved yet', feedback: true, nextGuess: () => null }
+      return kingOfTheHillSolver(model, n, retryNo)
     case MODEL.Labyrinth:
       return { model, solvable: false, why: 'the labyrinth is walked by labWalk, not guessed', feedback: false, nextGuess: () => null }
     default:
@@ -531,7 +582,7 @@ function divisibilitySolver(model, difficulty) {
       for (const h of hist) if (h.fb) ans.set(h.guess, h.fb.data === 'true')
       let N = 1n
       for (const p of primes) {
-        for (;;) {
+        for (let k = 0; k < 200; k++) { // a power past 2^200 is no password (getPassword caps at 50 chars)
           const g = String(N * BigInt(p))
           if (!ans.has(g)) return hist.filter((h) => h.guess === g).length >= 3 ? null : g
           if (!ans.get(g)) break
@@ -602,6 +653,151 @@ function snifferSolver(model, host, n) {
   }
 }
 
+/**
+ * KingOfTheHill (authentication.ts getKingOfTheHillAltitude): the reply's data is the altitude at the guess,
+ * a sum of Gaussian hills of width w = 10^max(n-2, 0) + 1 (n = the password's length), spaced ~3w apart, the
+ * password's hill 10000 high and the k-th neighbour 10000 - ~2600k (negative past k = 3: pits); within 3% of
+ * the password only the main hill counts, so there the altitude is EXACTLY 10000 exp(-((x - P)/w)^2).
+ * The climb: two points on one hill give its centre and height (ln A is a parabola of known curvature
+ * -1/w^2: c = (x1 + x2)/2 + w^2 (ln A1 - ln A2) / (2 (x1 - x2))); a side hill (height < 8800) hops toward the
+ * higher neighbour 3w away; on the main hill round(c) is the password. Passwords are numeric without a
+ * leading zero (ServerGenerator.ts getPassword), so the range is [10^(n-1), 10^n - 1].
+ */
+const KOTH_MAIN = 8800 // the main hill is 10000; the nearest side hill <= 10000 - 2600 x 0.95 = 7530
+const KOTH_SIDE_MAX = 7600 // above this an altitude is on the main hill (a side hill peaks <= 7530 + ~1 from the rest)
+const KOTH_CAP = 80
+function kingOfTheHillSolver(model, n, retryNo = 0) {
+  const lo = n > 1 ? 10 ** (n - 1) : 0
+  const hi = 10 ** n - 1
+  const w = 10 ** Math.max(n - 2, 0) + 1
+  const clamp = (x) => Math.min(hi, Math.max(lo, Math.round(x)))
+  // a retry (the crawler's `retryNo` after a give-up) scans from another offset: the climb is deterministic
+  const off = retryNo ? (0.5 + retryNo * 0.618) % 1 : 0.5
+  return {
+    model,
+    solvable: n > 0 && n <= 16,
+    why: 'Gaussian hill climb on the altitude feedback (two-point fit of each hill, hop to the higher neighbour)',
+    feedback: true,
+    nextGuess(hist) {
+      if (!(n > 0) || hist.length >= KOTH_CAP) return null
+      const tried = new Set(hist.map((h) => h.guess))
+      // a one- or two-digit password: the whole range is cheaper than a climb on hills of width 2
+      if (hi - lo <= 12) {
+        for (let x = lo; x <= hi; x++) if (!tried.has(String(x))) return String(x)
+        return null
+      }
+      const pts = []
+      for (const h of hist) {
+        const a = Number(h.fb?.data)
+        if (h.fb && h.fb.data !== '' && Number.isFinite(a)) pts.push({ x: Number(h.guess), a })
+      }
+      const fresh = (x) => {
+        const g = String(clamp(x))
+        return tried.has(g) ? null : g
+      }
+      // nothing read yet: a coarse scan (halves, quarters, ...) until any altitude comes back
+      if (!pts.some((p) => p.a !== 0)) {
+        for (const k of [1, 2, 4, 8, 16, 32])
+          for (let j = 0; j < k; j++) {
+            const g = fresh(lo + ((j + off) * (hi - lo)) / k)
+            if (g !== null) return g
+          }
+        return null
+      }
+      // ON THE MAIN HILL (an altitude no side hill reaches: <= 10000 - 2600 x 0.95 plus ~1 from the others):
+      // the main hill is exactly 10000 high at the password, so one altitude A at x gives P = x -+ w sqrt(ln(10000/A))
+      // — exact when x is within 3% of P (the main hill alone). Guess the candidate the other points agree with
+      // first; each miss is a new, closer point.
+      // AGREEMENT: every point within 3% of the password sees the main hill alone, so its two candidates
+      // x -+ w sqrt(ln(10000/A)) include P exactly; two such points agree on it (points elsewhere do not)
+      const candsOf = (p) => (p.a > 0 && p.a <= 10000 ? [p.x - w * Math.sqrt(Math.log(10000 / p.a)), p.x + w * Math.sqrt(Math.log(10000 / p.a))] : [])
+      const tol = Math.max(0.5, 1e-7 * w)
+      for (let i = 0; i < pts.length; i++)
+        for (let j = i + 1; j < pts.length; j++)
+          for (const ci of candsOf(pts[i]))
+            for (const cj of candsOf(pts[j]))
+              if (Math.abs(ci - cj) <= tol) {
+                const g = fresh((ci + cj) / 2) ?? fresh((ci + cj) / 2 + 1) ?? fresh((ci + cj) / 2 - 1)
+                if (g !== null) return g
+              }
+      const top = pts.reduce((b, p) => (p.a > b.a ? p : b), pts[0])
+      if (top.a > KOTH_SIDE_MAX && top.a <= 10000) {
+        const d = w * Math.sqrt(Math.log(10000 / top.a))
+        const cands = [top.x - d, top.x + d]
+        const err = (cand) => {
+          let e = 0
+          for (const p of pts) if (p !== top && p.a > 0 && Math.abs(p.x - top.x) <= 2 * w) e += Math.abs(Math.log(p.a) - (Math.log(10000) - ((p.x - cand) / w) ** 2))
+          return e
+        }
+        cands.sort((a, b) => err(a) - err(b))
+        for (const cand of cands)
+          for (const dd of [0, 1, -1]) {
+            const g = fresh(cand + dd)
+            if (g !== null) return g
+          }
+        const r = Math.max(1, Math.round(Math.min(w / 4, 0.01 * top.x)))
+        const g = fresh(top.x + r) ?? fresh(top.x - r)
+        if (g !== null) return g
+      }
+      // THE CLIMB. Every nonzero altitude is dominated by its NEAREST feature (a hill, or a pit past the third
+      // neighbour: the Gaussians fall off as exp(-d^2)), so a feature is fitted from a point and its nearest
+      // same-sign partner within 2w, on ln|A| (the same parabola for a pit as for a hill). A pair straddling
+      // the main hill's 3% window (inside it the side hills vanish) fits nonsense: rejected by its height
+      // (no feature is above 10000 or below -10000 - 8 x 2600 x 1.05) and by its centre's distance.
+      const near = (x, r) => pts.some((p) => Math.abs(p.x - x) <= r)
+      const fitOf = (p) => {
+        const q = pts
+          .filter((r) => r !== p && r.a !== 0 && Math.sign(r.a) === Math.sign(p.a) && r.x !== p.x && Math.abs(r.x - p.x) <= 2 * w)
+          .sort((r, s) => Math.abs(r.x - p.x) - Math.abs(s.x - p.x))[0]
+        if (!q) return null
+        const c = (p.x + q.x) / 2 + (w * w * (Math.log(Math.abs(p.a)) - Math.log(Math.abs(q.a)))) / (2 * (p.x - q.x))
+        const H = p.a * Math.exp(((p.x - c) / w) ** 2)
+        if (!Number.isFinite(c) || !Number.isFinite(H) || H > 10100 || H < -22000) return { bad: true, p, q }
+        return { c, H, p, q }
+      }
+      const step = Math.max(1, Math.round(w / 4))
+      const partnerOf = (p) => fresh(p.x + step) ?? fresh(p.x - step) ?? fresh(p.x + 2 * step) ?? fresh(p.x - 2 * step)
+      const pos = pts.filter((p) => p.a > 0).sort((p, q) => q.a - p.a)
+      let cur = null
+      if (pos.length) {
+        // the highest point's feature: fit it (a partner probe first), a straddling pair re-probed closer
+        const b = pos[0]
+        const f = fitOf(b)
+        if (!f || f.bad) {
+          const g = f?.bad ? fresh(b.x + Math.sign(f.q.x - b.x) * Math.max(1, Math.round(w / 10))) ?? partnerOf(b) : partnerOf(b)
+          if (g !== null) return g
+        } else cur = f
+      }
+      if (!cur) {
+        // all below sea level (pits and far tails): the shallowest fitted feature
+        const fits = pts.filter((p) => p.a !== 0).map(fitOf).filter((f) => f && !f.bad)
+        cur = fits.reduce((b, f) => (!b || f.H > b.H ? f : b), null)
+        if (!cur) return partnerOf(pts.filter((p) => p.a !== 0).sort((p, q) => Math.abs(q.a) - Math.abs(p.a))[0])
+      }
+      if (cur.H >= KOTH_MAIN) {
+        // the main hill's estimated centre: an altitude there is above any side hill's (the branch above)
+        const r = Math.max(1, Math.round(w / 5))
+        const g = fresh(cur.c) ?? fresh(cur.c + r) ?? fresh(cur.c - r) ?? fresh(cur.c + 2 * r) ?? fresh(cur.c - 2 * r)
+        if (g !== null) return g
+      }
+      // a side hill or a pit: the higher neighbour is 3w (x 0.9..1.1) to one side — probe both sides
+      for (const k of [3, -3]) if (!near(cur.c + k * w, 0.6 * w)) return fresh(cur.c + k * w) ?? fresh(cur.c + k * w + 1)
+      // both landed and neither is higher (or not yet fitted): fit each landing — a landing inside the main
+      // hill's clean window is low but its partner AGREES on P; a higher hill's landing becomes the climb
+      const landings = pts.filter((p) => p !== cur.p && p !== cur.q && p.a !== 0 && Math.abs(p.x - cur.c) <= 4.5 * w && !fitOf(p))
+      for (const p of landings.sort((p, q) => q.a - p.a)) {
+        const g = partnerOf(p)
+        if (g !== null) return g
+      }
+      for (const k of [6, -6, 9, -9, 12, -12, 15, -15]) if (!near(cur.c + k * w, 0.6 * w)) {
+        const g = fresh(cur.c + k * w)
+        if (g !== null) return g
+      }
+      return null
+    },
+  }
+}
+
 // ---------------------------------------------------------------- the labyrinth walk (labyrinth.ts)
 /**
  * One step of a depth-first walk of the maze from labreport's {coords:[x,y], north, east, south, west}.
@@ -611,6 +807,20 @@ function snifferSolver(model, host, n) {
  */
 const DIRS = { north: [0, -1], east: [1, 0], south: [0, 1], west: [-1, 0] }
 const OPP = { north: 'south', south: 'north', east: 'west', west: 'east' }
+/**
+ * The view after a lab move, from authenticate's reply (labyrinth.ts handleLabyrinthPassword): the message
+ * "You have moved to x,y." (moved) or "You cannot go that way. You are still at x,y." (blocked), the data the
+ * 3x3 surroundings ('@' centre, '█' wall, ' ' path; getSurroundingsVisualized range 1). Returns
+ * {coords, north, east, south, west, blocked} or null when the reply is neither.
+ */
+export function labViewOf(message, data) {
+  const m = String(message ?? '').match(/(moved to|still at) (\d+),(\d+)/)
+  const rows = String(data ?? '').split('\n')
+  if (!m || rows.length < 3 || rows.some((r) => r.length < 3)) return null
+  const open = (c) => c !== '█'
+  return { coords: [Number(m[2]), Number(m[3])], north: open(rows[0][1]), east: open(rows[1][2]), south: open(rows[2][1]), west: open(rows[1][0]), blocked: m[1] === 'still at' }
+}
+
 export function labStep(st, report) {
   const [x, y] = report.coords
   st.seen ??= new Set()

@@ -305,13 +305,33 @@ classes (bbsim, NOT CALIBRATED live): the bootstrap policy +20.4 +- 5.0h (off th
 AugmentationMoneyCost, GraftableAugmentation.ts:20-22) -58.6 +- 9.0h of a ~89h rest, the model -49.7h. The exit
 model reads ~21% fast against bbsim with the boot on, -5% with it off (`tools/sim/bb15check.mjs`). The gameplan plays BN15 LAST
 (`state.mjs LAST`, `--sf15 3` prices 15.2/15.3) and prices it on the route the stack can play: blade 104.5h
-point / 113h expected (p10-p90 62-175h); `--lab15-ready` prices the 'lab' route (hack ~34.5h + `routes.mjs LAB15`
-ASSUMED 10/30/120h) at 64.5h / 70h expected. The darknet: `dnet-seed.js` (home, 3.7GB, watchdog-gated on
-`sfgate.hasDarknetAccess`) keeps `dnet.js` (8.25GB, darknet RAM only) on darkweb; it solves neighbours'
-passwords (`dnetplan.solverOf`: 22 of 23 models, KingOfTheHill reported `unsolved`), spreads, opens caches and
-walks a lab it reaches; reports land in `/tel/dnet.txt`. The BN15.1 entry dry-run (2026-10-25): 31 servers rooted
-by 30 crawlers to depth 6 in ~3 min, two caches opened, lab 1 seen and charisma-short (300). Not built yet: air-gap crossing
-(induceServerMigration), charisma-aware buying, the lab-install trigger. Tests DN1-DN7.
+point / 113h expected (p10-p90 62-175h); `--lab15-ready` prices the 'lab' route (hack + `routes.mjs LAB15`,
+DERIVED by `tools/sim/lab15.mjs`: lo 1.8 / mid 8.1 / hi FAILS) at ~42.6h point / ~48h expected (the hack arm 34.5h the
+first slice priced + mid; its +5.5h spread — not re-run: plan.mjs was killed mid-surrogate on 2026-10-25).
+**The labyrinth route (second slice, 2026-10-25)** — every piece played in the game's own darknet by
+`tools/sim/entry/dnetlab.mjs` (the BN15 entry from the live save; the stack's scripts with the real `ns`; timers
+warped, `DNET_WARP`, game time read off engine cycles; charisma INJECTED at each lab's requirement): **all five labs
+cleared, The Red Pill queued, in ~86 game-minutes of crawling, twice** (this code: lab 1 0.9 / 2 9.6 / 3 24.5 / 4 24.1 / 5
+26.6 min; an earlier walker 1.2 / 7.3 / 7.3 / 50.3 / 20.4 — the mean prices `lab15.mjs` CRAWL_MIN).
+`dnet-seed.js` (home, 6GB) keeps `dnet.js` (8.45GB) on darkweb and drains its reports every second into
+`/tel/dnet.txt` (crawl, `ride`, `lab`, `farm`); the crawler solves all 23 password models (KingOfTheHill: a
+Gaussian hill climb with an exact two-point AGREEMENT step, ~10 attempts), crosses the air gaps at rows 8/16/24 by
+riding a crawler-carrying neighbour it induces to migrate (`dnet-ride.js`; moves keep scripts), and next to a
+lab frees its host's RAM block, pins the host with a stasis link if one is free (`dnet-stasis.js`: a move or
+restart ends a walk) and starts `dnet-lab.js` with every thread (one walker per maze: the position is per pid;
+one authentication per step, the reply carries the new view). The cleared lab's cache is opened by a crawler
+copy (`--cache`) -> the reward QUEUED; `installgate.shouldInstall`'s `labInstall` (`dnetplan.labInstallOf`,
+wired in progress.js) installs it like the terminal install. **Charisma** (`chaplan.js`): level = mult x (32 ln exp
+- 200), so the multiplier is the route — the save's floor is 2.28 (SF1.3 x SF2.3 x SF3.3 x 1.1). The farm is
+one-thread heartbleed workers on darkweb (`dnet-cha.js`, 2.25GB; `dnet-seed.js farmStep`: home's FREE RAM above
+`freshlife.homeReserveGb`, only on the lab route, stops at the lab's charisma x1.02), calibrated -1.4/-2.7%
+against the game. Charisma augmentations are priced on the lab route by the climbs they shorten
+(`objective.charismaValue`: with vs without, through the exit's hours per hacking-ln; `chaplan.chaLabsCtxOf`).
+**labReady stays false**: labs 4-5 (2500/3000) need a charisma multiplier ~4.3 / ~5.0 — the cheap
+non-corporate charisma augs plus lab augs plus one or two corporate ones by then — which no BN15 life has bought
+(lab15.mjs: mid +8h, hi = labs 4-5 unreachable); and with labReady the stack acts on the priced key while the
+in-game exit has no lab arm and no fallback to the black ops. Not priced: the farm's home RAM against the
+batcher's money; sleeves' Leadership exp. Tests DN1-DN13; mutants `tools/staging/dnet-mutants.sh` (29, all caught).
 
 **BitNode 13 plan (Stanek's Gift).** The accept is per node, at its start:
 `canAcceptStaneksGift` needs nothing but NeuroFlux installed OR queued, so the

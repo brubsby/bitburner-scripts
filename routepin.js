@@ -88,15 +88,23 @@ export function pinnedRouteOf(d, pin) {
  *               first four labs' augmentations are INSTALLED). exitplan prices the hacking exit through
  *               Daedalus — an exit that does not exist here: the BN15.1 entry dry-run (2026-10-25) priced
  *               'hack' at 20h vs 'blade' at 139h, and acting on it would grind Daedalus for a Red Pill
- *               that never appears (endgame.js: 'need-the-red-pill' forever). The labyrinth route
- *               (dnet.js / dnetplan.js) cannot yet reach depth 29 and charisma 3000 headlessly, so the
- *               stack acts on the black ops. Set `labReady` (the route built and tested) to lift it.
+ *               that never appears (endgame.js: 'need-the-red-pill' forever).
+ *               2026-10-25 (second slice): the labyrinth route's MECHANICS are built and played headlessly
+ *               in the game's own darknet — crawl, air gaps, KingOfTheHill, the maze, the reward cache, the
+ *               install per lab, five labs to The Red Pill in ~86 game-minutes (tools/sim/entry/dnetlab.mjs,
+ *               charisma injected). labReady STAYS false: (1) charisma 2500/3000 rests on charisma
+ *               augmentations no BN15 life has bought (tools/sim/lab15.mjs: +8h at the mid trajectory, labs
+ *               4-5 out of reach at the low one); (2) with labReady the stack acts on the PRICED key, and the
+ *               in-game exit has no lab arm — it prices a Daedalus Red Pill — and no fallback to the black
+ *               ops if the climb stalls. Lift it when both exist (the user's /route-pin.txt still wins).
+ *               What labReady switches on: dnet-seed.js's charisma farm, the lab install
+ *               (dnetplan.labInstallOf), charisma-aware buying (chaplan.chaLabsCtxOf).
  */
 export const NODE_ROUTE_RULES = {
   15: {
     route: 'blade',
     labReady: false,
-    why: "BitNode 15: The Red Pill is not sold by Daedalus (FactionHelpers.tsx:205) but by the 5th darknet labyrinth (labyrinth.ts:419-427), which the stack cannot reach headlessly yet — the hacking exit priced through Daedalus does not exist here, so the black ops are the exit",
+    why: "BitNode 15: The Red Pill is not sold by Daedalus (FactionHelpers.tsx:205) but by the 5th darknet labyrinth (labyrinth.ts:419-427) — the labyrinth's mechanics play headlessly (dnetlab.mjs), but its charisma climb to 2500/3000 rests on charisma augmentations no BN15 life has bought and the exit has no lab arm or fallback yet, so the black ops are the exit",
   },
 }
 

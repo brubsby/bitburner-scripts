@@ -1,4 +1,5 @@
 import { progressFactor, RATE_CHANNELS } from 'installgate.js'
+import { chaAugValueOf } from 'chaplan.js'
 
 // The objective function, DERIVED instead of assumed. Pure, no ns.
 //
@@ -237,13 +238,15 @@ export function augValue(aug, ctx = {}) {
   // Prices at 0 with a reason whenever no gang is pending, which is almost
   // always, so the common path is unchanged.
   const karma = karmaValue(aug, ctx)
-  const synthetic = one.ln + karma.ln
+  // Charisma multipliers on BitNode 15's labyrinth route (charismaValue): the climbs they shorten.
+  const cha = charismaValue(aug, ctx)
+  const synthetic = one.ln + karma.ln + cha.ln
   if (synthetic > 0) {
-    const kinds = [one.ln > 0 ? one.kind : null, karma.ln > 0 ? karma.kind : null].filter(Boolean)
-    const whys = [one.ln > 0 ? one.reason : null, karma.ln > 0 ? karma.reason : null].filter(Boolean)
+    const kinds = [one.ln > 0 ? one.kind : null, karma.ln > 0 ? karma.kind : null, cha.ln > 0 ? cha.kind : null].filter(Boolean)
+    const whys = [one.ln > 0 ? one.reason : null, karma.ln > 0 ? karma.reason : null, cha.ln > 0 ? cha.reason : null].filter(Boolean)
     return { ln: real + synthetic, real, synthetic, kind: kinds.join('+'), why: whys.join('; ') }
   }
-  const why = [one.reason, karma.reason].filter(Boolean).join('; ')
+  const why = [one.reason, karma.reason, cha.reason].filter(Boolean).join('; ')
   return { ln: real, real, synthetic: 0, kind: 'aug', ...(why ? { why } : {}) }
 }
 
@@ -550,6 +553,40 @@ export function oneoffValue(aug, ctx = {}) {
  * reason is a different thing from unpriced, and the whole point of this
  * function is that the difference shows up in telemetry.
  */
+/**
+ * CHARISMA MULTIPLIERS, PRICED BY THE LABYRINTH CLIMBS THEY SHORTEN (BitNode 15's lab route).
+ *
+ * RATE_CHANNELS cannot see charisma, so on the hacking route a charisma augmentation is correctly
+ * worth nothing. On BN15's labyrinth route it is the route: each lab refuses every step below its
+ * charisma (300/600/1500/2500/3000), and the level is mult x (32 ln(exp) - 200) — at the save's floor
+ * multiplier (SF1.3 x SF2.3 x SF3.3 x 1.1 ~ 2.28) lab 3 is out of any farm's reach (chaplan.climbOf).
+ * Two trajectories, same farm, same exp mult: every lab the augmentation will be installed for, climbed
+ * WITH its charisma (and charisma_exp) and WITHOUT (chaplan.chaAugValueOf; a climb past 500h priced at
+ * the cap). The hours saved enter in hacking-ln through the exit's own sensitivity (hoursPerLn, the
+ * GATE record's exitSensitivity.hoursPerLn.hacking — the unit karmaValue uses).
+ *
+ * ctx.chaLabs = {labs: chaplan.labsAheadOf(index), mult, expMult, ramGB, int, hoursPerLn} from
+ * progress.js (charismaChannelCtx), present only on the labyrinth route; absent -> 0 with no reason
+ * (the common path). Unreadable inputs -> 0 WITH the reason. NOT CALIBRATED as exit hours: a climb saved
+ * is an exit hour saved only while the climb binds the lab's life (stated, chaplan.js).
+ */
+export function charismaValue(aug, ctx = {}) {
+  const num = (x) => typeof x === 'number' && isFinite(x)
+  const mults = aug?.mults
+  const m = num(mults?.charisma) ? mults.charisma : 1
+  const mx = num(mults?.charisma_exp) ? mults.charisma_exp : 1
+  if (!(m > 1 || mx > 1)) return { ln: 0, kind: null, reason: null }
+  const c = ctx.chaLabs
+  if (!c) return { ln: 0, kind: null, reason: null }
+  if (!Array.isArray(c.labs) || !num(c.mult) || !num(c.ramGB) || !num(c.hoursPerLn) || c.hoursPerLn <= 0) {
+    return { ln: 0, kind: 'charisma', reason: `charisma unpriced: ${c.why ?? 'an input is unreadable (labs, mult, farm RAM, hoursPerLn)'}` }
+  }
+  if (!c.labs.length) return { ln: 0, kind: 'charisma', reason: 'no labyrinth left that this augmentation is installed for' }
+  const v = chaAugValueOf({ m, mx, mult: c.mult, expMult: num(c.expMult) ? c.expMult : 1, ramGB: c.ramGB, int: num(c.int) ? c.int : 0, labs: c.labs })
+  if (!(v.savedH > 0)) return { ln: 0, kind: 'charisma', reason: `saves no climb hours (${v.withoutH.toFixed(2)}h either way)` }
+  return { ln: v.savedH / c.hoursPerLn, kind: 'charisma', reason: `x${m.toFixed(3)} charisma${mx > 1 ? ` x${mx.toFixed(3)} exp` : ''}: the labs' climbs ${v.withoutH.toFixed(2)}h -> ${v.withH.toFixed(2)}h${v.capped ? ` (${v.capped} capped at 500h)` : ''}, at ${c.hoursPerLn.toFixed(2)}h per hacking-ln` }
+}
+
 export function karmaValue(aug, ctx = {}) {
   const num = (x) => typeof x === 'number' && isFinite(x)
   const mults = aug?.mults

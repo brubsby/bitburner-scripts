@@ -10,19 +10,27 @@
 // (DNET_REG, carried to every child; leaked in logs or .data.txt clues) or one solved here
 // (dnetplan.solverOf: the guess, authenticate, the feedback from heartbleed's logs); then
 // scp + exec of itself onto it (preventDuplicates), freeing the owner's RAM first when it does not fit
-// (memoryReallocation). THE LABYRINTH (dnetplan.labStep): a neighbour whose model is the labyrinth is
-// walked depth-first with labreport + authenticate('north'...); at its end the lab holds the reward
-// cache, opened by a copy of this script run there with --cache (cacheFiles.ts getLabReward QUEUES the
-// lab's augmentation — The Red Pill at BN15's 5th lab; it counts only once INSTALLED).
+// (memoryReallocation).
+//
+// THE AIR GAPS (rows 8/16/24 hold no server; connections join adjacent rows only): a crawler on the row
+// above a gap starts dnet-ride.js on its own host against the rooted, crawler-carrying neighbour most likely
+// to land past the gap when induced to migrate (dnetplan.riderTargetOf; a moved server keeps its scripts,
+// so that neighbour's crawler carries on from the far side). Random mutations ride servers across too.
+// THE LABYRINTH: a neighbour whose model is the labyrinth (the crawler is on its row, depth - 1) gets this
+// host's block freed (memoryReallocation), the host pinned if a stasis link is free (dnet-stasis.js: a move
+// or restart would end the walk), then dnet-lab.js with every thread left (the walk is one script — the
+// position is per pid). At its end the lab is rooted and holds the reward cache; this crawler opens it with
+// a copy of itself run there with --cache (cacheFiles.ts getLabReward QUEUES the lab's augmentation — The
+// Red Pill at BN15's 5th lab; it counts only once INSTALLED: installgate's lab install, dnetplan.labInstallOf).
 //
 // FAILURE IS LOUD: every give-up names the model and why on DNET_PORT (dnet-seed.js aggregates the
-// reports into /tel/dnet.txt): `unsolved` (no solver), `gave-up` (the solver ran out), `cha-short`
-// (heartbleed/lab need more charisma), `no-room` (the child did not fit), `threw`. A crawler that
-// dies says so (atExit).
+// reports into /tel/dnet.txt): `unsolved` (no solver), `gave-up` (the solver ran out; retried with a new
+// seed), `cha-short` (heartbleed/lab need more charisma), `no-room` (a child or the walker did not fit),
+// `ride` no-carrier, `threw`. A crawler, walker or rider that dies says so (atExit).
 //
 // RAM: every ns.dnet call this file makes is paid by every copy (one thread each); measured by
-// tools/test/dnet.test.mjs [DN5] with the game's own calculator. Nothing here runs on home.
-import { DNET_PORT, DNET_FILES, DNET_REG, LAB_MODEL, solverOf, feedbackOf, leakedOf, cluesOf, labStep } from 'dnetplan.js'
+// tools/test/dnet.test.mjs [DN7] with the game's own calculator. Nothing here runs on home.
+import { DNET_PORT, DNET_FILES, DNET_REG, LAB_MODEL, LAB_WALKER, RIDER, STASIS, solverOf, feedbackOf, leakedOf, cluesOf, gapBelowOf, riderTargetOf } from 'dnetplan.js'
 
 const ATTEMPTS_PER_PASS = 24
 const PASS_SLEEP_MS = 5000
@@ -84,9 +92,11 @@ async function crawl(ns, me, say) {
     depth = self?.depth ?? depth
     const near = dn.probe()
     let rooted = 0
+    const carriers = [] // rooted neighbours with a crawler on them: the air-gap rider's candidates
     for (const h of near) {
       const d = dn.getServerDetails(h)
       if (!d?.isOnline || !d.isConnectedToCurrentServer) continue
+      if (d.modelId !== LAB_MODEL && !d.isStationary && (d.hasSession || reg[h] !== undefined) && ns.isRunning(DNET_FILES[0], h)) carriers.push({ host: h, diff: d.difficulty, depth: d.depth })
       if (d.modelId === LAB_MODEL) {
         await walkLab(ns, h, d, labState, say)
         continue
@@ -107,14 +117,30 @@ async function crawl(ns, me, say) {
       rooted++
       await spread(ns, h, d, reg, say)
     }
-    say({ t: 'alive', depth, near: near.length, rooted, known: Object.keys(reg).length })
+    // AN AIR GAP BELOW (rows 8/16/24 are empty): ride a crawler-carrying neighbour across (dnet-ride.js)
+    let ride = null
+    if (gapBelowOf(depth) && !ns.isRunning(RIDER, me)) {
+      ride = riderTargetOf(carriers, depth)
+      if (ride) {
+        const per = ns.getScriptRam(RIDER, me)
+        const threads = per > 0 ? Math.floor((ns.getServerMaxRam(me) - ns.getServerUsedRam(me)) / per) : 0
+        const pid = threads >= 1 ? ns.exec(RIDER, me, { threads }, ride.host) : 0
+        if (!(pass % 12)) say({ t: 'ride', host: ride.host, state: pid ? 'inducing' : 'no-room', threads, p: ride.p })
+      } else if (!(pass % 12)) say({ t: 'ride', host: null, state: 'no-carrier', why: `row ${depth}: no rooted neighbour with a crawler that can migrate past row ${depth + 1}` })
+    }
+    say({ t: 'alive', depth, near: near.length, rooted, known: Object.keys(reg).length, riding: ride?.host ?? null })
     await ns.sleep(PASS_SLEEP_MS)
   }
 }
 
 async function solveHost(ns, h, d, hist, reg, done, say) {
   const dn = ns.dnet
-  const s = solverOf(d, h)
+  // a retry after a give-up starts afresh (retry n: a search's own seed, dnetplan kingOfTheHillSolver)
+  if (done.get(h) === 'gave up') {
+    hist.set(h, [])
+    hist.set(`#${h}`, (hist.get(`#${h}`) ?? 0) + 1)
+  }
+  const s = solverOf(d, h, hist.get(`#${h}`) ?? 0)
   if (!s.solvable) {
     if (!done.has(h)) say({ t: 'unsolved', host: h, model: d.modelId, depth: d.depth, why: s.why })
     done.set(h, s.why)
@@ -173,44 +199,51 @@ async function spread(ns, h, d, reg, say) {
 
 async function walkLab(ns, lab, d, st, say) {
   const dn = ns.dnet
-  // cleared already (by this copy or another): only the reward cache is left to open, on the lab itself
+  const me = ns.getHostname()
+  // cleared already (by a walker here or elsewhere): only the reward cache is left to open, on the lab itself
   if (ns.hasRootAccess(lab)) {
-    if (ns.ls(lab, '.cache').length) {
+    if (ns.ls(lab, '.cache').length && !ns.isRunning(DNET_FILES[0], lab, '--cache')) {
       const s = await dn.authenticate(lab, 'north') // a cleared lab answers Success, and the session lets scp/exec in
       if (s?.success) {
         ns.scp(DNET_FILES, lab)
-        ns.exec(DNET_FILES[0], lab, { threads: 1, preventDuplicates: true }, '--cache')
-      }
+        const pid = ns.exec(DNET_FILES[0], lab, { threads: 1, preventDuplicates: true }, '--cache')
+        if (!pid) say({ t: 'lab', host: lab, state: 'cache-exec-failed', why: `exec ${DNET_FILES[0]} --cache on ${lab} returned 0` })
+      } else say({ t: 'lab', host: lab, state: 'cache-no-session', why: `the cleared lab refused a session: code ${s?.code} ${String(s?.message ?? '').slice(0, 60)}` })
     }
     return
   }
-  if (st.retryAt > Date.now()) return // charisma short a minute ago: the walk waits instead of re-asking every pass
-  for (let steps = 0; steps < 4000; steps++) {
-    const rep = await dn.labreport()
-    if (!rep?.success) {
-      say({ t: 'lab', host: lab, state: 'no-report', msg: String(rep?.message ?? '').slice(0, 120) })
-      return
-    }
-    const dir = labStep(st, rep)
-    if (dir === null) {
-      say({ t: 'lab', host: lab, state: 'exhausted', at: rep.coords })
-      return
-    }
-    const a = await dn.authenticate(lab, dir)
-    if (a?.success) {
-      say({ t: 'lab', host: lab, state: 'cleared', need: d.requiredCharismaSkill, steps })
-      // the reward cache sits on the lab: open it there (a copy of this script, --cache)
-      ns.scp(DNET_FILES, lab)
-      ns.exec(DNET_FILES[0], lab, { threads: 1, preventDuplicates: true }, '--cache')
-      return
-    }
-    if (/charism|moxie|charm/i.test(String(a?.message ?? ''))) {
-      // reported once a minute, not every pass (the port holds 50)
-      if (!(st.shortAt > Date.now() - 60000)) say({ t: 'lab', host: lab, state: 'cha-short', need: d.requiredCharismaSkill })
-      st.shortAt = Date.now()
-      st.retryAt = Date.now() + 60000
-      return
-    }
+  // THE WALK is dnet-lab.js's, with every thread this host can spare (a step is one authentication at the
+  // lab's charisma: threads divide it; the position is per pid, so one walker walks the whole maze)
+  if (ns.isRunning(LAB_WALKER, me, lab) || ns.isRunning(STASIS, me)) return
+  // the host's own block, freed while the lab is in reach (the walker's threads): each call frees
+  // 0.04 x 0.92^(difficulty+1) x (1 + cha/100) GB in 8000 x 500/(500 + cha) ms (ramblock.ts, Darknet.ts:542) —
+  // ~0.15GB a second at lab 4 — so up to 8 calls a pass, until the link and a 16-thread walker fit
+  const per = ns.getScriptRam(LAB_WALKER, me)
+  const linkGb = ns.getScriptRam(STASIS, me)
+  for (let i = 0; i < 8 && dn.getBlockedRam(me) > 0 && ns.getServerMaxRam(me) - ns.getServerUsedRam(me) < linkGb + 16 * per; i++) {
+    const r = await dn.memoryReallocation(me)
+    if (!r?.success) break
   }
-  say({ t: 'lab', host: lab, state: 'step-cap' })
+  if (st.retryAt > Date.now()) return // a walker ended (charisma short, lost) or found no room under a minute ago
+  // PIN THIS HOST before walking (dnet-stasis.js): a move takes the walker off the lab's row, a restart kills
+  // it, and either restarts the maze from the entrance. Only while a link is free (the limit is 1-4), and
+  // only with room for the link AND a walker; otherwise walk unpinned (parallel walkers on other hosts).
+  const linked = dn.getStasisLinkedServers()
+  const room = ns.getServerMaxRam(me) - ns.getServerUsedRam(me)
+  if (!linked.includes(me) && linked.length < dn.getStasisLinkLimit() && room >= linkGb + per && !st.linkTried) {
+    st.linkTried = true // once per crawler life: a refused link is reported, not retried every pass
+    const pid = ns.exec(STASIS, me, 1)
+    say({ t: 'lab', host: lab, state: pid ? 'linking' : 'link-exec-failed', why: `${me}: ${linked.length} of ${dn.getStasisLinkLimit()} links in use` })
+    if (pid) return // the link takes 30s x 1000/(cha + 1000); the walker starts on a later pass
+  }
+  const free = ns.getServerMaxRam(me) - ns.getServerUsedRam(me)
+  const threads = per > 0 ? Math.floor(free / per) : 0
+  if (threads < 1) {
+    st.retryAt = Date.now() + 15000
+    say({ t: 'lab', host: lab, state: 'no-room', why: `${me}: ${free.toFixed(1)}GB free, the walker needs ${per}GB a thread`, need: d.requiredCharismaSkill })
+    return
+  }
+  st.retryAt = Date.now() + 60000
+  const pid = ns.exec(LAB_WALKER, me, { threads }, lab)
+  say({ t: 'lab', host: lab, state: pid ? 'walking' : 'walker-exec-failed', threads, need: d.requiredCharismaSkill })
 }

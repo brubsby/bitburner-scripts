@@ -184,7 +184,9 @@ import { rwRegimeOf, RW_PRIOR, RW_AGE, rwAgeKnee, capitalAgeInputsOf } from 'tra
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
 import { nodePolicyOverrideOf } from 'bbnodepolicy.js'
-import { ROUTE_PIN, routePinOf, pinnedRouteOf, nodeRouteOf, nodeRuleOf, routeDistOf, unpinnedOf, routeReportOf } from 'routepin.js'
+import { ROUTE_PIN, routePinOf, pinnedRouteOf, nodeRouteOf, nodeRuleOf, routeDistOf, unpinnedOf, routeReportOf, NODE_ROUTE_RULES } from 'routepin.js'
+import { labInstallOf, labOf } from 'dnetplan.js'
+import { chaLabsCtxOf } from 'chaplan.js'
 import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT, routeGiftChainOptionsOf } from 'stanekepoch.js'
 import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, HACK_CHARGER_RAMP, bladeChargerThrOf, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
@@ -7112,6 +7114,20 @@ async function act(ns, canJoin, info, note) {
       // guess, so on a run that has never had one this channel prices 0 and
       // says why.
       ...karmaChannelCtx(ns, info, player),
+      // THE CHARISMA CHANNEL (BitNode 15's labyrinth route only, chaplan.chaLabsCtxOf): charisma
+      // multipliers priced by the lab climbs they shorten (objective.charismaValue); {} elsewhere.
+      ...(info?.currentNode === 15 && NODE_ROUTE_RULES[15]?.labReady === true
+        ? chaLabsCtxOf({
+            node: info.currentNode,
+            labRoute: true,
+            labIndex: labOf(new Set(info?.ownedAugs?.keys?.() ?? []), info.currentNode).index,
+            player,
+            nodeMult: bitNodeMults(info)?.CharismaLevelMultiplier,
+            homeGB: homeRamOf(readJson(ns, '/tel/homeup.txt'), readJson(ns, '/tel/boot.txt'), info?.lastNodeReset),
+            reserveGb: homeReserveGb(singularityRamMultiplier(info)),
+            hoursPerLn: readJson(ns, GATE)?.objective?.exitSensitivity?.hoursPerLn?.hacking ?? null,
+          })
+        : {}),
     }
 
     // THE PLAN IS BOUGHT AT WHAT A RAISE REACHES (nodeecon.batchReach): the
@@ -9671,6 +9687,14 @@ async function act(ns, canJoin, info, note) {
       // from a flag we set ourselves, so it is true exactly when the purchase
       // is real.
       terminal: (plan?.buy ?? []).some((b) => b.name === 'The Red Pill') || pending.includes('The Red Pill'),
+      // THE LAB INSTALL (BitNode 15 on the labyrinth route, dnetplan.labInstallOf): a queued labyrinth reward
+      // is installed at once — the next labyrinth exists only after it (labyrinth.ts getCurrentLabName).
+      labInstall: labInstallOf({
+        node: info?.currentNode ?? null,
+        labRoute: NODE_ROUTE_RULES[15]?.labReady === true && exitCompare?.route !== 'blade',
+        installed: new Set(info?.ownedAugs?.keys?.() ?? []),
+        queued: pending,
+      }),
       // THE COUNT GATE, reported from the plan itself rather than assumed.
       //
       // countShort  how many distinct augmentations the exit still needs.

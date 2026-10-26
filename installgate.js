@@ -416,6 +416,15 @@ export function shouldInstall(o) {
   // way to strand the run. progress.js decides sprint-versus-more-installs
   // afterwards on its own arithmetic.
   const terminal = o.terminal === true
+  // --- THE LAB INSTALL (BitNode 15's labyrinth route: dnetplan.labInstallOf) --
+  //
+  // A labyrinth's reward augmentation is QUEUED when its cache is opened, and the
+  // next labyrinth does not exist until it is INSTALLED (labyrinth.ts
+  // getCurrentLabName reads Player.augmentations). On the lab route the queued
+  // reward is the gate to the exit, exactly as The Red Pill is on the hacking
+  // route — and like it, it carries little or no hacking multiplier, so every
+  // rate test below would hold it. Same override, its own name.
+  const labInst = o.labInstall?.install === true
 
   // --- THE COUNT BATCH: the other install M says nothing about ---------------
   //
@@ -473,7 +482,7 @@ export function shouldInstall(o) {
   // THE BLADEBURNER ROUTE skips the two rate guards below (M <= 1, the first
   // sample): both ask a hacking-multiplier question its exit does not pose.
   const bladeDecides = o.bladeRoute === true
-  if (!terminal && !countBanks && !bladeDecides) {
+  if (!terminal && !labInst && !countBanks && !bladeDecides) {
     if (M <= 1) return no(`the queued augmentations give no gain on ${RATE_CHANNELS.join('/')} (M=${M})`, { countShort: countShortEarly, countGain: countGainEarly, countFloor })
   }
 
@@ -565,7 +574,7 @@ export function shouldInstall(o) {
   // DISTINCT, which the plan states directly; there is no rate for a second
   // sample to reveal, and batch size is the anti-thrash floor's job, not this
   // guard's. IG16 pins each guard separately, as the terminal case does.
-  if (!terminal && !countBanks && !bladeDecides && (!prev || !num(prev.ageMs) || !num(prev.M) || prev.M <= 0 || ageMs <= prev.ageMs)) {
+  if (!terminal && !labInst && !countBanks && !bladeDecides && (!prev || !num(prev.ageMs) || !num(prev.M) || prev.M <= 0 || ageMs <= prev.ageMs)) {
     return {
       ...base(),
       install: false,
@@ -872,7 +881,7 @@ export function shouldInstall(o) {
   // decision held from 14:28Z while the fresh pricing read now 3.4h vs never
   // 3.1h, and the 15:18Z install priced +0.27h while each new life priced
   // itself +0.89-1.04h (EXIT JUMP AT INSTALL).
-  const bladeGuard = blade && !terminal && exitDecides && !!bayes && bayes.install === true ? bladeLoopGuardOf({ nowH: ex.nowH, neverH: ex.neverH, biasH: o.bladeInstallBiasH, biasWhy: o.bladeInstallBiasWhy, spreadH: o.bladeInstallSpreadH, scatterH: ex.neverScatterH, lifeH: num(ageMs) ? ageMs / 3.6e6 : null }) : null
+  const bladeGuard = blade && !terminal && !labInst && exitDecides && !!bayes && bayes.install === true ? bladeLoopGuardOf({ nowH: ex.nowH, neverH: ex.neverH, biasH: o.bladeInstallBiasH, biasWhy: o.bladeInstallBiasWhy, spreadH: o.bladeInstallSpreadH, scatterH: ex.neverScatterH, lifeH: num(ageMs) ? ageMs / 3.6e6 : null }) : null
   // SAVING FOR HOME OUTRANKS INSTALLING NOW (o.homeSave: progress.js's home
   // verdict at W = 0, exitplan.spendExit's save arm — exit(hold the life to
   // the hour the stream reaches home's price, buy, install) against
@@ -880,10 +889,11 @@ export function shouldInstall(o) {
   // When it wins, the install waits for home: home is the one purchase every
   // later life keeps, and an install now resets the money that buys it.
   // Not on the terminal install, a mandated hold or the Bladeburner route.
+  // (a lab install waits for a winning home save too: home is permanent, and the next lab's farm runs on it)
   const homeSaveHold = !blade && !terminal && !mandateHold && o.homeSave?.wins === true
   const install = blade
-    ? !mandateHold && !destructive && (terminal || (exitDecides && !!bayes && bayes.install === true && bladeGuard?.ok !== false))
-    : !mandateHold && !homeSaveHold && (terminal || (!unpricedHold && (countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))))
+    ? !mandateHold && !destructive && (terminal || labInst || (exitDecides && !!bayes && bayes.install === true && bladeGuard?.ok !== false))
+    : !mandateHold && !homeSaveHold && (terminal || labInst || (!unpricedHold && (countInstall || ((exitDecides || expOk) && netGain && !waitBeats && !countStalls && !destructive))))
   // THE PLAN AND THIS GATE AGREE, or the gate names why it overrode it.
   const planOverride =
     bayes && bayes.install !== install
@@ -895,6 +905,8 @@ export function shouldInstall(o) {
           ? `saving for home (${o.homeSave?.why ?? 'the save verdict wins'})`
         : terminal
           ? 'the terminal install'
+          : labInst
+          ? 'the lab install'
           : destructive
             ? `the ${o.binding?.gate ?? '?'} gate the plan's trajectory does not carry (${o.binding?.why ?? ''})`
             : countInstall
@@ -910,6 +922,7 @@ export function shouldInstall(o) {
     ...base(),
     install,
     terminal,
+    labInstall: o.labInstall ?? null,
     marginal,
     expOk,
     f,
@@ -980,6 +993,8 @@ export function shouldInstall(o) {
       ? `hold: ${o.binding?.why ?? 'a mandated campaign is running'} — held even though ${terminal ? 'The Red Pill is queued' : 'the gate would install'}; it installs once the campaign completes`
       : terminal
       ? `install: THE RED PILL is in the plan (${queued} aug(s)) — the augmentation that ends the BitNode carries no multiplier, so M=${M.toFixed(4)} is expected and is NOT a reason to hold. Installing.`
+      : labInst
+      ? `install: THE LAB INSTALL — ${o.labInstall.why ?? 'a labyrinth reward is queued'} (${queued} aug(s), M=${M.toFixed(4)}: not a reason to hold — the next labyrinth exists only once it is installed)`
       : countInstall && !(expOk && netGain && !waitBeats)
       ? `install: COUNT BATCH — ${countGain} distinct augmentation(s) toward the ${countShort} the exit still needs, ` +
         `decided by the ${countDecidedHow === 'plan' ? `committed plan (${bayes.key}: ${bayes.why ?? ''})` : countDecidedHow === 'exit-sim' ? `count-aware simulated exit: installing now ${ex.nowH.toFixed(2)}h against the best wait ${exitWait ? exitWait.H.toFixed(2) + 'h' : tieWait ? `${tieWait.H.toFixed(2)}h after ${(tieWait.waitMs / 3600000).toFixed(1)}h — a ${(ex.nowH - tieWait.H).toFixed(2)}h saving inside the forecast error (${waitTolPerH.toFixed(2)}h per hour of waiting, ${ex.waitTolWhy ?? 'stated'})` : 'unpriced'}` : countDecidedBy === 'priced' ? 'priced timing: ' + (timing?.why ?? '') : 'floor of ' + countFloor + ' (the timing is not yet priced: ' + (timing?.why ?? 'no timing supplied') + ')'}. ` +

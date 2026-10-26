@@ -20,7 +20,7 @@
 //          --kg-bins 5 | --mf-k 20 (draws re-priced on direct sims for the multi-fidelity check)
 //          --w0-window H (the w0r1d_d43m0n window fixed at H hours: 1 = the old model)
 //          --sf15 1|2|3 (SF15's target: 1 = the user's decision 2026-10-25, BN15.1 played LAST; 3 prices
-//          BN15.2/15.3 after it) | --lab15 H (BN15's labyrinth leg, routes.mjs LAB15 ASSUMED; default mid)
+//          BN15.2/15.3 after it) | --lab15 H (BN15's labyrinth leg, routes.mjs LAB15 DERIVED by tools/sim/lab15.mjs; default mid)
 //          --lab15-ready (price BN15's 'lab' route as if the stack could play it: routepin NODE_ROUTE_RULES[15].labReady)
 //          --w0-prior lo,mid,hi (override the derived w0 prior: 0,200,1000 = the old hand one)
 //          --w0-live (the w0r1d_d43m0n bonus worth only the climb's shortening L0 - L*: a final
@@ -320,7 +320,7 @@ const lvOf = (s) => (n) => lvl(s, n)
 const W0_WINDOW = arg('--w0-window') !== undefined ? Number(arg('--w0-window')) : null
 // --sf15 L: SF15's target level (state.mjs: 1 = the user's decision, BN15.1 last; 3 prices BN15.2/15.3 after it)
 if (arg('--sf15') !== undefined) (await import('./state.mjs')).setSf15Target(Number(arg('--sf15')))
-// --lab15 H: BN15's labyrinth leg over its hacking exit (routes.mjs LAB15, ASSUMED; default its mid)
+// --lab15 H: BN15's labyrinth leg over its hacking exit (routes.mjs LAB15, DERIVED by tools/sim/lab15.mjs; default its mid)
 const LAB15_H = arg('--lab15') !== undefined ? Number(arg('--lab15')) : null
 // --five-sleeves: 5 sleeves everywhere (SF10.2/10.3 and BN10's own extra sleeve priced at nothing: the pre-fleet plan)
 // --covenant5 auto|10.2|10.3|none: THE USER'S INVARIANT (2026-10-14) — the 5th Covenant sleeve WILL be
