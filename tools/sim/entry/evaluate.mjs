@@ -76,7 +76,12 @@ export function acceptConsistencyOf({ entry, accepted, phase = 'accepted' }) {
  * entry read eRep 0.63 off BN13's gate, its own pass measured 0, and the next pass moved the hack arm
  * 8.0h -> 18.2h with nothing decided). Each input is listed under the events that may move it:
  *   clock   real time between the passes: money, the measured rates and their ages, the market, the fleet, and the
- *           life cadence built on the measured income (cadence.table money, cadenceShape: BN2.3 2026-10-25, 0.001%)
+ *           life cadence built on the measured income (cadence.table money, cadenceShape: BN2.3 2026-10-25, 0.001%);
+ *           the reputation rate (repPerSec, repSdLn: progress.js repRatePosterior — trajectory.estimateBaseRepPerSec
+ *           at the player's LIVE hacking, intelligence and faction_rep, x the posterior's k: faction_rep moves with
+ *           the IPvGO farm's node power in real time (Go/effects/effect.ts, the same clock as `go` and
+ *           preInstallRepMult here), hacking with the batcher's exp, k with the faction-work samples between
+ *           passes; the BN15.1 entry dry-run 2026-10-26 read 0.353 -> 0.373/s between the accepted and joined passes)
  *   accept  Stanek's Gift accepted (Genesis x0.9 on every multiplier, Augmentations.ts:1593-1617): what is a
  *           function of the multipliers, and the gift's own life context; hackingMult must move by exactly x0.9
  *   act     act.js ran its orders (money spent, work started, factions joined): what the plan and the
@@ -88,7 +93,7 @@ export function acceptConsistencyOf({ entry, accepted, phase = 'accepted' }) {
  */
 export const DRIFT_REL_TOL = 1e-6
 export const DRIFT_DRIVERS = {
-  clock: /^(money|incomePerSec|incomeFlatPerSec|incomeFromPrior|flatIncomePerSec|contractMoney\w*|lifeIncome|hacknet\.nodeMoney|hacking|hackingExp|expPerSec|expFlatPerSec|freshExpLagH|capital\w*|go|goCadenceMult|favorStream\w*|preInstallRepMult|split|incomeSplitDelta|incomeModel\.(otherGB|homeGB|moneyGB)|giftLife\.(fleetGB|hosts)|carriedIncome|freshHacknet|contractRep|cadence\w*|cycleHours|multGainPerCycle)(\.|$)/,
+  clock: /^(money|repPerSec|repSdLn|incomePerSec|incomeFlatPerSec|incomeFromPrior|flatIncomePerSec|contractMoney\w*|lifeIncome|hacknet\.nodeMoney|hacking|hackingExp|expPerSec|expFlatPerSec|freshExpLagH|capital\w*|go|goCadenceMult|favorStream\w*|preInstallRepMult|split|incomeSplitDelta|incomeModel\.(otherGB|homeGB|moneyGB)|giftLife\.(fleetGB|hosts)|carriedIncome|freshHacknet|contractRep|cadence\w*|cycleHours|multGainPerCycle)(\.|$)/,
   accept: /^(hackingMult|hacknet|freshHackCum|freshExpLagH|incomePerSec|incomeFlatPerSec|expPerSec|repPerSec|repDonate|donationCost|split|incomeSplitDelta|incomeModel|cadence\w*|cycleHours|multGainPerCycle|giftLife|contractRep|freshHacknet)(\.|$)/,
   act: /^(money|rep\w*|eRep|eBudget|nextInstallGain|installGains|persistBaseline|incomeModel|exitFavor|exitRep|rejoin\w*|join\w*|terminalRep|donationCost|cadence\w*|cycleHours|multGainPerCycle|contractRep|fourS|graft\w*|carriedIncome|lifeIncome|hacknet|go|favorStream\w*)(\.|$)/,
   join: null,
@@ -139,6 +144,11 @@ export const EXIT_POINT_RATIO = 3
 export function exitOffRouteOf(plan) {
   const br = plan?.decisions?.bladeRoute
   const ex = plan?.exit
+  // BitNode 15's labyrinth route (the lab arm priced, labroute.js): the exit is the route's, labs included
+  if (br?.key === 'hack' && br.lab?.priced === true && ex) {
+    if (!/labyrinth route/.test(String(ex.source ?? ''))) return { what: `the stack acts on the labyrinth route but the published exit is '${short(ex.source, 120)}'`, cause: "progress.js publishPlan: a hacking decision's exit without the labs (the route record's 'hack' distribution is the lab arm's)" }
+    return null
+  }
   if (br?.key !== 'blade' || !ex) return null
   if (!/Bladeburner route/.test(String(ex.source ?? ''))) return { what: `the stack acts on the black ops but the published exit is '${short(ex.source, 120)}'`, cause: 'progress.js publishPlan: the exit of a decision priced on the hacking route' }
   if (fin(br.bladeH) && br.bladeH > 0 && fin(ex.q50) && (ex.q50 > br.bladeH * EXIT_POINT_RATIO || ex.q50 * EXIT_POINT_RATIO < br.bladeH)) return { what: `the published exit's median ${ex.q50}h is not the black ops' (point ${br.bladeH}h, hack ${br.hackH ?? 'null'}h)`, cause: `the route record's distribution is another route's (pin ${br.pin?.pricedKey ?? '-'}, node rule ${br.nodeRule ? `${br.nodeRule.pricedKey} inDecision ${br.nodeRule.inDecision === true}` : '-'}): routepin.routeDistOf / plan.decideBladeRouteGen rule` }

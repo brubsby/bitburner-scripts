@@ -33,6 +33,10 @@ export const CHA_NODE_MULT = { 15: 1.1 } // BitNode.tsx case 15 CharismaLevelMul
 // the farm's target over a lab's charisma: AT the requirement every step pays the underleveled factor
 // (effects.ts calculateAuthenticationTime: cha <= required -> x 1.5 + (req + 50)/(cha + 50), ~2.5x)
 export const LAB_CHA_MARGIN = 1.02
+// THE FARM'S CEILING (dnet-seed.js farmStep imports it): one-thread workers, at most FARM_MAX of them (each is a
+// script the game loop schedules) — so at most FARM_MAX_GB of home RAM farms, however big home is
+export const FARM_MAX = 400
+export const FARM_MAX_GB = FARM_MAX * WORKER_GB
 
 /** skill.ts calculateSkill */
 export function levelOf(exp, mult) {
@@ -86,8 +90,9 @@ export function farmRateOf({ cha, workers, expMult = 1, int = 0, boots = false, 
  * h = Infinity when the farm is empty, h = 0 when already there. `extraPerSec` is any other exp source
  * (sleeves at university, the player's course) already scaled to the player.
  */
-export function climbOf({ target, mult, expMult = 1, ramGB = 0, exp0 = 0, int = 0, boots = false, sf15 = 0, extraPerSec = 0, workerGB = WORKER_GB }) {
-  const workers = Math.floor(Math.max(0, ramGB) / workerGB)
+export function climbOf({ target, mult, expMult = 1, ramGB = 0, exp0 = 0, int = 0, boots = false, sf15 = 0, extraPerSec = 0, workerGB = WORKER_GB, maxWorkers = FARM_MAX }) {
+  // the farm is capped at FARM_MAX workers (dnet-seed.js farmStep): RAM past FARM_MAX_GB buys nothing
+  const workers = Math.min(maxWorkers, Math.floor(Math.max(0, ramGB) / workerGB))
   const need = expFor(target, mult)
   if (exp0 >= need) return { h: 0, exp: need, workers, why: 'already there' }
   if (workers <= 0 && !(extraPerSec > 0)) return { h: Infinity, exp: need, workers, why: 'no farm RAM and no other charisma source' }
@@ -200,3 +205,130 @@ export function labsAheadOf(index) {
   }
   return out
 }
+
+// ---------------------------------------------------------------- THE LAB SCHEDULE (the charisma trajectory)
+/** A lab install the hacking route would have made later: the life's reset (lab15.mjs's install allowance, mid). */
+export const LAB_INSTALL_H = 0.25
+/** The lab augmentations' charisma_exp (Augmentations.ts:1911: The St4ff of Asclepius 1.1), installed before lab k (index k-1). */
+export const LAB_AUG_CHA_EXP = [1, 1, 1, 1, 1.1]
+/** The lab augmentations' charisma product installed before lab k (index k-1): Wings, Boots, Hammer (Staff 1). */
+export const LAB_AUG_BEFORE = LAB_CHA.map((_, k) => LAB_AUG_CHA.slice(0, k).reduce((p, x) => p * x, 1))
+
+/**
+ * THE LAB SCHEDULE ON A LIFE TRAJECTORY: `lives` [{startH, lenH, prod, ramGB}] — the hacking route's lives in
+ * order (the LAST is the final window, after the terminal install), each with the charisma augmentations'
+ * product it runs at (NeuroFlux included) and the farm's RAM; `base` {mult (Source-Files x the node's 1.1),
+ * expMult, int}; `crawlMin` {k: game minutes from the life's start to lab k's reward queued, measured}.
+ * Lab k is cleared in the first life where its climb from exp 0 (an install resets exp) at base x the lab
+ * augmentations x prod, plus its crawl, fits in what is left of the life; a cleared lab 1-4 forces its install
+ * (dnetplan.labInstallOf) — LAB_INSTALL_H to the leg, and the next lab climbs from 0 in what is left of that
+ * life. Lab 5 (The Red Pill) must clear before the final window. Labs left after the last pre-final life are
+ * HELD there (the install held until each climb completes: hours past the life's end are the leg's); a climb
+ * past capH FAILS (priced at capH: the black ops are the fallback). From the LIVE state: `from` = the labs
+ * already installed (dnetplan.labOf index; `prod` then already carries their charisma — only the ones still
+ * ahead are applied) and `exp0` the charisma exp the first life holds now. Returns {legH, heldH, installs,
+ * failed, detectH (a failed or held schedule: the start of the life it is held in — when the climb is seen to stall),
+ * doneH (lab 5's clear on the lives' clock, held included), labs: [{lab, life, mult, climbH, needH, atH}]}.
+ */
+export function labScheduleOf({ lives, base, crawlMin = {}, capH = CLIMB_CAP_H, installH = LAB_INSTALL_H, margin = LAB_CHA_MARGIN, from = 0, exp0 = 0, climb = climbOf }) {
+  const labs = []
+  const pre = (lives ?? []).slice(0, -1)
+  const k0 = Math.max(0, Math.min(LAB_CHA.length, Math.floor(from) || 0))
+  let k = k0
+  let installs = 0
+  let heldH = 0
+  let failed = false
+  let detectH = null
+  let doneH = null
+  let e0 = exp0 > 0 ? exp0 : 0 // the first climb's exp in hand (the live life's); every later one starts at 0
+  const needOf = (kk, prod, ramGB) => {
+    const mult = base.mult * (LAB_AUG_BEFORE[kk] / LAB_AUG_BEFORE[k0]) * prod
+    const xm = (base.expMult ?? 1) * (LAB_AUG_CHA_EXP[kk] / LAB_AUG_CHA_EXP[k0])
+    const c = climb({ target: Math.ceil(LAB_CHA[kk] * margin), mult, expMult: xm, ramGB, int: base.int ?? 0, exp0: e0 })
+    const crawlH = (Number.isFinite(crawlMin[kk + 1]) ? crawlMin[kk + 1] : 30) / 60
+    return { mult, climbH: c.h, needH: c.h + crawlH }
+  }
+  for (let j = 0; j < pre.length && k < LAB_CHA.length; j++) {
+    const L = pre[j]
+    if (j > 0) e0 = 0
+    let t = 0
+    while (k < LAB_CHA.length) {
+      const n = needOf(k, L.prod, L.ramGB)
+      if (!(n.needH <= L.lenH - t)) break
+      t += n.needH
+      e0 = 0
+      labs.push({ lab: k + 1, life: j, mult: +n.mult.toFixed(4), climbH: +n.climbH.toFixed(3), needH: +n.needH.toFixed(3), atH: +(L.startH + t).toFixed(3) })
+      if (k === LAB_CHA.length - 1) doneH = L.startH + t
+      else installs++
+      k++
+    }
+  }
+  if (k < LAB_CHA.length) {
+    // HELD in the last pre-final life (or the first life when there is no other): what is left climbs there in turn
+    const j = Math.max(0, pre.length - 1)
+    const L = pre[j] ?? lives?.[0] ?? { startH: 0, lenH: 0, prod: 1, ramGB: 0 }
+    if (j > 0) e0 = 0
+    let t = labs.filter((l) => l.life === j).reduce((s, l) => s + l.needH, 0)
+    for (; k < LAB_CHA.length; k++) {
+      const n = needOf(k, L.prod, L.ramGB)
+      e0 = 0
+      const over = !(n.needH <= capH)
+      if (over) failed = true
+      const need = over ? capH : n.needH
+      t += need
+      labs.push({ lab: k + 1, life: over ? null : j, mult: +n.mult.toFixed(4), climbH: +Math.min(n.climbH, capH).toFixed(3), needH: +need.toFixed(3), atH: +(L.startH + t).toFixed(3), held: true, ...(over ? { capped: true } : {}) })
+      if (k < LAB_CHA.length - 1) installs++
+    }
+    heldH = Math.max(0, t - L.lenH)
+    doneH = L.startH + t
+    // a hold (a failed climb is one) is seen at the held life's start: the route can fall back from there (the caller prices it)
+    if (heldH > 0 || failed) detectH = L.startH
+  }
+  return { legH: +(heldH + installs * installH).toFixed(3), heldH: +heldH.toFixed(3), installs, failed, detectH: detectH === null ? null : +detectH.toFixed(3), doneH: doneH === null ? null : +doneH.toFixed(3), labs }
+}
+
+/** The node-fraction grid of the trajectory band (phi = t / T). */
+export const TRAJ_PHI = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+/**
+ * THE BAND (tools/sim/chatraj.mjs -> chatraj.json -> LAB_TRAJ): per node fraction phi, the quantiles over the
+ * measured clears of the charisma product the life containing phi x T ran at. `clears` [{T, lives: [{startH, prod}]}].
+ */
+export function trajBandOf(clears) {
+  const q = (xs, p) => {
+    const v = [...xs].sort((a, b) => a - b)
+    if (!v.length) return null
+    const i = (v.length - 1) * p
+    const lo = Math.floor(i)
+    return +(v[lo] + (v[Math.min(v.length - 1, lo + 1)] - v[lo]) * (i - lo)).toFixed(4)
+  }
+  return TRAJ_PHI.map((phi) => {
+    const xs = (clears ?? []).map((c) => {
+      const t = phi * c.T
+      const l = [...c.lives].reverse().find((x) => x.startH <= t + 1e-9) ?? c.lives[0]
+      return l?.prod ?? 1
+    })
+    return { phi, q10: q(xs, 0.1), q25: q(xs, 0.25), q50: q(xs, 0.5), q75: q(xs, 0.75) }
+  })
+}
+
+// ---------------------------------------------------------------- THE CRAWL (measured) and the trajectory's step function
+// MEASURED: game minutes from the life's start (charisma at the lab's) to the reward queued, tools/sim/entry/dnetlab.mjs
+// on the BN15.1 entry from the live save, warp 8, two full runs of all five labs (2026-10-25):
+//   run3 (the walker before the stasis link and the block-freeing loop)  1.21 / 7.29 /  7.34 / 50.32 / 20.43
+//   run4 (the code of 3d894b0)                                            0.88 / 9.57 / 24.52 / 24.12 / 26.57
+export const CRAWL_RUNS = { run3: [1.21, 7.29, 7.34, 50.32, 20.43], run4: [0.88, 9.57, 24.52, 24.12, 26.57] }
+export const CRAWL_MIN = Object.fromEntries([1, 2, 3, 4, 5].map((k) => [k, +((CRAWL_RUNS.run3[k - 1] + CRAWL_RUNS.run4[k - 1]) / 2).toFixed(2)]))
+export const CRAWL_MEASURED_AT = 'tools/sim/entry/dnetlab.mjs 2026-10-25 (two runs, warp 8)'
+
+/** A trajectory's installed charisma product at node fraction phi (its lives are a monotone step function). */
+export function trajProdAt(c, phi) {
+  let p = c?.lives?.[0]?.[2] ?? 1
+  for (const l of c?.lives ?? []) if (l[0] <= phi + 1e-9) p = l[2]
+  return p
+}
+
+/** Offline: a compact clear's lives on a node of T hours ([{startH, lenH, prod, ramGB}], chaplan.labScheduleOf's). */
+export function trajLivesOf(c, T) {
+  return (c?.lives ?? []).map(([s, l, p, gb]) => ({ startH: s * T, lenH: l * T, prod: p, ramGB: Math.min(gb ?? 0, FARM_MAX_GB) }))
+}
+

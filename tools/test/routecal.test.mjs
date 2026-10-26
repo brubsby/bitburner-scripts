@@ -219,7 +219,10 @@ export async function run() {
     // gift worse (150.3h vs 147.9h): the accept flipped one pass later.
     const c10 = new Check('RC10', "the node rule decides INSIDE the route decision: the acted route's distribution, its gift accept, the comparison only published (BN15.1 entry dry-run)")
     {
-      const RP = await import('routepin.js')
+      const RP0 = await import('routepin.js')
+      // the rule as it binds while the labyrinth route is not built (labReady false): labroute.test.mjs LR4/LR9 cover labReady true
+      const OFF = { ...RP0.NODE_ROUTE_RULES, 15: { ...RP0.NODE_ROUTE_RULES[15], labReady: false } }
+      const RP = { ...RP0, nodeRuleOf: (n, p) => RP0.nodeRuleOf(n, p, OFF), nodeRouteOf: (d, n, p) => RP0.nodeRouteOf(d, n, p, OFF) }
       const PL = await import('plan.js')
       const hp = bladeH * 0.2
       // the chain: hack + gift faster than hack; the black ops priced without the gift only (bladeWithGift false)

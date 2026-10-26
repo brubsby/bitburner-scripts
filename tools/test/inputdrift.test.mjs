@@ -173,6 +173,8 @@ export async function run() {
     const cases = [
       ['the BN5.2 entry: eRep / eBudget off the last node', v((x) => Object.assign(x, { eRep: 0.6293, eBudget: 0.2476 })), [], /eRep/],
       ['real time: money, the measured rates, the market', v((x) => Object.assign(x, { money: x.money + 2400, incomePerSec: x.incomePerSec * 1.01, capitalCap: (x.capitalCap ?? 1) * 1.001 })), [], null],
+      // BN15.1 entry dry-run 2026-10-26: 0.353 -> 0.373/s between the accepted and joined passes (the formula at the live hacking level)
+      ['real time: the reputation rate at the live skills', v((x) => Object.assign(x, { repPerSec: (x.repPerSec ?? 0.353) * 1.056 })), ['join'], null],
       ["the accept: Genesis's x0.9 and what the multipliers move", v((x) => Object.assign(x, { hackingMult: x.hackingMult * 0.9, incomePerSec: x.incomePerSec * 0.67, repPerSec: x.repPerSec * 0.9, freshHackCum: x.freshHackCum.map(([h, m]) => [h, m * 0.5]) })), ['accept'], null],
       ['an accept that moved hacking by x0.8', v((x) => Object.assign(x, { hackingMult: x.hackingMult * 0.8 })), ['accept'], /hackingMult/],
       ['x0.9 with no accept', v((x) => Object.assign(x, { hackingMult: x.hackingMult * 0.9 })), [], /hackingMult/],

@@ -654,6 +654,13 @@ const WATCHDOG_DEFER_MAX_MIN = 120;
   const probs = routeHealthOf({ route: prog?.route ?? null, stanek: stRec, node: now.bitNode ?? null });
   for (const p of probs) fail(`${p.problem}: ${p.detail}`, `progress.txt ${prog?.at ?? "absent"} route ${JSON.stringify(prog?.route ? { route: prog.route.route, priced: prog.route.priced, pinned: prog.route.pinned } : null)}`);
   if (!probs.length && prog?.route?.node === now.bitNode) note(`route: acting on '${prog.route.route}' (priced '${prog.route.priced ?? "none"}'${prog.route.pinned ? `, PINNED by ${prog.route.pin?.file}` : ""}${prog.route.gift?.accepted ? `, gift priced in: ${prog.route.gift.pricedWithGift}` : ""})`);
+  // LAB CLIMB STALLED (labroute.labClimbHealthOf, BitNode 15 on the labyrinth route): the charisma multiplier
+  // and the labs installed, read from the SAVE, against the measured trajectories' band at this node fraction
+  const { labClimbHealthOf } = await import("../labroute.js");
+  const labRoute = prog?.route?.node === now.bitNode ? prog.route : null;
+  const labProbs = labClimbHealthOf({ state, route: labRoute, sf: state?.sourceFiles?.data ?? [], now: Date.now() });
+  for (const p of labProbs) fail(`${p.problem}: ${p.detail}`, `save charisma ${state?.skills?.charisma ?? "?"}, progress.txt route.lab ${JSON.stringify(labRoute?.lab ? { stalled: labRoute.lab.stalled, labIndex: labRoute.lab.labIndex, pFail: labRoute.lab.pFail } : null)}`);
+  if (!labProbs.length && labRoute?.lab) note(`lab route: labs installed ${labRoute.lab.labIndex ?? "?"}, leg ${labRoute.lab.legMeanH ?? "?"}h, P(fail) ${labRoute.lab.pFail ?? "?"}, insurance ${labRoute.lab.insurance?.why ?? "-"}`);
 }
 // NEXT NODE ENTRY UNPRICED (tools/sim/entry/health.mjs): the next node's entry, dry-run offline by
 // tools/plan-on-node.sh after the plan names it, must price every decision — so a start-of-node hold

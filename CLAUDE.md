@@ -305,9 +305,9 @@ classes (bbsim, NOT CALIBRATED live): the bootstrap policy +20.4 +- 5.0h (off th
 AugmentationMoneyCost, GraftableAugmentation.ts:20-22) -58.6 +- 9.0h of a ~89h rest, the model -49.7h. The exit
 model reads ~21% fast against bbsim with the boot on, -5% with it off (`tools/sim/bb15check.mjs`). The gameplan plays BN15 LAST
 (`state.mjs LAST`, `--sf15 3` prices 15.2/15.3) and prices it on the route the stack can play: blade 104.5h
-point / 113h expected (p10-p90 62-175h); `--lab15-ready` prices the 'lab' route (hack + `routes.mjs LAB15`,
-DERIVED by `tools/sim/lab15.mjs`: lo 1.8 / mid 8.1 / hi FAILS) at ~42.6h point / ~48h expected (the hack arm 34.5h the
-first slice priced + mid; its +5.5h spread — not re-run: plan.mjs was killed mid-surrogate on 2026-10-25).
+point / 113h expected (p10-p90 62-175h); the 'lab' route (hack + `routes.mjs LAB15`, DERIVED by `tools/sim/lab15.mjs`
+on the measured trajectories since 2026-10-26: lo 1.0 / mid 1.0 / hi 1.7h, P(fail) 0.15 — was lo 1.8 / mid 8.1 / hi FAILS
+on assumed columns) applies by itself now (labReady) at ~35.5h point (the hack arm 34.5h + mid; not re-run).
 **The labyrinth route (second slice, 2026-10-25)** — every piece played in the game's own darknet by
 `tools/sim/entry/dnetlab.mjs` (the BN15 entry from the live save; the stack's scripts with the real `ns`; timers
 warped, `DNET_WARP`, game time read off engine cycles; charisma INJECTED at each lab's requirement): **all five labs
@@ -327,11 +327,37 @@ one-thread heartbleed workers on darkweb (`dnet-cha.js`, 2.25GB; `dnet-seed.js f
 `freshlife.homeReserveGb`, only on the lab route, stops at the lab's charisma x1.02), calibrated -1.4/-2.7%
 against the game. Charisma augmentations are priced on the lab route by the climbs they shorten
 (`objective.charismaValue`: with vs without, through the exit's hours per hacking-ln; `chaplan.chaLabsCtxOf`).
-**labReady stays false**: labs 4-5 (2500/3000) need a charisma multiplier ~4.3 / ~5.0 — the cheap
-non-corporate charisma augs plus lab augs plus one or two corporate ones by then — which no BN15 life has bought
-(lab15.mjs: mid +8h, hi = labs 4-5 unreachable); and with labReady the stack acts on the priced key while the
-in-game exit has no lab arm and no fallback to the black ops. Not priced: the farm's home RAM against the
-batcher's money; sleeves' Leadership exp. Tests DN1-DN13; mutants `tools/staging/dnet-mutants.sh` (29, all caught).
+**labReady is TRUE (third slice, 2026-10-26)** — the two conditions closed. **The charisma climb, priced end to end:**
+the multiplier is MEASURED, not assumed — `tools/sim/chatraj.mjs --write` reads every hacking-route clear in
+history.jsonl (13: The Red Pill installed) and writes `labtraj.js` (root, pure data): per clear its lives as [start/T,
+len/T, the installed charisma product (catalogue mults x NeuroFlux from installs.jsonl or the life's own charisma
+level/exp; monotone), farm GB]. The stack's buyer never valued charisma there, so it is a FLOOR: the corporations'
+SmartJaw / ADR-V2 / Social Dynamics / nextSENS, TDH's Speech Processor / Nuoptimal / Speech Enhancement, Magnetism,
+Neural Wit and 30-110 NeuroFlux levels rode along (`--catalogue` prints BN15's charisma catalogue: ESII x1.6 $4.1e9
+/ 375k rep from Bachman/NWO/Clarke/OmniTek/Four Sigma — corporate factions need 400k company rep, kept across
+installs, `keepOnInstall`; SmartJaw x1.5; Neotra x1.55). Courses (ZB Leadership ~21 exp/s) and 8 sleeves (<=128/s) are
+<0.5% of a 400-worker farm at any charisma; SF15 has no charisma effect (SF15.2 auth x0.8 only). The labs ride the
+hacking lives (`chaplan.labScheduleOf`: a lab clears in the first life its climb from exp 0 + crawl fits, a forced
+install per lab 1-4 at `LAB_INSTALL_H`, a hold past the last pre-final life, FAIL past `CLIMB_CAP_H`); the farm is
+capped at `FARM_MAX` 400 one-thread workers (900GB — chaplan now models the cap; dnet-seed imports it). On BN15's 34.5h:
+11/13 trajectories clear labs 4-5 before the final window (labs 1-2 in the first hour, lab 3 ~0.44 of the node, labs
+4-5 in the last pre-final lives ~0.9), leg +1.0h median (`lab15.mjs` lo/mid/hi 1.0/1.0/1.7h over those, P(fail)
+0.15 — both failures early nodes whose NeuroFlux the history cannot read). **The lab arm** (`labroute.js`,
+`plan.decideBladeRouteGen` `lab`, built by progress.js `labArmInputOf`): in BN15 with labReady the 'hack' option IS
+the labyrinth route — the hacking exit (its band) + the leg on each measured trajectory scaled from the LIVE charisma
+state (mult, exp, labs installed, node/life age, cycleHours, farm RAM); draw i takes trajectory i mod 13; a failed
+trajectory is priced as the FALLBACK (the lab route to the stall, then the draw's black ops), a held one bounded by
+it; Genesis x0.9 on a gift option's charisma. Entry: ~61h (P(fail) 3/13) vs blade ~157h. Unbuildable arm -> the black
+ops' rule (never BN15's Daedalus exit). **The stall**: `labStallOf` — the live product under the clears' q10 at this
+node fraction (+5%) or a lab past the clears' q75 due fraction (+0.1) — judged on the priced exit; a stalled climb is
+priced with no further growth (`arms.stalled`), a stall moving re-decides a held route; healthcheck **LAB CLIMB
+STALLED** reads the SAVE (charisma level/exp, lab augs) and cross-checks the planner's lab index. On the black ops
+the farm stops (`dnet-seed.actedRouteOf`) and charisma-aware buying is off. **Insurance** (Bladeburner in parallel):
+its most-possible saving is P(fail) x detection (~3.6h at the entry); its cost (slot or sleeves off the hacking
+route) is not simulated — published `lab.insurance`, not run. NOT SIMULATED: the Daedalus join/rep legs the hacking
+exit still prices (pessimistic; on the lab route the stack still plays them — Daedalus sells no Red Pill here); the
+farm's RAM against the batcher. NOT CALIBRATED: the transfer to BN15. Tests LR1-LR9 (`labroute.test.mjs`).
+Tests DN1-DN13; mutants `tools/staging/dnet-mutants.sh` (29, all caught).
 
 **BitNode 13 plan (Stanek's Gift).** The accept is per node, at its start:
 `canAcceptStaneksGift` needs nothing but NeuroFlux installed OR queued, so the

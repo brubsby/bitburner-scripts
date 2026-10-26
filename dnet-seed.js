@@ -21,14 +21,13 @@
 // short, threads), the farm (on, workers, charisma vs need, why) and the caches opened (a lab's reward
 // names its augmentation). A crawl that stops growing is visible as `lastRootAt` ageing.
 import { DNET_PORT, DNET_FILES, DNET_TEL, labOf } from 'dnetplan.js'
-import { WORKER_GB, LAB_CHA_MARGIN } from 'chaplan.js'
+import { WORKER_GB, LAB_CHA_MARGIN, FARM_MAX } from 'chaplan.js'
 import { NODE_ROUTE_RULES } from 'routepin.js'
 import { singularityRamMultiplier } from 'sfgate.js'
 import { homeReserveGb } from 'freshlife.js'
 
 const DARKWEB = 'darkweb'
 const FARM = 'dnet-cha.js'
-const FARM_MAX = 400
 const DRAIN_MS = 1000
 const PUBLISH_EVERY = 10
 
@@ -95,6 +94,9 @@ export function farmStep(ns, st, rules = NODE_ROUTE_RULES) {
     return { on: false, workers: 0, stopped: workers.length, cha, need, lab: lab.index + 1, why }
   }
   if (!ruleOn) return stop(info.currentNode === 15 ? 'the labyrinth route is not the acted route (routepin labReady false)' : 'not BitNode 15')
+  // THE FALLBACK (labroute.js): once the route decision acts on the black ops (a stalled climb re-priced), the
+  // farm's RAM is the black ops' — the acted route of this node and life, from /tel/progress.txt
+  if (actedRouteOf(ns, info) === 'blade') return stop("the route acts on the black ops (the lab climb's fallback): /tel/progress.txt route 'blade'")
   if (cha >= need) return stop(`charisma ${cha} >= ${need} (lab ${lab.index + 1}'s ${lab.lab.cha} +${Math.round((LAB_CHA_MARGIN - 1) * 100)}%)`)
   const reserve = homeReserveGb(singularityRamMultiplier(info))
   const free = ns.getServerMaxRam('home') - ns.getServerUsedRam('home') - reserve
@@ -111,6 +113,17 @@ export function farmStep(ns, st, rules = NODE_ROUTE_RULES) {
     freeGb: Math.round(free),
     reserveGb: reserve,
     why: started < add ? `${add - started} worker(s) did not start` : workers.length + started === 0 ? `no free home RAM above the ${reserve}GB reserve` : null,
+  }
+}
+
+/** The acted route of this node and life ('hack' = the labyrinth's in BN15, 'blade'), or null unread. ns.read is 0GB. */
+export function actedRouteOf(ns, info) {
+  try {
+    const j = JSON.parse(ns.read('/tel/progress.txt') || 'null')
+    const r = j?.route
+    return r && r.node === info.currentNode && r.lastAugReset === info.lastAugReset && typeof r.route === 'string' ? r.route : null
+  } catch {
+    return null
   }
 }
 

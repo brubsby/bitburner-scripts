@@ -326,7 +326,7 @@ export async function run() {
     if (!!by.lab?.applies(15, lv, world) !== (rp0.NODE_ROUTE_RULES[15]?.labReady === true)) c.fail("the 'lab' route's availability must follow routepin.NODE_ROUTE_RULES[15].labReady")
     if (by.lab?.applies(14, lv, world)) c.fail("the 'lab' route must be BN15's alone")
     if (by.stanek.applies(15, lv, { ...world, stanekOff: false })) c.fail("the 'stanek' route (hacking + gift) applies to BN15")
-    if (!(R.LAB15.lo < R.LAB15.mid && R.LAB15.mid < R.LAB15.hi) || !/DERIVED/.test(R.LAB15.status) || !/ASSUMED/.test(R.LAB15.status)) c.fail('LAB15 must carry lo < mid < hi, say it is DERIVED and name what is still ASSUMED (the charisma-aug trajectory)')
+    if (!(R.LAB15.lo <= R.LAB15.mid && R.LAB15.mid <= R.LAB15.hi && R.LAB15.lo < R.LAB15.hi) || !/DERIVED/.test(R.LAB15.status) || !/NOT CALIBRATED/.test(R.LAB15.status) || !Number.isFinite(R.LAB15.pFail)) c.fail('LAB15 must carry lo <= mid <= hi (lo < hi), its P(fail), say it is DERIVED and name what is NOT CALIBRATED (the transfer of the measured charisma trajectories to BN15)')
     // the leg is lab15.mjs's, not a typed constant: its mid is the mid scenario's legOf
     const L15 = await import('../sim/lab15.mjs')
     if (Math.abs(R.LAB15.mid - +L15.legOf(L15.SCENARIOS.mid).h.toFixed(2)) > 1e-9) c.fail(`LAB15.mid ${R.LAB15.mid} is not lab15.mjs's mid leg`)
@@ -365,7 +365,10 @@ export async function run() {
 
   {
     const c = new Check('DN6', "THE ROUTE: in BN15 the stack acts on the black ops (no Daedalus Red Pill); the priced key survives; the pin wins")
-    const rp = await import('../../routepin.js')
+    const rp0 = await import('../../routepin.js')
+    // the rule as it binds while the labyrinth route is not built (labReady false); DN14 covers labReady true
+    const OFF = { ...rp0.NODE_ROUTE_RULES, 15: { ...rp0.NODE_ROUTE_RULES[15], labReady: false } }
+    const rp = { ...rp0, nodeRouteOf: (d, n, p) => rp0.nodeRouteOf(d, n, p, OFF), nodeRuleOf: (n, p) => rp0.nodeRuleOf(n, p, OFF) }
     // the BN15.1 entry dry-run's decision (2026-10-25): hack 20.016h, blade 139.273h -> 'hack'
     const d = { key: 'hack', hackH: 20.016, bladeH: 139.273, why: 'priced' }
     const none = rp.routePinOf('', 15)

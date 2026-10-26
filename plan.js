@@ -3175,13 +3175,35 @@ export function unpricedHoldOf(d, { pointHack, pointBlade, prev = null, hold = n
  * other arm is still priced (hackH/bladeH, routeCal) and the expected points' comparison is published as
  * `nodeRule` {route, inDecision, forced, pricedKey} — never decided on.
  *
+ * THE LAB ARM (`lab`, BitNode 15 on the labyrinth route, labroute.js, 2026-10-26): {arms: {normal, stalled},
+ * stallOf(totalH), nodeH, labIndex, why} from progress.js labArmInputOf. The 'hack' option IS the labyrinth route:
+ * the hacking exit (its band) + the labs' leg on each MEASURED charisma trajectory (labtraj.js; draw d takes
+ * trajectory d.i mod n, the point averages them all) — where a remaining lab is out of reach the trajectory is
+ * priced as its FALLBACK, the lab route until the stall is seen (detectH) and then the black ops (the draw's
+ * own banded Bladeburner arm), and a held climb is bounded by the same fallback. The stall is judged on the
+ * priced exit (stallOf(nodeH + the hacking point)); a stalled climb is priced on arms.stalled (no further
+ * growth), and the stall moving since the last decision re-decides a held route. A hacking option that accepts
+ * the gift now climbs at Genesis's charisma x0.9 (GENESIS_CHA). Published `lab` {hackExitH, totalH, legMeanH,
+ * pFail, detectMeanH, legs, stalled, stall, insurance (the parallel-Bladeburner bound), fallback}.
+ *
  * Returns the decideAmong record plus { hackH, bladeH } (the points).
  */
 /** The no-incumbent route switch away from the expected points needs its paired gain past this many standard errors. */
 export const ROUTE_RESOLVE_Z = 2
-export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now(), gift = null, hold = null, mandate = null, node = null, routeCal = ROUTE_CAL, rule = null } = {}) {
+/** Stanek's Gift - Genesis's charisma (Augmentations.ts mults.charisma 0.9): the lab arm's gift option climbs at it. */
+export const GENESIS_CHA = 0.9
+/** The lab arm's insurance: a parallel Bladeburner whose most-possible saving is under this is a priced 'no' (stanekepoch EPOCH.minGainH's order). */
+export const INSURANCE_MIN_H = 0.2
+export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null, bladeStartAt, bladeStart = null, bladeNoiseKey = 'bladeburner', prev = null, draws, redecide = true, budgetMs = PLAN.budgetMs, clock: budgetClock = clock, post = true, now = Date.now(), gift = null, hold = null, mandate = null, node = null, routeCal = ROUTE_CAL, rule = null, lab = null } = {}) {
   // THE NODE'S RULE (routepin.nodeRuleOf, above): the one route the node leaves is the decision's only option
   const only = rule && (rule.route === 'hack' || rule.route === 'blade') ? rule.route : null
+  // THE LAB ARM (LAB above; labroute.js): the arm is chosen once the hacking exit is priced — the stall judged on it
+  const labOn = !!(lab && lab.arms?.normal && typeof lab.arms.normal.legOf === 'function' && lab.arms.normal.n > 0 && lab.arms.stalled && typeof lab.stallOf === 'function')
+  let labArm = null
+  let labStall = null
+  const labIdxOf = (d) => (Number.isFinite(d?.i) ? d.i : 0)
+  // Genesis's charisma x0.9 on a hacking option that accepts the gift now (the chain: not yet in the live multiplier)
+  let labGiftCha = 1
   // THE ROUTE CALIBRATION BAND (above): s per arm, and draw d's factor exp(s z) on its own per-family stream
   const band = node !== null && node !== undefined ? { hacking: routeSdOf('hack', node, routeCal), blade: routeSdOf('blade', node, routeCal) } : null
   const bandOf = (d, fam) => (band && band[fam] > 0 && d ? Math.exp(band[fam] * normalOf(rngOf((d.seed ^ hashOf(`routecal|${fam}`) ^ Math.imul((d.i ?? 0) + 1, 0x27d4eb2f)) >>> 0))) : 1)
@@ -3239,6 +3261,8 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   let giftRec = null
   let pointHack = null
   let noGiftRowH = null // the hacking option without the gift (`.hack` member access is billed as ns.hack: kept local)
+  let labHackRows = [] // the hacking options (the gift's), re-chosen on the lab-inclusive point under LAB
+  let labRec = null
   if (gift) {
     const hackRows = []
     for (const o of gift.hackOptions ?? []) {
@@ -3247,6 +3271,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
       yield
     }
     noGiftRowH = hackRows.find((r) => r.withGift === false)?.hours ?? null
+    labHackRows = hackRows
     const hb = hackRows.filter((r) => fin(r.hours)).reduce((b, r) => (!b || r.hours < b.hours ? r : b), null)
     if (hb) {
       hackBase = hb.inputs
@@ -3289,6 +3314,53 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   // THE MANDATE'S BLADEBURNER ARM (above): the black-op exit + the hacking arm's mandated trajectory
   const bladeExitH = ens.hours
   const pointBlade = cov ? (fin(bladeExitH) && fin(pointHack) ? bladeExitH + pointHack : null) : bladeExitH
+  // THE LAB ARM'S POINT (LAB): over the trajectories, the hacking exit + the leg, or — a trajectory on which a
+  // remaining lab is out of reach — the lab route until the stall is seen, then the black ops (the fallback)
+  const labPointOf = (h, gc, bladeH, scale = 1) => {
+    if (!labArm || !fin(h)) return null
+    let s = 0
+    let failN = 0
+    let detS = 0
+    let legS = 0
+    for (let i = 0; i < labArm.n; i++) {
+      const r = labArm.legOf(h, i, gc)
+      if (r.failed) {
+        failN++
+        detS += r.detectH ?? 0
+        s += (r.detectH ?? 0) + (fin(bladeH) ? bladeH : Infinity)
+      } else {
+        legS += r.legH
+        // a HELD climb is seen at its life's start: the decision falls back there if the black ops are faster
+        s += r.heldH > 0 && fin(r.detectH) && fin(bladeH) ? Math.min(h * scale + r.legH, r.detectH + bladeH) : h * scale + r.legH
+      }
+    }
+    return { mean: s / labArm.n, pFail: failN / labArm.n, legMeanH: labArm.n > failN ? legS / (labArm.n - failN) : null, detectMeanH: failN ? detS / failN : null }
+  }
+  let labPt = null
+  if (labOn && fin(pointHack)) {
+    labStall = lab.stallOf(fin(lab.nodeH) ? lab.nodeH + pointHack : null)
+    labArm = labStall?.stalled === true ? lab.arms.stalled : lab.arms.normal
+  }
+  if (labArm) {
+    // the hacking option (the gift's) re-chosen on the lab-inclusive point: Genesis's x0.9 also cuts charisma
+    const gcOf = (r) => (gift?.chain === true && r?.withGift ? GENESIS_CHA : 1)
+    const rows = labHackRows.filter((r) => fin(r.hours)).map((r) => ({ r, p: labPointOf(r.hours, gcOf(r), pointBlade) })).filter((x) => x.p && fin(x.p.mean))
+    const best = rows.reduce((b, x) => (!b || x.p.mean < b.p.mean ? x : b), null)
+    if (best && giftRec) {
+      hackBase = best.r.inputs
+      giftRec.hackWithGift = best.r.withGift
+      giftRec.hackF = best.r.withGift ? best.r.f : null
+      // giftRec['hack'], never the member name: the RAM calculator bills it as ns.hack (0.1GB)
+      const gh = giftRec['hack']
+      gh.chosen = best.r.src
+      gh.labPoints = rows.map((x) => ({ src: x.r.src, withGift: x.r.withGift, hours: +x.p.mean.toFixed(3) }))
+    }
+    const hx = best ? best.r.hours : pointHack
+    labGiftCha = best ? gcOf(best.r) : 1
+    labPt = labPointOf(hx, labGiftCha, pointBlade)
+    pointHack = labPt && fin(labPt.mean) ? labPt.mean : null
+    labRec = { hackExitH: fin(hx) ? +hx.toFixed(3) : null }
+  }
   const memberOf = (d) => bladeMemberOfDraw(d, Q) ?? 0
   // per draw, the hacking arm's hours once (the blade arm's continuation reads the same draw)
   const hackMemo = new Map()
@@ -3304,18 +3376,27 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     return fin(b) && fin(c) ? b + c : null
   }
   function* hackArmH(d) {
-    return banded(cov ? yield* hackDrawH(d) : yield* hackGen(applyDraw(hackBase, d), d), d, 'hacking')
+    const h = banded(cov ? yield* hackDrawH(d) : yield* hackGen(applyDraw(hackBase, d), d), d, 'hacking')
+    if (!labArm || !fin(h)) return h
+    // LAB: the draw's trajectory (stratified by the draw's index); a failed one falls back to the black ops
+    const r = labArm.legOf(h, labIdxOf(d), labGiftCha)
+    if (!r.failed && !(r.heldH > 0)) return h + r.legH
+    const b = yield* bladeDrawH(d)
+    if (!r.failed) return fin(b) && fin(r.detectH) ? Math.min(h + r.legH, r.detectH + b) : h + r.legH
+    return fin(b) ? (r.detectH ?? 0) + b : null
   }
   const options0 = [
-    { key: 'hack', noiseKey: noiseKeyOf(basis, hackBase), sim: (d) => (band ? drain(hackArmH(d)) : cov ? drain(hackDrawH(d)) : traj(applyDraw(hackBase, d), d)), simGen: (d) => (band ? hackArmH(d) : cov ? hackDrawH(d) : hackGen(applyDraw(hackBase, d), d)) },
+    { key: 'hack', noiseKey: noiseKeyOf(basis, hackBase), sim: (d) => (band || labArm ? drain(hackArmH(d)) : cov ? drain(hackDrawH(d)) : traj(applyDraw(hackBase, d), d)), simGen: (d) => (band || labArm ? hackArmH(d) : cov ? hackDrawH(d) : hackGen(applyDraw(hackBase, d), d)) },
     { key: 'blade', noiseKey: bladeNoiseKey, sim: (d) => drain(bladeDrawH(d)), simGen: (d) => bladeDrawH(d) },
   ]
   const options = only ? options0.filter((o) => o.key === only) : options0
   // the expected points: the model's point is the median of its band (the cov blade arm: each part its own family's)
   const fH = band ? expectedFactorOf(band.hacking) : 1
   const fB = band ? expectedFactorOf(band.blade) : 1
-  const expHack = fin(pointHack) ? pointHack * fH : null
   const expBlade = fin(pointBlade) ? (cov && fin(bladeExitH) ? bladeExitH * fB + pointHack * fH : pointBlade * fB) : null
+  // LAB: the band scales the hacking exit (and the fallback's black ops), not the labs' leg
+  const labExp = labArm && labRec && fin(labRec.hackExitH) ? labPointOf(labRec.hackExitH, labGiftCha, expBlade, fH) : null
+  const expHack = labArm ? (labExp && fin(labExp.mean) ? labExp.mean : null) : fin(pointHack) ? pointHack * fH : null
   const r3b = (x) => (fin(x) ? +x.toFixed(3) : null)
   const pointKeyOf = (b, h) => (fin(b) && (!fin(h) || b < h) ? 'blade' : fin(h) ? 'hack' : null)
   const routeCalRec = band
@@ -3355,6 +3436,8 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   // their expected order turning over against the held route is an event: re-decide once (the commitment
   // rule then decides, with its hysteresis); the record carries the order it was decided on.
   const prevExpKey = was && prev?.routeCal?.priced === true ? pointKeyOf(prev.routeCal.blade?.expectedH, prev.routeCal.hacking?.expectedH) : null
+  // THE LAB CLIMB'S STALL MOVED (LAB): a stall is an event for the route — re-decide on the re-priced arm
+  const labStallMoved = !!was && !!labStall && !!prev?.lab && (prev.lab.stalled === true) !== (labStall.stalled === true)
   const pointsCrossed = !only && !!was && !!band && prevExpKey !== null && !!pointKeyOf(expBlade, expHack) && pointKeyOf(expBlade, expHack) !== prevExpKey
   // THE EXPECTED POINTS ARE THE INCUMBENT when nothing is committed (entry dry-run BN2.2, 2026-10-24): the
   // Monte Carlo means of a handful of heavy-tailed draws (the hacking arm's 16-20 under OCBA: q10 3.6h, q90
@@ -3371,7 +3454,7 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
   // (the expected points' incumbent: no switch cost at all — nothing is committed yet)
   const switchCost = pseudo ? { hack: 0, blade: 0 } : giftRec && fin(giftRec.switchCostH) ? { hack: giftRec.switchCostH, blade: giftRec.switchCostH } : {}
   const d00 = post
-    ? yield* decideAmongGen({ options, prev: was ?? pseudo, draws, redecide: redecide || !was || giftMoved || pointsCrossed, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade), switchCost, resolveZ: pseudo && !only ? ROUTE_RESOLVE_Z : null })
+    ? yield* decideAmongGen({ options, prev: was ?? pseudo, draws, redecide: redecide || !was || giftMoved || pointsCrossed || labStallMoved, budgetMs, clock: budgetClock, now, pointOf: (k) => (k === 'hack' ? pointHack : pointBlade), switchCost, resolveZ: pseudo && !only ? ROUTE_RESOLVE_Z : null })
     : only
     ? { key: fin(only === 'hack' ? pointHack : pointBlade) ? only : null, why: `no posterior: the node's rule leaves '${only}' alone` }
     : band
@@ -3398,5 +3481,31 @@ export function* decideBladeRouteGen({ base, traj, trajGen = null, basis = null,
     const pointKey = (h) => (fin(pointBlade) && (!fin(h) || pointBlade < h) ? 'blade' : fin(h) ? 'hack' : null)
     giftRec.awakeningBound = { hackH: fin(bh) ? +bh.toFixed(3) : null, flips: fin(bh) ? pointKey(bh) !== pointKey(pointHack) : null, why: 'the hacking arm with Awakening (x0.95) from its start: an upper bound, published, never in the decision' }
   }
-  return { ...d, hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size, gift: giftRec ?? { priced: false, why: 'the gift is not accepted: both routes priced without it' }, mandate: mandateRec ?? { priced: false, ...(mUnp ? { unpriced: true } : {}), why: mandate?.why ?? 'no Covenant mandate binds here: both routes priced to their own exits' }, routeCal: routeCalRec, ...(only ? { nodeRule: { route: only, inDecision: true, forced: !!expKey && expKey !== only, pricedKey: expKey ?? null, why: rule.why ?? null } } : {}) }
+  if (labRec) {
+    const r3l = (x) => (fin(x) ? +x.toFixed(3) : null)
+    const legs = labArm && fin(labRec.hackExitH) ? Array.from({ length: labArm.n }, (_, i) => labArm.legOf(labRec.hackExitH, i, labGiftCha)) : []
+    // THE INSURANCE BOUND: a Bladeburner run in parallel can save the fallback at most the hours it ran — the
+    // detection time — on the failed trajectories only; its cost (the work slot or sleeves off the hacking route)
+    // is not simulated here, so a bound under INSURANCE_MIN_H is a priced 'no' and anything above is unpriced
+    const valueUpperH = labPt && fin(labPt.pFail) ? labPt.pFail * (labPt.detectMeanH ?? 0) : null
+    Object.assign(labRec, {
+      priced: fin(pointHack),
+      nodeH: r3l(lab.nodeH),
+      totalH: fin(lab.nodeH) && fin(labRec.hackExitH) ? r3l(lab.nodeH + labRec.hackExitH) : null,
+      labIndex: lab.labIndex ?? null,
+      n: labArm.n,
+      legMeanH: r3l(labPt?.legMeanH),
+      pFail: labPt ? +labPt.pFail.toFixed(4) : null,
+      detectMeanH: r3l(labPt?.detectMeanH),
+      legs: legs.map((r) => (r.failed ? `F@${r.detectH}` : r.legH)),
+      giftCha: labGiftCha,
+      stalled: labStall?.stalled === true,
+      stallWhy: labStall?.stalled ? labStall.why : null,
+      stall: labStall ? { kind: labStall.kind ?? null, q10: labStall.q10 ?? null, due: labStall.due ?? null, why: labStall.why ?? null } : null,
+      fallback: true,
+      insurance: { valueUpperH: r3l(valueUpperH), run: false, priced: fin(valueUpperH) && valueUpperH < INSURANCE_MIN_H, why: fin(valueUpperH) ? (valueUpperH < INSURANCE_MIN_H ? `a parallel Bladeburner could save the fallback at most ${valueUpperH.toFixed(2)}h (P(fail) ${labPt.pFail.toFixed(2)} x detection ${(labPt.detectMeanH ?? 0).toFixed(1)}h) — under ${INSURANCE_MIN_H}h: not run` : `UNPRICED: a parallel Bladeburner could save the fallback up to ${valueUpperH.toFixed(2)}h (P(fail) ${labPt.pFail.toFixed(2)} x detection ${(labPt.detectMeanH ?? 0).toFixed(1)}h); its cost (the work slot or the sleeves off the hacking route) is not simulated — not run`) : 'unpriced (no lab point)' },
+      why: lab.why ?? null,
+    })
+  }
+  return { ...d, ...(labRec ? { lab: labRec } : {}), hackH: fin(pointHack) ? +pointHack.toFixed(3) : null, bladeH: fin(pointBlade) ? +pointBlade.toFixed(3) : null, bladeMembers: { Q, hours: ens.members.map((h) => (fin(h) ? +h.toFixed(3) : null)), sdH: fin(ens.sdH) ? +ens.sdH.toFixed(3) : null }, bladeSims: memo.size, gift: giftRec ?? { priced: false, why: 'the gift is not accepted: both routes priced without it' }, mandate: mandateRec ?? { priced: false, ...(mUnp ? { unpriced: true } : {}), why: mandate?.why ?? 'no Covenant mandate binds here: both routes priced to their own exits' }, routeCal: routeCalRec, ...(only ? { nodeRule: { route: only, inDecision: true, forced: !!expKey && expKey !== only, pricedKey: expKey ?? null, why: rule.why ?? null } } : {}) }
 }

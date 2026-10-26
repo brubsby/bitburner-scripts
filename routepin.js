@@ -97,14 +97,27 @@ export function pinnedRouteOf(d, pin) {
  *               4-5 out of reach at the low one); (2) with labReady the stack acts on the PRICED key, and the
  *               in-game exit has no lab arm — it prices a Daedalus Red Pill — and no fallback to the black
  *               ops if the climb stalls. Lift it when both exist (the user's /route-pin.txt still wins).
- *               What labReady switches on: dnet-seed.js's charisma farm, the lab install
- *               (dnetplan.labInstallOf), charisma-aware buying (chaplan.chaLabsCtxOf).
+ *               2026-10-26 (third slice): labReady TRUE — both conditions closed. (1) The charisma climb is
+ *               priced end to end on MEASURED trajectories (labtraj.js, tools/sim/chatraj.mjs: every
+ *               hacking-route clear's installed charisma product per life — the stack's buyer, not valuing
+ *               charisma, a floor): 11 of 13 reach labs 4-5 before the final window (the 2 that do not are
+ *               early nodes whose NeuroFlux levels the history cannot read), the leg +1.0h median; at the BN15.1
+ *               entry the lab arm prices ~61h with its failures as the fallback against the black ops' ~157h.
+ *               (2) The route decision has a LAB ARM (plan.decideBladeRouteGen `lab`, labroute.js): the 'hack'
+ *               option IS the labyrinth route, every measured trajectory priced from the live charisma state,
+ *               a trajectory that cannot reach a remaining lab priced as the black ops from the stall; LAB CLIMB
+ *               STALLED (labroute.labStallOf, healthcheck from the save) re-prices a stalled climb with no
+ *               further growth and the decision moves to the black ops on its own pricing (tools/test/
+ *               labroute.test.mjs LR4). With labReady false (a mutant, or a rollback) the rule binds again.
+ *               What labReady switches on: the lab arm, dnet-seed.js's charisma farm (off again once the acted
+ *               route is 'blade'), the lab install (dnetplan.labInstallOf), charisma-aware buying
+ *               (chaplan.chaLabsCtxOf, off on the black ops).
  */
 export const NODE_ROUTE_RULES = {
   15: {
     route: 'blade',
-    labReady: false,
-    why: "BitNode 15: The Red Pill is not sold by Daedalus (FactionHelpers.tsx:205) but by the 5th darknet labyrinth (labyrinth.ts:419-427) — the labyrinth's mechanics play headlessly (dnetlab.mjs), but its charisma climb to 2500/3000 rests on charisma augmentations no BN15 life has bought and the exit has no lab arm or fallback yet, so the black ops are the exit",
+    labReady: true,
+    why: "BitNode 15: The Red Pill is not sold by Daedalus (FactionHelpers.tsx:205) but by the 5th darknet labyrinth (labyrinth.ts:419-427) — with labReady the route decision prices the labyrinth route as its 'hack' arm (labroute.js, measured charisma trajectories, the black ops as the fallback); this rule binds only while labReady is false: the black ops are the exit",
   },
 }
 
@@ -119,16 +132,16 @@ export const NODE_ROUTE_RULES = {
  * while the black-op arm it acted on priced the gift WORSE (150.3h vs 147.9h declining).
  * Returns {route, why} or null.
  */
-export function nodeRuleOf(node, pin = null) {
-  const rule = NODE_ROUTE_RULES[node]
+export function nodeRuleOf(node, pin = null, rules = NODE_ROUTE_RULES) {
+  const rule = rules[node]
   if (!rule || rule.labReady) return null
   if (pin?.pinned === true && pin.file === ROUTE_PIN) return null
   return { route: rule.route, why: rule.why }
 }
 
 /** The route the stack ACTS on after the node's rule (NODE_ROUTE_RULES). `d` is the (pinned) record. */
-export function nodeRouteOf(d, node, pin = null) {
-  const rule = NODE_ROUTE_RULES[node]
+export function nodeRouteOf(d, node, pin = null, rules = NODE_ROUTE_RULES) {
+  const rule = rules[node]
   if (!rule || rule.labReady || !d || typeof d !== 'object') return d
   // decided under the rule (nodeRuleOf -> plan.decideBladeRouteGen): the record is already the acted route's
   if (d.nodeRule?.inDecision === true && d.key === rule.route) return d
@@ -193,6 +206,8 @@ export function routeReportOf(pin, d, giftState = null) {
     held: d?.held === true,
     // the node's structural rule (NODE_ROUTE_RULES): forced = the acted route is the rule's, not the priced one
     nodeRule: d?.nodeRule ? { route: d.nodeRule.route, forced: d.nodeRule.forced === true, pricedKey: d.nodeRule.pricedKey ?? null, overriddenBy: d.nodeRule.overriddenBy ?? null, why: d.nodeRule.why } : null,
+    // BitNode 15's lab arm (labroute.js via plan.decideBladeRouteGen `lab`): what LAB CLIMB STALLED cross-checks against the save
+    lab: d?.lab ? { priced: d.lab.priced === true, hackExitH: d.lab.hackExitH ?? null, totalH: d.lab.totalH ?? null, nodeH: d.lab.nodeH ?? null, labIndex: d.lab.labIndex ?? null, legMeanH: d.lab.legMeanH ?? null, pFail: d.lab.pFail ?? null, stalled: d.lab.stalled === true, stallWhy: d.lab.stallWhy ?? null, fallback: d.lab.fallback === true, insurance: d.lab.insurance ?? null, why: d.lab.why ?? null } : null,
     why: d ? null : 'no Bladeburner route in this node (no division): the hacking route is the only one',
   }
 }

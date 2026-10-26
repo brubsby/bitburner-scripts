@@ -186,7 +186,9 @@ import { recalIntervalOf } from 'exitcal.js'
 import { nodePolicyOverrideOf } from 'bbnodepolicy.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, nodeRouteOf, nodeRuleOf, routeDistOf, unpinnedOf, routeReportOf, NODE_ROUTE_RULES } from 'routepin.js'
 import { labInstallOf, labOf } from 'dnetplan.js'
-import { chaLabsCtxOf } from 'chaplan.js'
+import { chaLabsCtxOf, FARM_MAX_GB } from 'chaplan.js'
+import { labArmOf, labStallOf, sfChaMultOf } from 'labroute.js'
+import { LAB_TRAJ } from 'labtraj.js'
 import { epochDueOf, epochDecisionGen, liveGiftOf, calibrationOf, epochRecordOf, EPOCH_FILE, bladeGiftOptionsOf, bladeGiftMakerOf, ROUTE_GIFT, routeGiftChainOptionsOf } from 'stanekepoch.js'
 import { giftStateOf, chargeInputsOf, allocOptionsOf, chooseAlloc, giftLifeCtxOf, giftHackOf, liveWeightInputsOf, liveWeightsOf, liveLayoutOptionsOf, liveLayoutChoiceOf, switchInputsOf, bladePhasePlanOf, HACK_PHASE_FRACS, LIFE_LAYOUT_WINDOW_MIN, STANEK_FILE, ALLOC_BASIS, DEFAULT_F, BLADE_HOST, hackGiftInputsOf, HACK_CHARGER_RAMP, bladeChargerThrOf, awakeningBoundInputsOf, layoutForGrid, layoutKeyOf, sameLayout } from 'stanekplan.js'
 import { incomePosterior, lifeHackingObservation, formulaErrorPosterior, formulaRatePrior, ratePosterior, legacyHackingWindow, rwLedgerOf, runTail, carriedRatePrior, afterRamp, repRatePosterior, batchHackOfStats, pricedExitH, PRIORS as BAYES_PRIORS } from 'bayes.js'
@@ -2818,6 +2820,48 @@ function chainHackFOf(info) {
 }
 /** The fleet the BLADEBURNER route would run is re-chosen at most this often (the chooser: every configuration, one exit each). */
 const ROUTE_FLEET_MS = 30 * 60e3
+/**
+ * THE LAB ARM'S INPUT (BitNode 15 on the labyrinth route: routepin NODE_ROUTE_RULES[15].labReady): the live
+ * charisma state the lab arm prices the remaining labs from (labroute.labArmOf) — the multiplier (Source-Files
+ * and every installed augmentation, x the node's CharismaLevelMultiplier), this life's charisma exp, the labs
+ * installed (dnetplan.labOf), the node's and the life's ages, the hacking route's life length (the exit inputs'
+ * cycleHours) and the farm's RAM (home less the Singularity reserve, at most chaplan.FARM_MAX_GB). Two arms: on
+ * the measured trajectories, and STALLED (no further growth); the decision judges THE STALL once it has priced
+ * the hacking exit (labroute.labStallOf on the node fraction of that exit: `stallOf(totalH)`) and prices the
+ * stalled arm where it binds — a trajectory that cannot reach a remaining lab then falls back to the black ops.
+ * Every input is read or `arms` is null WITH the reason (the route then takes the black ops' rule: never BN15's
+ * Daedalus exit in its place).
+ */
+function labArmInputOf(ns, info, player, base) {
+  const fin = (x) => typeof x === 'number' && isFinite(x)
+  const now = Date.now()
+  const nodeH = fin(info?.lastNodeReset) ? (now - info.lastNodeReset) / 3.6e6 : null
+  const lifeAgeH = fin(info?.lastAugReset) ? (now - info.lastAugReset) / 3.6e6 : null
+  const labIndex = labOf(new Set(info?.ownedAugs?.keys?.() ?? []), info?.currentNode).index
+  const nodeMult = bitNodeMults(info)?.CharismaLevelMultiplier
+  const chaMult = player?.mults?.charisma
+  const chaExpMult = player?.mults?.charisma_exp
+  const chaExp = player?.exp?.charisma
+  const homeGB = homeRamOf(readJson(ns, '/tel/homeup.txt'), readJson(ns, '/tel/boot.txt'), info?.lastNodeReset)
+  const farmGB = fin(homeGB) ? Math.min(FARM_MAX_GB, Math.max(0, homeGB - homeReserveGb(singularityRamMultiplier(info)))) : null
+  const cycleH = base?.cycleHours
+  const miss = [!fin(nodeH) && 'the node age', !fin(lifeAgeH) && 'the life age', !fin(nodeMult) && 'CharismaLevelMultiplier', !fin(chaMult) && 'the charisma multiplier', !fin(chaExp) && 'the charisma exp', !fin(farmGB) && 'home RAM', !(fin(cycleH) && cycleH > 0) && "the exit inputs' cycleHours"].filter(Boolean)
+  if (miss.length) return { arms: null, why: `the lab arm is unread: ${miss.join(', ')}` }
+  const prod = chaMult / sfChaMultOf({ 1: sfLevel(info, 1), 2: sfLevel(info, 2), 3: sfLevel(info, 3) })
+  const live = { mult: chaMult, nodeMult, expMult: fin(chaExpMult) ? chaExpMult : 1, int: player?.skills?.intelligence ?? 0, exp: chaExp, labIndex }
+  const common = { live, nodeH, lifeAgeH, cycleH, farmGB }
+  return {
+    arms: { normal: labArmOf({ ...common, stalled: false }), stalled: labArmOf({ ...common, stalled: true }) },
+    // judged by the decision once the hacking exit is priced: the node fraction of THAT exit (the priced trajectory's clock)
+    stallOf: (totalH) => labStallOf({ phi: fin(totalH) && totalH > 0 ? nodeH / totalH : null, prod, labIndex }),
+    nodeH,
+    labIndex,
+    prod: +prod.toFixed(4),
+    farmGB: Math.round(farmGB),
+    why: `labs from ${labIndex} installed; charisma mult ${(chaMult * nodeMult).toFixed(3)} (augmentations' product ${prod.toFixed(3)}), farm ${Math.round(farmGB)}GB; ${LAB_TRAJ.n} measured trajectories (${LAB_TRAJ.measuredAt})`,
+  }
+}
+
 async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued = [], sing = null, wealth = 0, moneyPerSec = 0, flatPerSec = 0, pin = null, work = null } = {}) {
   const mults = bitNodeMults(info)
   if (!canJoinBladeburner(info) || !(mults?.BladeburnerRank > 0)) return null
@@ -2953,7 +2997,21 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       } catch (e) {
         mandate = { covenant: null, unpriced: true, why: `covenantMandateOf threw: ${String(e).slice(0, 160)}` }
       }
-      const d = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, node: info.currentNode, post: !!pc.post, gift, hold: routeHoldOf(info, pc), mandate, rule: nodeRuleOf(info.currentNode, pin) })
+      // THE LAB ARM (BitNode 15 on the labyrinth route, labroute.js): the 'hack' option is the labyrinth route
+      // priced on the measured charisma trajectories, its failures as the black ops; unbuildable -> the black ops'
+      // rule, never BN15's Daedalus exit in its place
+      let rule = nodeRuleOf(info.currentNode, pin)
+      let lab = null
+      if (info.currentNode === 15 && NODE_ROUTE_RULES[15]?.labReady === true) {
+        try {
+          lab = labArmInputOf(ns, info, player, base)
+        } catch (e) {
+          lab = { arms: null, why: `labArmInputOf threw: ${String(e).slice(0, 160)}` }
+        }
+        if (!lab.arms) rule = { route: 'blade', why: `BitNode 15: the lab arm could not be priced (${lab.why}) — the black ops until it can` }
+      }
+      const d0 = yield* decideBladeRouteGen({ base, traj: trajectoryOf(basis, {}), trajGen: trajectoryGenOf(basis, {}), basis, bladeStart: bladeS0, bladeNoiseKey: bladeNoiseKeyOf(bladeBasis), prev: unpinnedOf(pc.prev?.decisions?.bladeRoute ?? null), draws: pc.draws, redecide: pc.redecide, budgetMs: planBudgetLeft(pc), clock: pc.pacer.cpuNow, node: info.currentNode, post: !!pc.post, gift, hold: routeHoldOf(info, pc), mandate, rule, lab: lab?.arms ? lab : null })
+      const d = lab && !lab.arms ? { ...d0, lab: { priced: false, why: lab.why } } : d0
       let simulacrum = null
       if (d?.key === 'blade' && typeof d.bladeH === 'number') {
         try {
@@ -4693,9 +4751,14 @@ function publishPlan(ns, info, extra = {}) {
     // other route and relabelled by a pin or a node rule; the BN15.1 entry dry-run published the hacking
     // distribution, q50 29.9h, as "the Bladeburner route" beside a 147.9h black-op point), and NEVER a hacking
     // decision's (install / count route / trajectory): no blade distribution is an unpriced exit, not hack's.
-    const brDist = br?.key === 'blade' ? routeDistOf(br, 'blade') : null
+    // THE LABYRINTH ROUTE (BitNode 15, the lab arm priced: labroute.js) is published the same way: the route
+    // record's 'hack' distribution — the hacking exit + the labs, failures as the black ops — never the install
+    // decision's Daedalus exit, which has no labs in it (the BN15.1 entry dry-run 2026-10-26: 34.8h published
+    // beside a 72h lab arm)
+    const labEx = br?.key === 'hack' && br?.lab?.priced === true
+    const brDist = br?.key === 'blade' ? routeDistOf(br, 'blade') : labEx ? routeDistOf(br, 'hack') : null
     const brEx = brDist ? { meanH: brDist.meanH, q10: brDist.q10, q50: brDist.q50, q90: brDist.q90, n: brDist.n } : null
-    const ex = br?.key === 'blade' ? (instBlade ? inst : brEx) : inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
+    const ex = br?.key === 'blade' ? (instBlade ? inst : brEx) : labEx ? brEx : inst?.key && typeof inst.q50 === 'number' ? inst : route?.key && typeof route.q50 === 'number' ? route : pex?.key && typeof pex.q50 === 'number' ? pex : null
     // THE PAGE-FREEZE METRIC is the longest stretch of work between yields
     // (maxBlockMs), not the total: the searches run in slices, so a pass may
     // spend seconds of work while never holding the page for more than a
@@ -4714,8 +4777,8 @@ function publishPlan(ns, info, extra = {}) {
     // through the life; /tel/exitjump.txt keeps it past the next install.
     let exitJump = pc.prev?.exitJump ?? null
     try {
-      const pointH = ex === inst ? inst?.pointH : ex === brEx ? br?.bladeH ?? null : ex?.pointH ?? null
-      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : ex === brEx ? 'the Bladeburner route' : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION, node: info?.currentNode ?? null, lastNodeReset: info?.lastNodeReset ?? null })
+      const pointH = ex === inst ? inst?.pointH : ex === brEx ? (labEx ? br?.hackH : br?.bladeH) ?? null : ex?.pointH ?? null
+      exitJump = exitJumpOf(readJson(ns, '/tel/install-last.txt'), ex ? { meanH: ex.meanH, pointH, n: ex.n, source: ex === inst ? `install decision (${inst.key})` : ex === pex ? 'the committed trajectory' : ex === brEx ? (labEx ? 'the labyrinth route' : 'the Bladeburner route') : 'count route' } : null, { lastAugReset: info?.lastAugReset, now: Date.now(), prev: exitJump, ver: MODEL_VERSION, node: info?.currentNode ?? null, lastNodeReset: info?.lastNodeReset ?? null })
       if (exitJump?.install && JSON.stringify(exitJump) !== JSON.stringify(pc.prev?.exitJump ?? null)) ns.write('/tel/exitjump.txt', JSON.stringify({ at, lastAugReset: info?.lastAugReset ?? null, node: info?.currentNode ?? null, lastNodeReset: info?.lastNodeReset ?? null, ...exitJump }), 'w')
     } catch (e) {
       exitJump = { ok: null, why: `exit jump check threw: ${String(e).slice(0, 120)}` }
@@ -4738,7 +4801,7 @@ function publishPlan(ns, info, extra = {}) {
       // about the median by the width multiplier, the raw pair kept beside it
       // (rawQ10/rawQ90 — the exit samples carry the raw one, never this).
       ...(!ex && br?.key === 'blade' ? { exitUnpriced: `the acted route is the black ops and neither the install decision nor the route record carries a Bladeburner exit distribution${br.unpriced?.length ? ` (the ${br.unpriced.join(' and ')} arm unpriced)` : ''}: never the hacking exit in its place` } : {}),
-      exit: ex ? { meanH: ex.meanH, ...recalIntervalOf({ q10: ex.q10, q50: ex.q50, q90: ex.q90 }, pc.post?.calibration?.recal?.applied ?? 1), source: ex === brEx ? `the Bladeburner route (21 black ops, bbplan.bladeExit${brDist.of === 'option row' ? "; its option row: the decision's fields are another route's" : ''})` : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
+      exit: ex ? { meanH: ex.meanH, ...recalIntervalOf({ q10: ex.q10, q50: ex.q50, q90: ex.q90 }, pc.post?.calibration?.recal?.applied ?? 1), source: ex === brEx && labEx ? `the labyrinth route (the hacking exit + the labs on ${br.lab.n ?? '?'} measured charisma trajectories, P(fail) ${br.lab.pFail ?? '?'} as the black ops; labroute.js)` : ex === brEx ? `the Bladeburner route (21 black ops, bbplan.bladeExit${brDist.of === 'option row' ? "; its option row: the decision's fields are another route's" : ''})` : ex === inst ? `install decision (${inst.key}${inst.route === 'blade' ? ', the Bladeburner route' : ''})` : ex === pex ? 'the committed trajectory (nothing queued)' : `count route (${route.name})`, income: pc.incomeFromPrior ?? 'measured', rep: pc.repFromEstimate ?? 'measured (or not needed)' } : null,
       // markBladeMoot: on the committed Bladeburner route the hack arm's decisions
       // (grafts, lifeLength, fourS, batch) say they are not on the committed exit.
       decisions: markBladeMoot({
@@ -7116,7 +7179,8 @@ async function act(ns, canJoin, info, note) {
       ...karmaChannelCtx(ns, info, player),
       // THE CHARISMA CHANNEL (BitNode 15's labyrinth route only, chaplan.chaLabsCtxOf): charisma
       // multipliers priced by the lab climbs they shorten (objective.charismaValue); {} elsewhere.
-      ...(info?.currentNode === 15 && NODE_ROUTE_RULES[15]?.labReady === true
+      // (not once the route has fallen back to the black ops: the last pass's acted route — this pass decides it later)
+      ...(info?.currentNode === 15 && NODE_ROUTE_RULES[15]?.labReady === true && !(planCtx?.prevAny?.node === info.currentNode && planCtx.prevAny.decisions?.bladeRoute?.key === 'blade')
         ? chaLabsCtxOf({
             node: info.currentNode,
             labRoute: true,
