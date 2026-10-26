@@ -188,3 +188,12 @@ Plan done (autogtnh docs/research/solar-factory.md section 7, plan `sf-t1-p1m1`,
 mint/craft the chains (20 Damascus frames via EV mixer + EBF + extruder + assembler; controller; panel chain; 2
 Industrial Diamonds via Coal Chunk + 4 Dynamite), dev-rehearse (structure, G2 P2P -> EV hatch, Dual Interface + pipe
 split), then robot #1: under-deck trunk, `multiblock build`, port bus + P2P paste, verify, patterns, test craft.
+
+## factorio-balancer-sat head-to-head vs Raynquist, TU+IB (postponed 2026-10-26 ~20:00 UTC, governor off at u=97%)
+Not started (no compute launched, no files changed in the repo). Brief: beat Raynquist's TU (+IB) designs for
+n,m <= 9 like for like (TU+IB via unicheck + shardsweep, same port map + any geometry, same/lower tier), with priority
+annotations: enumerate TU+IB nets small k first (netenum/enum_mm or splnet CEGAR with per-splitter priority choices),
+seed from rqnet.py extractions and his priority recipes, minL near his length minus a few on the fork's `priority`
+branch (forbid_dangling_fronts, no-leak + trace-back mandatory). Output: designs/h2h-tuib.tsv + JSON, additive
+build.py edit, balancerdb re-import (<=2 procs), docs/h2h-tuib.md. Compute caps: bubtop <=8 procs (no GPU, load <=20),
+bub-ucs <=3 under compute-run.sh (82 C pause), puter <=2. Budget ~8h. Re-launch on step-up.
