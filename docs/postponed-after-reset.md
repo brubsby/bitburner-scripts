@@ -196,3 +196,15 @@ re-imported. Strict wins: 2-4 and 4-2 TU at 6x4 with 5 splitters (his 6); 4-4 co
 frontier points for 14 shapes; 1-4 / 4-1 proven Pareto-optimal; 3-4 / 4-3 / 3-3 / 4-4 need his k (no TU+IB net
 with fewer splitters). Still open: 6-1 / 7-1 (his footprint unreachable in the model), 2-8 (k=9 enum z3 unknown),
 3-6, 6-3, 4-6, 6-4, 4-8, 8-4, 8-8 (cells time out near his length), 4-4 merge / split geometries.
+
+## factorio-balancer-sat head-to-head vs Raynquist, large balancers (agent C, 2026-10-27; factorio-balancer-sat 2ef150f, 8a357a3, 09e67c3)
+Run from the laptop session over SSH (agent C). docs/h2h-large.md; tools/repair/lnsmt.py (mixed-tier multi-window
+LNS), tools/large/router.py (GPU PathFinder router, CuPy on bubtop's 4090), tools/large/polish.py, splice.py; library
+source brubsby-h2h-large (3 designs), balancerdb re-imported (autosync 03d9f92).
+Done: trade-offs with turbo undergrounds, game-verified paired with his: 32x23 (his 32x25), 64x44 (64x46),
+128x70 (128x72). Found: yellow/red undergrounds cap an express edge's throughput (both encoders + gate now enforce it;
+the library's per-pair mixed-tier cost ignores it).
+Still open: no strict like-for-like win (blue-only 32-32 block, 16-16, 64/128 tails and the 63 book designs the
+router reached all failed); next: splitter moves inside the router, router + SAT polish on the 32-32, the
+stage-5-into-bands redesign, porting lnsmt windows to fork branch `unified`; 128x70 has WL-hash equality only
+(VF2++ unfinished); the remaining ~60 book designs were not routed.
