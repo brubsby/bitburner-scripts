@@ -208,3 +208,18 @@ Still open: no strict like-for-like win (blue-only 32-32 block, 16-16, 64/128 ta
 router reached all failed); next: splitter moves inside the router, router + SAT polish on the 32-32, the
 stage-5-into-bands redesign, porting lnsmt windows to fork branch `unified`; 128x70 has WL-hash equality only
 (VF2++ unfinished); the remaining ~60 book designs were not routed.
+
+## ~~factorio-balancer-sat unified encoder + sideload head-to-head vs Raynquist~~ DONE 2026-10-27 (agent B; Factorio-SAT `unified` 8db76f9, factorio-balancer-sat 70e21af, 05adaf2)
+Run from the laptop session over SSH (agent B). docs/h2h-sideload.md; fork branch `unified` (lane encoder with
+underground-end merges, mixed tiers, priority/filter annotations, belt networks, pass-through splitters; lane CNFs
+byte-identical to `lanes` when off); tools/lanes/beltcheck.py (belt-level BAL/FULL/TU/IB on the lane network,
+agrees with the game on all 13 side-loaded-underground gen/ layouts); tools/sideload/; library source
+brubsby-h2h-sideload (10 designs), balancerdb re-imported (--jobs 2).
+Done: all 90 of his straight n,m<=9 belt balancers (35 priority/filter, the 8-6) pin at his footprint; his plain
+balancers head to head with his own network at his width: his length minimal in 40 of 72; game-verified wins 7-3
+(11 splitters vs 12) and 6-4 (2 pairs vs 4) drop-in, cost wins 2-7 / 2-9 / 7-4, fewer pairs on 6-2 / 4-6 / yellow
+6-6 (other port map), 7-7 at his footprint with 2 red pairs where he needs blue. Sideloads bought nothing that keeps
+full load (found and fixed: filtered halves behind belts made hidden sideloads; lane CEGAR in the driver).
+Still open: 31 cells timed out (mostly n*m >= 25; 9-6 red not reached); corner lane designs not re-pinned with
+--90 in this batch; 1-1 TU lane (alt) stub input; lane-network synthesis; his TU designs with sideload networks
+(none exist in his book) were not searched.
