@@ -189,11 +189,10 @@ mint/craft the chains (20 Damascus frames via EV mixer + EBF + extruder + assemb
 Industrial Diamonds via Coal Chunk + 4 Dynamite), dev-rehearse (structure, G2 P2P -> EV hatch, Dual Interface + pipe
 split), then robot #1: under-deck trunk, `multiblock build`, port bus + P2P paste, verify, patterns, test craft.
 
-## factorio-balancer-sat head-to-head vs Raynquist, TU+IB (postponed 2026-10-26 ~20:00 UTC, governor off at u=97%)
-Not started (no compute launched, no files changed in the repo). Brief: beat Raynquist's TU (+IB) designs for
-n,m <= 9 like for like (TU+IB via unicheck + shardsweep, same port map + any geometry, same/lower tier), with priority
-annotations: enumerate TU+IB nets small k first (netenum/enum_mm or splnet CEGAR with per-splitter priority choices),
-seed from rqnet.py extractions and his priority recipes, minL near his length minus a few on the fork's `priority`
-branch (forbid_dangling_fronts, no-leak + trace-back mandatory). Output: designs/h2h-tuib.tsv + JSON, additive
-build.py edit, balancerdb re-import (<=2 procs), docs/h2h-tuib.md. Compute caps: bubtop <=8 procs (no GPU, load <=20),
-bub-ucs <=3 under compute-run.sh (82 C pause), puter <=2. Budget ~8h. Re-launch on step-up.
+## ~~factorio-balancer-sat head-to-head vs Raynquist, TU+IB~~ DONE 2026-10-27 (factorio-balancer-sat 9115124, 45146e5)
+Run from the laptop session over SSH (agent A). docs/h2h-tuib.md, tools/h2htuib/, library source brubsby-h2h-tuib
+(38 designs, all traced back, splnet TU + IB01, exhaustive game sweeps on shards 2700+, 0 failing rows); balancerdb
+re-imported. Strict wins: 2-4 and 4-2 TU at 6x4 with 5 splitters (his 6); 4-4 corner in the any table. New drop-in
+frontier points for 14 shapes; 1-4 / 4-1 proven Pareto-optimal; 3-4 / 4-3 / 3-3 / 4-4 need his k (no TU+IB net
+with fewer splitters). Still open: 6-1 / 7-1 (his footprint unreachable in the model), 2-8 (k=9 enum z3 unknown),
+3-6, 6-3, 4-6, 6-4, 4-8, 8-4, 8-8 (cells time out near his length), 4-4 merge / split geometries.
