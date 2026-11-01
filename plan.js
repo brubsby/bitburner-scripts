@@ -1300,7 +1300,8 @@ export function decideInstall(o = {}) {
   return drain(decideInstallGen(o))
 }
 /** The generator decideInstall drains (yields inside the Monte Carlo). */
-export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev: prev0 = null, draws, redecide = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock, installTopK = PLAN.installTopK, installReach = PLAN.installReach, reachSd = null, route: onRoute = null, trajOf = null, ocba = PLAN.ocba } = {}) {
+export function* decideInstallGen({ inputs, count = null, point, repPoint = null, prev: prev0 = null, draws, redecide: redecide0 = true, budgetMs = PLAN.budgetMs, theta = PLAN.theta, now = Date.now(), sameLife = true, clock: budgetClock = clock, installTopK = PLAN.installTopK, installReach = PLAN.installReach, reachSd = null, route: onRoute = null, trajOf = null, ocba = PLAN.ocba, deferral = null } = {}) {
+  let redecide = redecide0
   const opts = []
   const ctx = { count, repPoint }
   // THE ROUTE THE OPTIONS ARE PRICED ON. 'blade' (the committed Bladeburner
@@ -1340,16 +1341,40 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   const P0 = point ?? {}
   // A point option's Bladeburner content (bladeInstallCompareOf): rides the spec, so the record keeps it (basisOf).
   const bladeOf = (x) => (x?.blade ? { blade: x.blade } : {})
-  if (P0.now && fin(P0.now.hours)) add('now', { kind: 'wait', installAt: now, waitH: 0, n: P0.now.n ?? null, lifeH: P0.now.lifeH ?? null, gains: null, ...bladeOf(P0.now) }, P0.now.hours)
+  if (P0.now && fin(P0.now.hours)) add('now', { kind: 'wait', installAt: now, waitH: 0, n: P0.now.n ?? null, lifeH: P0.now.lifeH ?? null, gains: null, ...bladeOf(P0.now) }, P0.now.hours, { waitLeftH: 0 })
   for (const w of P0.waits ?? []) {
-    if (!(fin(w?.waitH) && w.waitH > 0 && fin(w.hours))) continue
+    if (!(fin(w?.waitH) && w.waitH >= 0 && fin(w.hours))) continue
     if (w.route && count) {
       // INSTALL ONCE THE ROUTE'S DETOUR IS DONE (+ extra): the wait is the
       // drawn detour, so the route's own uncertainty rides this option.
       const extra = fin(w.extra) ? w.extra : 0
-      add(`r${extra}`, { kind: 'route', route: w.route, routeKey: routeKey(w.route), extra, lifeH: w.lifeH ?? null, n: w.n ?? 1 }, w.hours, { routeKey: routeKey(w.route), extra })
+      const rk = routeKey(w.route)
+      const key = `r${extra}`
+      // A READY ROUTE'S WAIT IS A TIME, NOT A DISTANCE (ROUTE_READY_H). The
+      // route option was priced at `detour + extra` from THIS pass, every
+      // pass — so once the detour reached 0 ('via ready'), a committed r0.5
+      // was "install in 0.5h" forever: live BN8.3 2026-10-31 12:55Z ->
+      // 2026-11-01 12:41Z the plan held r0.5 ~24h of play (6.2-7.0h exit
+      // every pass, EXIT NOT APPROACHING) with $1.44e14 and a 29-aug batch
+      // buyable, and the record's install was `key === 'now'`, so no route
+      // option could ever install. Ready, the install time is ANCHORED at
+      // the commitment (routeInstallAt, carried while the same route option
+      // is committed) and priced on its remaining wait; it installs when
+      // that runs out (record: routeDue). r0 — the route's augmentation in
+      // a batch bought NOW — is an option (it was dropped by `waitH > 0`).
+      const det = fin(w.route?.detourH) ? Math.max(0, w.route.detourH) : null
+      const ready = det !== null && det <= ROUTE_READY_H
+      let installAt = null
+      let left = extra
+      if (ready) {
+        const anchored = sameLife && prev0 && prev0.key === key && prev0.routeKey === rk && fin(prev0.routeInstallAt) ? prev0.routeInstallAt : null
+        installAt = anchored ?? now + extra * 3.6e6
+        left = Math.max(0, (installAt - now) / 3.6e6)
+      } else if (!(w.waitH > 0)) continue
+      add(key, { kind: 'route', route: w.route, routeKey: rk, extra: r3(left), lifeH: w.lifeH ?? null, n: w.n ?? 1 }, w.hours, { routeKey: rk, extra, routeInstallAt: installAt, waitLeftH: ready ? left : (det ?? 0) + extra })
       continue
     }
+    if (!(w.waitH > 0)) continue
     // A HOLD WAIT CARRIES ITS HOLD (factionplan.holdCandidates: the slot
     // grinds `hold.faction` to `hold.repTarget` for the wait): its batch buys
     // what that grind unlocks, so the commitment is the grind too — the
@@ -1360,12 +1385,12 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     // worked, the next pass re-priced the commitment as a plain wait (x1.138,
     // +3.3h), and 30 min later the same hold won again: INSTALL DEFERRED
     // REPEATEDLY.
-    add(`w${w.waitH}`, { kind: 'wait', installAt: now + w.waitH * 3.6e6, waitH: w.waitH, n: w.n ?? null, lifeH: w.lifeH ?? null, gains: w.installGains ?? null, ...(w.hold ? { hold: w.hold } : {}), ...bladeOf(w) }, w.hours)
+    add(`w${w.waitH}`, { kind: 'wait', installAt: now + w.waitH * 3.6e6, waitH: w.waitH, n: w.n ?? null, lifeH: w.lifeH ?? null, gains: w.installGains ?? null, ...(w.hold ? { hold: w.hold } : {}), ...bladeOf(w) }, w.hours, { waitLeftH: w.waitH })
   }
   if (!count && P0.never && fin(P0.never.hours)) add('never', { kind: 'never' }, P0.never.hours)
   // The committed install time, on its remaining wait. A route option is
   // relative to its own detour, so it is committed by key while the route
-  // is the same.
+  // is the same (once ready, its install time is anchored: routeInstallAt).
   let committedKey = null
   // The committed install ran out its wait this pass: 'now' IS the committed
   // trajectory (same act, same batch function), not a switch to another one.
@@ -1403,10 +1428,29 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
         } catch {
           pointH = null
         }
-        add('committed', specNow, fin(pointH) ? pointH : null)
+        add('committed', specNow, fin(pointH) ? pointH : null, { waitLeftH: specNow.waitH })
         committedKey = 'committed'
       }
     }
+  }
+  // THE DEFERRAL BOUND (deferralRefusalOf): a life whose deferrals have
+  // overshot their own promised gain DEFER.n times gets no more of them —
+  // every option that installs later than now (waitLeftH > ROUTE_DUE_H) is
+  // refused, and the decision is among installing now (and 'never' where it
+  // is an option). Each deferral was priced as if it were the last; after n
+  // broken promises the waits' prices are not evidence. Live BN8.3: 6 of 6
+  // deferrals missed by 80-93h, and the plan kept waiting ~47h of play.
+  const refusal = deferralRefusalOf(deferral)
+  let refused = null
+  if (refusal) {
+    const later = opts.filter((o) => o.key !== 'never' && !(fin(o.waitLeftH) && o.waitLeftH <= ROUTE_DUE_H))
+    const keep = opts.filter((o) => !later.includes(o))
+    if (later.length && keep.some((o) => fin(o.pointH))) {
+      refused = { ...refusal, keys: later.map((o) => o.key) }
+      for (const o of later) opts.splice(opts.indexOf(o), 1)
+      if (committedKey && !opts.some((o) => o.key === committedKey)) committedKey = null
+      redecide = true
+    } else if (later.length) refused = { ...refusal, keys: [], why: `${refusal.why} — NOT applied: nothing that installs now is priced (${later.map((o) => o.key).join(', ')} kept)` }
   }
   if (!opts.length) return { key: null, install: false, why: 'no install option priced', decidedAt: prev?.decidedAt ?? null }
   const screen = !redecide && committedKey ? null : installScreenOf(opts, committedKey, { topK: installTopK, reach: installReach, sd: reachSd })
@@ -1425,8 +1469,16 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
   const record = (key, extra) => {
     const o = opts.find((x) => x.key === key)
     const sp = o.spec
-    const installAt = sp.kind === 'wait' ? sp.installAt : null
-    const waitH = sp.kind === 'wait' ? sp.waitH : sp.kind === 'route' ? o.pointH : null
+    // A route option's install time: its anchor once the route is ready
+    // (routeInstallAt), else this pass + its remaining detour and extra — so
+    // the deferral ledger (installDeferralsOf) sees a route deferral like any
+    // other. Its wait is that remaining time (it was the option's EXIT hours,
+    // published by the gate as "waiting 6.7h").
+    const installAt = sp.kind === 'wait' ? sp.installAt : sp.kind === 'route' ? (fin(o.routeInstallAt) ? o.routeInstallAt : fin(o.waitLeftH) ? now + o.waitLeftH * 3.6e6 : null) : null
+    const waitH = sp.kind === 'wait' ? sp.waitH : sp.kind === 'route' ? (fin(o.waitLeftH) ? o.waitLeftH : null) : null
+    // A READY ROUTE'S ANCHORED INSTALL RAN OUT: install (with the route's
+    // augmentation in the batch). r0 of a ready route is due at once.
+    const routeDue = sp.kind === 'route' && fin(o.routeInstallAt) && o.routeInstallAt - now <= ROUTE_DUE_H * 3.6e6
     const { route, ...specOut } = sp
     const outKey = key === 'committed' ? `w${r3(sp.waitH)}` : key
     // THE COMMITMENT: the exit this plan priced for the install it committed
@@ -1451,7 +1503,13 @@ export function* decideInstallGen({ inputs, count = null, point, repPoint = null
     }
     pointSeH = fin(pointSeH) ? r3(pointSeH) : null
     const commitment = carried ? pc : { key: outKey, meanH: stats[key]?.meanH ?? null, pointH: r3(o.pointH), ...(pointSeH !== null ? { pointSeH } : {}), q10: stats[key]?.q10 ?? null, q90: stats[key]?.q90 ?? null, at: new Date(now).toISOString(), installAt, noiseKey: o.noiseKey, n: ev.n }
-    return { key: outKey, ...(onRoute ? { route: onRoute } : {}), install: key === 'now', installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), ...(pointSeH !== null ? { pointSeH } : {}), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
+    const out = { key: outKey, ...(onRoute ? { route: onRoute } : {}), install: key === 'now' || routeDue, installAt, waitH: r3(waitH), routeKey: o.routeKey ?? null, extra: o.extra ?? null, routeInstallAt: fin(o.routeInstallAt) ? o.routeInstallAt : null, ...(routeDue ? { routeDue: true } : {}), ...(refused ? { deferralRefused: refused } : {}), fixed: { n: sp.n ?? null, lifeH: sp.lifeH ?? null }, gains: sp.gains ?? null, gainsKey: gainsKeyOf(sp.gains), samples: samplesOf(ev.samples[key]), ...(key === 'now' && !sp.gains && count === null ? { batchGains: inputs?.installGains ?? null } : {}), spec: specOut, noiseKey: o.noiseKey, ...stats[key], pointH: r3(o.pointH), ...(pointSeH !== null ? { pointSeH } : {}), commitment, ...(key === 'now' && elapsed ? { elapsedFrom: prev?.key ?? null } : {}), ...extra, n: ev.n, ms: ev.ms, overBudget: ev.overBudget, alloc: ev.alloc }
+    // THE FIRST INSTALL TIME THIS COMMITMENT PROMISED, carried while the key
+    // holds: the ledger measures a held commitment's slide against it.
+    out.promisedInstallAt = prev && sameLife && prev.key === outKey && fin(prev.promisedInstallAt) ? prev.promisedInstallAt : fin(installAt) ? installAt : null
+    if (routeDue) out.why = `ROUTE INSTALL DUE: the ready route's install time (${new Date(o.routeInstallAt).toISOString().slice(11, 16)}Z, anchored at the commitment) has come — installing with its augmentation. ${out.why ?? ''}`.slice(0, 600)
+    if (refused) out.why = `${refused.keys.length ? `DEFERRAL REFUSED (${refused.keys.join(', ')}): ${refused.why}. ` : `${refused.why}. `}${out.why ?? ''}`.slice(0, 900)
+    return out
   }
   if (!redecide && committedKey) return record(committedKey, { ...heldFields(prev, rows, pricedAt), ...heldSanity(prev) })
   // The incumbent's last price: its commitment (refreshed every held pass), else its record's mean.
@@ -2025,15 +2083,39 @@ export function* chooseBatchGen({ candidates = [], inputs = null, waitH = 0, ins
  * claimed gain (at least `minH`) — the waiting delivered less than nothing.
  */
 export const DEFER = { n: 3, minH: 0.5, max: 12 }
+/** A route counts as READY (its detour done) at or below this many hours; an install due within ROUTE_DUE_H is 'now'. */
+export const ROUTE_READY_H = 0.02
+export const ROUTE_DUE_H = 0.05
+/**
+ * THE HARD BOUND ON DEFERRAL: the life's deferral check (installDeferralCheckOf,
+ * the previous plan record's `installDeferral`) has DEFER.n or more promises
+ * each overshot by more than its own gain -> the install decision refuses
+ * every later install (decideInstallGen). null: no refusal.
+ */
+export function deferralRefusalOf(check, o = DEFER) {
+  if (!check || check.ok !== false || !fin(check.missed) || check.missed < o.n) return null
+  return { missed: check.missed, n: check.n ?? null, why: `${check.missed} deferral(s) this life overshot their own gain (bound ${o.n}): no further deferral this life` }
+}
 export function installDeferralsOf(prev, rec) {
   const same = prev && prev.lastAugReset === rec?.lastAugReset && prev.node === rec?.node
   const ledger = same && Array.isArray(prev.installDeferrals) ? prev.installDeferrals : []
   const a = prev?.decisions?.install
   const b = rec?.decisions?.install
-  if (!same || !b?.switched || !fin(a?.installAt) || !fin(b?.installAt) || !(b.installAt > a.installAt + 60e3) || !fin(rec?.exit?.meanH)) return ledger
+  if (!same || !fin(b?.installAt) || !fin(rec?.exit?.meanH)) return ledger
   const at = Date.parse(rec.at)
-  const d = { at: rec.at, from: a.key ?? null, fromInstallAt: new Date(a.installAt).toISOString(), to: b.key, toInstallAt: new Date(b.installAt).toISOString(), meanH: rec.exit.meanH, promisedExitAt: new Date(at + rec.exit.meanH * 3.6e6).toISOString(), gainH: fin(b.gainH) ? b.gainH : null, hold: b.spec?.hold?.faction ?? null }
-  return [...ledger, d].slice(-DEFER.max)
+  const row = (fromKey, fromAt, extra = {}) => ({ at: rec.at, from: fromKey, fromInstallAt: new Date(fromAt).toISOString(), to: b.key, toInstallAt: new Date(b.installAt).toISOString(), meanH: rec.exit.meanH, promisedExitAt: new Date(at + rec.exit.meanH * 3.6e6).toISOString(), gainH: fin(b.gainH) ? b.gainH : null, hold: b.spec?.hold?.faction ?? null, ...extra })
+  if (b.switched && fin(a?.installAt) && b.installAt > a.installAt + 60e3) return [...ledger, row(a.key ?? null, a.installAt)].slice(-DEFER.max)
+  // A HELD COMMITMENT WHOSE INSTALL TIME SLID is a deferral too, with no
+  // switch to record it: a wait priced from THIS pass every pass (a route's
+  // detour + extra) promises "soon" forever. Measured against the install
+  // time it first promised (promisedInstallAt) or its last ledger row, one
+  // row per DEFER.minH of slide.
+  if (a && !b.switched && !b.install && a.key === b.key) {
+    const last = [...ledger].reverse().find((d) => d.to === b.key && d.slid === true)
+    const ref = Math.max(fin(b.promisedInstallAt) ? b.promisedInstallAt : -Infinity, last ? Date.parse(last.toInstallAt) : -Infinity)
+    if (fin(ref) && b.installAt > ref + DEFER.minH * 3.6e6) return [...ledger, row(b.key, ref, { slid: true })].slice(-DEFER.max)
+  }
+  return ledger
 }
 export function installDeferralCheckOf(rec, o = DEFER) {
   const L = Array.isArray(rec?.installDeferrals) ? rec.installDeferrals : []
