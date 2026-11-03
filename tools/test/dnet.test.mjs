@@ -638,5 +638,16 @@ export async function run() {
     checks.push(c)
   }
 
+  {
+    // DN14 the lab rewards are priced: progress.js prices every pending aug through snap-augstats, and a lab reward
+    // (BN15: The W1ngs of Icarus …) belongs to no faction — the catalogue-only snapshot threw on every pass for
+    // ~24h of BN15.1 (2026-11-02). It must also name the owned/queued augs (from snap-owned's file, no new RAM).
+    const c = new Check('DN14', 'snap-augstats prices the owned and queued augs (lab rewards), not only the faction catalogue')
+    const sa = fs.readFileSync(path.join(REPO_ROOT, 'snap-augstats.js'), 'utf8')
+    c.examined(1)
+    if (!/ns\.read\('\/tel\/snap-owned\.txt'\)[\s\S]{0,200}owned\?\.data\?\.purchased[\s\S]{0,60}names\.add\(n\)/.test(sa)) c.fail('snap-augstats.js must add the owned and purchased (queued) augs from /tel/snap-owned.txt to the stats it snapshots')
+    checks.push(c)
+  }
+
   return checks
 }

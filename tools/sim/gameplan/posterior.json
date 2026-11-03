@@ -1,7 +1,7 @@
 {
  "schema": "gameplan-posterior",
  "version": 1,
- "updatedAt": "2026-10-25T18:53:33.103Z",
+ "updatedAt": "2026-11-03T00:18:01.052Z",
  "model": {
   "scalar": "hand split normal (lo/mid/hi = p10/p50/p90) x log-normal likelihood, on a z grid",
   "g": "x_n = ln(g_n AMC_n^gamma) ~ N(mu, tau^2); mu ~ N(ln gScen.mid, RHO s^2), tau^2 = (1-RHO) s^2; base-measured nodes N(ln g, SIGMA_PLAYED^2)",
@@ -174,6 +174,30 @@
    "clear": "BN8.1",
    "inBase": true,
    "note": "55.96h"
+  },
+  {
+   "key": "g|BN8.2|2026-10-27T16:15:40.094Z",
+   "param": "g8",
+   "value": 0.053816743327696585,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-10-27T16:15:40.094Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 8,
+   "clear": "BN8.2",
+   "note": "45.50h"
+  },
+  {
+   "key": "g|BN8.3|2026-11-01T23:31:44.091Z",
+   "param": "g8",
+   "value": 0.013304929928438965,
+   "sd": 0.15,
+   "space": "log",
+   "at": "2026-11-01T23:31:44.091Z",
+   "source": "history.jsonl: hacking-route clear, g backed out of its hours",
+   "node": 8,
+   "clear": "BN8.3",
+   "note": "127.18h"
   },
   {
    "key": "g|BN9.1|2026-10-01T02:48:25.544Z",
@@ -449,6 +473,16 @@
    "stream": "w0|go.js|????????????"
   },
   {
+   "key": "w0|go.js: 40 games vs ????????????|2026-10-27T15:51:13.081Z",
+   "param": "w0",
+   "value": 16886,
+   "sd": 3164,
+   "space": "lin",
+   "at": "2026-10-27T15:51:13.081Z",
+   "source": "go.js: 40 games vs ????????????",
+   "stream": "w0|go.js|????????????"
+  },
+  {
    "key": "xr10|2026-10-14T17:32:19.524Z|2026-10-15T02:13:17.970Z",
    "param": "xr10",
    "value": 765811.9467401332,
@@ -614,9 +648,9 @@
     16590
    ],
    "post": [
-    15560,
-    16770,
-    17980
+    11790,
+    14670,
+    17560
    ],
    "n": 1
   },
@@ -739,170 +773,184 @@
   },
   "g3": {
    "prior": [
-    0.02657,
-    0.04437,
-    0.09109
+    0.0266,
+    0.04444,
+    0.09124
    ],
    "post": [
-    0.03279,
-    0.04045,
-    0.0499
+    0.02245,
+    0.03779,
+    0.06361
    ],
    "n": 0,
    "what": "g /h of unplayed BN3: hand latent (prior) vs the full model (post)"
   },
   "g5": {
    "prior": [
-    0.03135,
-    0.05235,
-    0.1075
+    0.0314,
+    0.05244,
+    0.1077
    ],
    "post": [
-    0.047,
-    0.05589,
-    0.06646
+    0.03289,
+    0.05318,
+    0.086
    ],
    "n": 0,
    "what": "g /h of unplayed BN5: hand latent (prior) vs the full model (post)"
   },
   "g6": {
    "prior": [
-    0.0416,
-    0.06946,
-    0.1426
+    0.04168,
+    0.06961,
+    0.1429
    ],
    "post": [
-    0.06071,
-    0.07444,
-    0.09129
+    0.0447,
+    0.07524,
+    0.1267
    ],
    "n": 0,
    "what": "g /h of unplayed BN6: hand latent (prior) vs the full model (post)"
   },
   "g7": {
    "prior": [
-    0.02657,
-    0.04437,
-    0.09109
+    0.0266,
+    0.04444,
+    0.09124
    ],
    "post": [
-    0.03823,
-    0.04506,
-    0.0531
+    0.02813,
+    0.04531,
+    0.073
    ],
    "n": 0,
    "what": "g /h of unplayed BN7: hand latent (prior) vs the full model (post)"
   },
   "g11": {
    "prior": [
-    0.03135,
-    0.05235,
-    0.1075
+    0.0314,
+    0.05244,
+    0.1077
    ],
    "post": [
-    0.03504,
-    0.04112,
-    0.04825
+    0.02438,
+    0.03866,
+    0.06132
    ],
    "n": 0,
    "what": "g /h of unplayed BN11: hand latent (prior) vs the full model (post)"
   },
   "g14": {
    "prior": [
-    0.03526,
-    0.05887,
-    0.1209
+    0.03531,
+    0.05898,
+    0.1211
    ],
    "post": [
-    0.08433,
-    0.1014,
-    0.1218
+    0.06423,
+    0.1057,
+    0.1738
    ],
    "n": 0,
    "what": "g /h of unplayed BN14: hand latent (prior) vs the full model (post)"
   },
+  "g15": {
+   "prior": [
+    0.0266,
+    0.04444,
+    0.09124
+   ],
+   "post": [
+    0.03628,
+    0.05864,
+    0.09479
+   ],
+   "n": 0,
+   "what": "g /h of unplayed BN15: hand latent (prior) vs the full model (post)"
+  },
   "g1": {
    "prior": [
-    0.07297,
+    0.07303,
     0.15
    ],
    "post": [
-    0.07305,
-    0.1127
+    0.07253,
+    0.1417
    ],
    "what": "g /h and its log sd"
   },
   "g10": {
    "prior": [
-    0.03603,
+    0.03606,
     0.15
    ],
    "post": [
-    0.04257,
-    0.09305
+    0.04421,
+    0.1038
    ],
    "what": "g /h and its log sd"
   },
   "g12": {
    "prior": [
-    0.07238,
+    0.07244,
     0.15
    ],
    "post": [
-    0.07355,
-    0.1116
+    0.07442,
+    0.1416
    ],
    "what": "g /h and its log sd"
   },
   "g13": {
    "prior": null,
    "post": [
-    0.07941,
-    0.1345
+    0.07849,
+    0.1449
    ],
    "what": "g /h and its log sd"
   },
   "g2": {
    "prior": [
-    0.1426,
+    0.1429,
     0.15
    ],
    "post": [
-    0.1274,
-    0.1108
+    0.1368,
+    0.1417
    ],
    "what": "g /h and its log sd"
   },
   "g4": {
    "prior": [
-    0.07427,
+    0.0745,
     0.15
    ],
    "post": [
-    0.08362,
-    0.1004
+    0.07564,
+    0.1402
    ],
    "what": "g /h and its log sd"
   },
   "g8": {
    "prior": [
-    0.0416,
+    0.04168,
     0.15
    ],
    "post": [
-    0.04055,
-    0.1136
+    0.03249,
+    0.07751
    ],
    "what": "g /h and its log sd"
   },
   "g9": {
    "prior": [
-    0.05029,
+    0.05043,
     0.15
    ],
    "post": [
-    0.05035,
-    0.109
+    0.04967,
+    0.1407
    ],
    "what": "g /h and its log sd"
   },
@@ -910,29 +958,29 @@
    "chosen": "full",
    "what": "hierarchical, ln g_n = b0 + b(ln AMC, ln money, ln HackingLevel, ln WorldDaemon) + v_n",
    "elpd": {
-    "hand": -9.988,
-    "exch": -5.986,
-    "amc": -6.185,
-    "full": -3.793,
-    "exchG": -4.239,
-    "amcG": -4.331,
-    "fullG": -4.379,
-    "money": -4.632,
-    "moneyW": -5.432
+    "hand": -9.968,
+    "exch": -5.989,
+    "amc": -6.187,
+    "full": -3.784,
+    "exchG": -4.245,
+    "amcG": -4.332,
+    "fullG": -4.38,
+    "money": -4.629,
+    "moneyW": -5.426
    },
    "beta": [
-    -2.782,
-    -0.2235,
-    0.1889,
-    0.06633,
-    0.2393
+    -2.811,
+    -0.2232,
+    0.218,
+    0.04306,
+    0.2573
    ],
    "betaSd": [
-    0.0472,
-    0.05529,
-    0.04258,
-    0.0632,
-    0.04504
+    0.09305,
+    0.1024,
+    0.07572,
+    0.1152,
+    0.08432
    ],
    "feats": [
     "lnAMC",
@@ -941,8 +989,8 @@
     "lnWDD"
    ],
    "tau": [
-    0.08106,
-    0.05925
+    0.3253,
+    0.08519
    ]
   }
  }
