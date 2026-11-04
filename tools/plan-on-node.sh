@@ -45,7 +45,7 @@ sys.exit(0 if d.get('from')==$NODE and (d.get('next') or {}).get('label')=='$LAB
 
 if [ "$SIG" = "$(cat "$STAMP" 2>/dev/null)" ] && [ "$NEXTFROM" = "$NODE" ]; then dryrun; exit 0; fi
 echo "$(date -u +%FT%TZ) re-solving: $SIG"
-if nice -n 15 timeout 2400 node tools/sim/gameplan/plan.mjs --observe --jobs 3 > "$HOME/.cache/plan-on-node.log" 2>&1; then
+if nice -n 15 timeout 2400 node tools/sim/gameplan/plan.mjs --observe --sf15 3 --jobs 3 > "$HOME/.cache/plan-on-node.log" 2>&1; then
   printf '%s' "$SIG" > "$STAMP"
   grep -A1 '^RECOMMENDATION' "$HOME/.cache/plan-on-node.log"; grep 'next-node.txt' "$HOME/.cache/plan-on-node.log"
 else
