@@ -301,6 +301,9 @@ const WATCHED = [
     script: 'go.js',
     host: 'anywhere',
     args: [],
+    // THE USER'S OFF SWITCH (2026-11-06: "my room is so hot stop playing go"): /go-off.txt on home holds
+    // go.js down (and the daemon's GO_SOLVER=0 keeps the solver off). Delete the file to resume.
+    trigger: (ns) => !ns.fileExists('/go-off.txt', 'home'),
     place: (ns, hosts, rec) => goPlace(ns, hosts, rec),
     onRunning: (ns, rec) => {
       // Running (placed by anyone): the reservation is released, the absence clock stops.
