@@ -33,3 +33,4 @@ tools/goai/.entry.generated.ts
 tools/vendor/
 tools/goai/*.json.off
 next-node.txt
+go-off.txt

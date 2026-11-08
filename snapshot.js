@@ -74,6 +74,18 @@ export function readSnapshot(ns, key, info, now = Date.now()) {
   } else if (d.lastNodeReset !== info?.lastNodeReset) {
     return { data: null, why: `${spec.file} is from another BitNode` }
   }
+  // AUGSTATS MUST COVER EVERY OWNED/QUEUED AUG. It is taken once per node, but an aug can arrive later without
+  // belonging to any faction (BN15's lab rewards: The W1ngs of Icarus, cleared 7 min after BN15.2's entry and its
+  // snapshot): progress.js then threw on every pass for ~85h. Stale until it names them — act.js re-runs it.
+  if (key === 'augstats') {
+    try {
+      const own = JSON.parse(ns.read(SNAPSHOTS.owned.file) || 'null')
+      const lacking = [...(own?.data?.owned ?? []), ...(own?.data?.purchased ?? [])].filter((n) => !(n in (d.data.stats ?? {})))
+      if (lacking.length) return { data: null, why: `${spec.file} lacks ${lacking.slice(0, 3).join(', ')}${lacking.length > 3 ? ` (+${lacking.length - 3})` : ''} (owned or queued after it was taken)` }
+    } catch {
+      /* the owned snapshot unreadable: its own read reports that */
+    }
+  }
   return { data: d.data, at: d.at, why: null }
 }
 

@@ -649,5 +649,25 @@ export async function run() {
     checks.push(c)
   }
 
+  {
+    // DN15 augstats is stale while it lacks an owned/queued aug: it is taken once per node, and BN15.2's lab 1
+    // reward arrived 7 min after that — progress.js threw on every pass for ~85h (2026-11-08).
+    const c = new Check('DN15', 'snapshot.readSnapshot: augstats lacking an owned/queued aug reads stale, so act.js re-runs it')
+    const snap = await import(path.join(REPO_ROOT, 'snapshot.js'))
+    const node = 1000
+    const files = {
+      '/tel/snap-augstats.txt': JSON.stringify({ at: new Date().toISOString(), lastNodeReset: node, data: { stats: { 'NeuroFlux Governor': {} } } }),
+      '/tel/snap-owned.txt': JSON.stringify({ at: new Date().toISOString(), lastAugReset: 1, lastNodeReset: node, data: { owned: ['NeuroFlux Governor'], purchased: ['NeuroFlux Governor', 'The W1ngs of Icarus'] } }),
+    }
+    const ns = { read: (f) => files[f] ?? '' }
+    const lacking = snap.readSnapshot(ns, 'augstats', { lastNodeReset: node, lastAugReset: 1 })
+    files['/tel/snap-augstats.txt'] = JSON.stringify({ at: new Date().toISOString(), lastNodeReset: node, data: { stats: { 'NeuroFlux Governor': {}, 'The W1ngs of Icarus': {} } } })
+    const full = snap.readSnapshot(ns, 'augstats', { lastNodeReset: node, lastAugReset: 1 })
+    c.examined(2)
+    if (lacking.data !== null) c.fail('augstats lacking a queued aug must read stale (data null)', JSON.stringify(lacking).slice(0, 200))
+    if (full.data === null) c.fail('augstats covering every owned/queued aug must read fresh', JSON.stringify(full).slice(0, 200))
+    checks.push(c)
+  }
+
   return checks
 }
