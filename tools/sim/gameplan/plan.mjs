@@ -92,7 +92,7 @@ const { gridOf, layoutFor, layoutText, giftAvailable } = await import('./stanek.
 const { buildTable, solveDP, bestPath, firstMoves, localSearch, prefixTotal } = await import('./search.mjs')
 const { GO_MEASURED, GO_REF, goScale, goMaxRep, w0PriorMC, bladeGoOf } = await import('./go.mjs')
 const { POSTERIOR_FILE, loadStore, emptyStore, posteriorOf, summarise, measurability, appliedObs } = await import('./posterior.mjs')
-const { runObserve, printMove, clearLegSpecs } = await import('./observe.mjs')
+const { runObserve, printMove, clearLegSpecs, clearLegsOf } = await import('./observe.mjs')
 const { looCompare, MODEL_WHAT } = await import('./gmodel.mjs')
 const { fitDiscrepancy, lnHoursMoments, PRIOR_SD } = await import('./discrepancy.mjs')
 const { cvar, infoRelaxation, foldsOf, openLoop, kgOfMove, mfmc, seMean } = await import('./adaptive.mjs')
@@ -144,7 +144,11 @@ const start = inProg ? plus(entry, inProg) : entry
 // ---------------------------------------------------------------------------
 t0 = performance.now()
 // the legs every logged Bladeburner clear is read against (observe.mjs CLEAR_LEGS: its own Go farm)
-const EXTRA_BB = clearLegSpecs(await (await import('../nodechoice/measure.mjs')).nodeSegments())
+const EXTRA_BB = await (async () => {
+  const m = await import('../nodechoice/measure.mjs')
+  // the hand CLEAR_LEGS + the BN12 loop's automatic ones (bn12-board.json: each finished BN12 clear's own Go farm)
+  return clearLegSpecs(await m.nodeSegments(), clearLegsOf(m.TELEMETRY))
+})()
 // --no-blade-go: the Bladeburner grid without the Go farm's Tetrads channel (the leg before 2026-10-05; the farm's own value)
 const BLADE_GO = !has('--no-blade-go')
 const bstats = await buildSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, jobs: JOBS, extraBb: EXTRA_BB, bladeGo: BLADE_GO, log: (s) => process.stderr.write(s + '\n') })
@@ -373,6 +377,66 @@ const BN8M = has('--bn8-hack') || has('--phase1') ? null : await import('./bn8.m
 const bn8GiftWays = (w) => (w?.stanekOff || w?.stanekBn13Only ? [false] : null)
 const bn8World = BN8M ? { int: entry.int ?? 0, hoursOf: (lv, w) => BN8M.bn8RouteHours(lv, { int: entry.int ?? 0, giftWays: bn8GiftWays(w) }).hours, detailOf: (lv, w) => BN8M.bn8RouteHours(lv, { int: entry.int ?? 0, giftWays: bn8GiftWays(w) }) } : null
 const wOptsBase = { sigmaPlayed: SIGMA_P, phase1: has('--phase1'), stanekOff: NO_STANEK, bladeStanekOff: has('--no-blade-stanek'), w0Window: W0_WINDOW, w0Live: has('--w0-live'), lab15: LAB15_H, lab15Ready: has('--lab15-ready'), covLegOf, ...(has('--gift-uncal') ? { giftCal: null } : {}), bn8: bn8World }
+// ---------------------------------------------------------------------------
+// THE BN12 LOOP (bn12.mjs; the user, 2026-11-11: "BN12 forever ... how low we can get the exit time").
+// Nothing is owed: every capped Source-File is at its target and SF12 has no cap, so the next node is
+// BitNode 12 at the next level, every time. The whole-game DP has nothing to order (it threw on an empty
+// lattice, 2026-11-11 21:43Z and every 15 min after, and next-node.txt stayed BN15.1 from BN8: the
+// watchdog fell back to its hand --next 12 and the entry dry-run ran BN15.1). The routes of one BN12
+// clear are priced per level instead (bn12Pricing below; --bn12-levels).
+// ---------------------------------------------------------------------------
+if (!owed(start).length) {
+  const { bn12NextOf } = await import('./bn12.mjs')
+  const nx = bn12NextOf({ node: live.bitNode, sfPairs: pairsOf(entry) })
+  console.log('='.repeat(118))
+  console.log(`THE BN12 LOOP — nothing is owed at ${sig(start)}: the next node is ${nx.label} (BitNode 12 again, one level harsher)`)
+  console.log('='.repeat(118))
+  let priced = null
+  if (!has('--no-bn12-price')) priced = await bn12Pricing({ nx, world: worldOf(econ, {}, { ...wOptsBase, fleet: 'live' }) })
+  if (!has('--no-next-file')) {
+    fs.writeFileSync(new URL('../../../next-node.txt', import.meta.url), JSON.stringify({ at: new Date().toISOString(), ...nx, ET: priced?.next?.h ?? null, pBest: 1, by: 'tools/sim/gameplan/plan.mjs (the BN12 loop: nothing else owed)' }) + '\n')
+    console.log(`  next-node.txt: ${nx.label} after BN${nx.from} at SF${nx.from}.${nx.fromSF} (the watchdog's endgame --next)`)
+  }
+  const ru = process.resourceUsage()
+  console.log(`\nCOST: wall ${((performance.now() - T_START) / 1000).toFixed(1)}s | peak RSS ${(ru.maxRSS / 1024).toFixed(0)}MB | ` + Object.entries(phase).map(([k, v]) => `${k} ${v.toFixed(1)}s`).join(' | '))
+  process.exit(0)
+}
+/**
+ * ONE BN12 CLEAR'S ROUTES BY LEVEL, on the gameplan's own clearTime (routes.mjs: hack, stanek, blade,
+ * bladeStanek — gang and the labyrinth have no Red Pill in BN12, see bn12.mjs) at the state now with SF12
+ * set to level - 1, the hack curves built for each level (surrogate extraHack). The blade route's grid has
+ * no level axis (bbsim plays BN12 at level 1 there), so it is printed as the grid prices it and beside it
+ * the measured anchor x the simulated level ratio (bn12.mjs bladeAnchorOf; tools/bn12price.mjs).
+ * Returns { rows: [{level, h, via, by}], next: the row of nx.level }.
+ */
+async function bn12Pricing({ nx, world }) {
+  const levels = [...new Set([nx.level - 1, nx.level, ...String(arg('--bn12-levels', '2,5,10')).split(',').map(Number)])].filter((L) => Number.isInteger(L) && L >= 1).sort((a, b) => a - b)
+  const { hackSfOf } = await import('./effects.mjs')
+  const { sfKeyStr } = await import('./effects.mjs')
+  const lvAt = (L) => (n) => (n === 12 ? L - 1 : lvl(start, n))
+  const extraHack = levels.map((L) => ({ node: 12, level: L, sf: sfKeyStr(hackSfOf(lvAt(L))) }))
+  const t1 = performance.now()
+  await buildSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, jobs: JOBS, extraBb: EXTRA_BB, bladeGo: BLADE_GO, extraHack, log: (s) => process.stderr.write(s + '\n') })
+  const SB = await loadSurrogate({ start: entry, profile: econ.profile, bbSeeds: BB_SEEDS, direct: has('--direct'), bladeGo: BLADE_GO, extraHack })
+  tick('BN12 levels: hack curves', t1)
+  const rows = levels.map((L) => {
+    const ct = clearTime(12, lvAt(L), world, SB)
+    return { level: L, h: ct.h, via: ct.via, by: ct.by }
+  })
+  console.log(`\nBN12 ROUTES BY LEVEL — the gameplan's clearTime at ${sig(start)} with SF12 = level - 1 (mid world, posterior applied; the route chosen on E[hours] under routecal's band)`)
+  const ids = [...new Set(rows.flatMap((r) => Object.keys(r.by)))]
+  console.log(`  level  inc     ${ids.map((id) => id.padStart(12)).join('')}   chosen`)
+  for (const r of rows) console.log(`  BN12.${String(r.level).padEnd(3)} ${Math.pow(1.02, r.level).toFixed(3)}  ${ids.map((id) => (Number.isFinite(r.by[id]) ? `${r.by[id].toFixed(1)}h` : '-').padStart(12)).join('')}   ${r.via ?? '-'} ${Number.isFinite(r.h) ? `${r.h.toFixed(1)}h` : ''}`)
+  console.log('  blade here is the GRID (bbsim at BN12 level 1 for every level, its k posterior); the level-aware, measured-anchor blade price is tools/bn12price.mjs (.telemetry/bn12-price.json)')
+  const out = { at: new Date().toISOString(), state: sig(start), rows, next: rows.find((r) => r.level === nx.level) ?? null }
+  try {
+    const { TELEMETRY } = await import('../nodechoice/measure.mjs')
+    fs.writeFileSync(path.join(TELEMETRY, 'bn12-routes.json'), JSON.stringify(out, null, 1) + '\n')
+  } catch (e) {
+    console.log(`  (bn12-routes.json not written: ${e.message})`)
+  }
+  return out
+}
 const L0 = lattice(entry)
 const L1 = lattice(start)
 const COV_FLEETS = { none: 'live', '10.2': 'cov2', '10.3': 'cov3' }

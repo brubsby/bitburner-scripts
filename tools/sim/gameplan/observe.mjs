@@ -51,6 +51,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { OBS_SD, OBS_FILES, POSTERIOR_FILE, loadStore, saveStore, mergeObs, posteriorOf, summarise, hierFit } from './posterior.mjs'
+import { autoClearLegsOf, readJsonOr } from './bn12.mjs'
+import { bladeGoOf } from './go.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 /** The first measured run's start: older segments ran scripts the profile does not describe (economy.mjs). */
@@ -129,8 +131,20 @@ export const CLEAR_LEGS = {
 export const GO_COMBAT_SINCE = '2026-10-03T02:14'
 /** The farm a clear's opening (its gym to combat 100) ran under: CLEAR_LEGS openGo when stated, else its go. */
 export const openGoOf = (cl) => (cl && 'openGo' in cl ? cl.openGo : cl?.go ?? null)
-/** The legs every logged Bladeburner clear needs built (surrogate buildSurrogate extraBb): [{ node, l6, l7, go }]. */
-export function clearLegSpecs(segs) {
+/**
+ * THE CLEAR_LEGS IN FORCE: the hand table over the automatic BN12 entries (bn12.mjs autoClearLegsOf: each
+ * finished BN12 Bladeburner clear's own Go farm, captured on .telemetry/bn12-board.json by
+ * tools/bn12board.mjs every plan pass) — the BN12 loop's clears feed k without a hand entry each (they
+ * would otherwise all be WITHHELD: entered after GO_COMBAT_SINCE, farm unstated). A hand entry wins.
+ */
+export function clearLegsOf(telemetry) {
+  const board = telemetry ? readJsonOr(path.join(telemetry, 'bn12-board.json')) : null
+  return { ...autoClearLegsOf(board, bladeGoOf(1, 1).power), ...CLEAR_LEGS }
+}
+/** The level a clear's node is played at (BN12: its SF + 1; every other node 1 — bbsim's and the grid's default). */
+export const nodeLevelOf = (bn, lv) => (bn === 12 ? lv(12) + 1 : 1)
+/** The legs every logged Bladeburner clear needs built (surrogate buildSurrogate extraBb): [{ node, l6, l7, go, level }]. */
+export function clearLegSpecs(segs, clearLegs = CLEAR_LEGS) {
   const out = []
   for (const s of segs) {
     if (!s.startedAt || s.startedAt < OBS_SINCE || !(s.bbJoinH >= 0) || s.maxLevel >= HACK_LEVEL) continue
@@ -139,11 +153,12 @@ export function clearLegSpecs(segs) {
     const clear = `BN${s.bitNode}.${lv(s.bitNode) + 1}`
     const l6 = Math.max(1, Math.min(3, lv(6)))
     const l7 = Math.min(3, lv(7))
-    const go = CLEAR_LEGS[clear]?.go ?? null
-    out.push({ node: s.bitNode, l6, l7, go })
+    const go = clearLegs[clear]?.go ?? null
+    const level = nodeLevelOf(s.bitNode, lv)
+    out.push({ node: s.bitNode, l6, l7, go, level })
     // the opening's gym scale (gymDiff) under the farm the opening ran with, when that differs
-    const og = openGoOf(CLEAR_LEGS[clear])
-    if (JSON.stringify(og) !== JSON.stringify(go)) out.push({ node: s.bitNode, l6, l7, go: og })
+    const og = openGoOf(clearLegs[clear])
+    if (JSON.stringify(og) !== JSON.stringify(go)) out.push({ node: s.bitNode, l6, l7, go: og, level })
   }
   return out
 }
@@ -324,15 +339,17 @@ export async function runObserve({ econ, S, telemetry, file = POSTERIOR_FILE, dr
   const segs = await nodeSegments(path.join(telemetry, 'history.jsonl'))
   const sfMid = sfParamsMid()
   const l67 = (lv) => [Math.max(1, Math.min(3, lv(6))), Math.min(3, lv(7))]
+  const legs = clearLegsOf(telemetry)
   const fromHistory = readingsFromSegments(segs, {
     gOf: (bn, sf, T) => backOutG({ node: bn, sf, profile: econ.profile }, T).g,
-    // the fleet the clear ran with (sleeves.mjs; every Bladeburner clear so far: 5)
-    bbLeg: (bn, lv, clear) => S.bbLegAt(bn, ...l67(lv), sleevesOf(lv, bn), CLEAR_LEGS[clear]?.go ?? null)?.median ?? null,
+    // the fleet the clear ran with (sleeves.mjs; every Bladeburner clear so far: 5); BN12 at its level
+    bbLeg: (bn, lv, clear) => S.bbLegAt(bn, ...l67(lv), sleevesOf(lv, bn), legs[clear]?.go ?? null, nodeLevelOf(bn, lv))?.median ?? null,
     // the clear's own gym scale: its node under its own Go farm against BN6 with none (the opening's
     // reference, BN6.1, had none) — not the grid's, whose farm at the SF14 doubling makes every gym short
-    gymDiff: (bn, lv, clear) => (S.bbJoinAt(bn, ...l67(lv), openGoOf(CLEAR_LEGS[clear])) ?? 0) - (S.bbJoinAt(6, ...l67(lv), null) ?? 0),
+    gymDiff: (bn, lv, clear) => (S.bbJoinAt(bn, ...l67(lv), openGoOf(legs[clear]), nodeLevelOf(bn, lv)) ?? 0) - (S.bbJoinAt(6, ...l67(lv), null) ?? 0),
     earlyOf: (lv, bn) => earlyOf(lv, bn, sfMid),
     base: baseIn(MEASURED_RUNS),
+    clearLegs: legs,
   })
   const files = readingsFromFiles(telemetry)
   // THE NODE IN PROGRESS (in-run readings from history.jsonl, rates.mjs / inProgressG): its exp and

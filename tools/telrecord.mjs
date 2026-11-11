@@ -221,6 +221,15 @@ export function installRow(prev, cur) {
   };
 }
 
+/**
+ * Was this plan record decided inside the node entered at `lastNodeReset` (ms)? A plan decided before the
+ * entry is the previous clear's (a same-node replay keeps plan.node). Unknown entry or decision time: false.
+ */
+export const planOfNode = (plan, lastNodeReset) => {
+  const t = Date.parse(plan?.decidedAt ?? "");
+  return Number.isFinite(t) && Number.isFinite(lastNodeReset) && t >= lastNodeReset;
+};
+
 export const nodeKeyOf = (d) => (d?.bitNode != null && d?.lastNodeReset != null ? `${d.bitNode}@${d.lastNodeReset}` : null);
 
 export function sfMapOf(sourceFiles) {
@@ -235,7 +244,10 @@ export function sfMapOf(sourceFiles) {
  * exit is only this node's when plan.node matches (it survives a node entry).
  */
 export function nodeEntryRow(d, nextNode, plan, { firstSight = false } = {}) {
-  const planHere = plan && plan.node === d.bitNode && plan.exit;
+  // THIS node's plan only: the same node number is not enough once a node is replayed (BN5.2 -> 5.3,
+  // BN12.n -> 12.n+1, the BN12 loop): plan.txt survives the entry, so the previous clear's exit (0.035h
+  // at BN5.3's entry, 2026-10-24) read as this one's estimate. Decided at or after the entry, or not ours.
+  const planHere = plan && plan.node === d.bitNode && plan.exit && planOfNode(plan, d.lastNodeReset);
   return {
     at: d.at,
     kind: "node-entry",
@@ -446,7 +458,8 @@ export class RunRecorder {
       appendJsonl(this.f("run.jsonl"), rec);
       this.lastRun = rec;
       for (const row of decisionRows(files, this.lastDecision, nowMs)) appendJsonl(this.f("decisions.jsonl"), row);
-      if (this.nodeKey && rec.plan?.thisNode && rec.plan.exit && !this.planned.has(this.nodeKey)) {
+      // the node's FIRST plan: decided in this node (planOfNode — not the previous clear's plan.txt on a replay)
+      if (this.nodeKey && rec.plan?.thisNode && rec.plan.exit && planOfNode(rec.plan, Number(this.nodeKey.split("@")[1])) && !this.planned.has(this.nodeKey)) {
         this.planned.add(this.nodeKey);
         this.event({ at: rec.at, kind: "node-plan", key: this.nodeKey, node, exit: rec.plan.exit, decidedAt: rec.plan.decidedAt, ver: rec.plan.ver });
       }

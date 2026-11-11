@@ -19,6 +19,32 @@ print(d['bitNode'], sorted(sf.items()))" 2>/dev/null) || { echo "state unreadabl
 NEXTFROM=$(python3 -c "import json;print(json.load(open('next-node.txt')).get('from'))" 2>/dev/null)
 NODE=${SIG%% *}
 
+# THE BN12 BOARD, every pass (tools/bn12board.mjs, ~1s): every BN12 clear's hours, route, milestones and the
+# live plan's prediction at entry; it CAPTURES the Go farm of the clear in progress (go-dash-history.json keeps
+# only the node in progress), which observe.mjs reads back as that clear's CLEAR_LEGS when it finishes.
+# A failure is said in the board file's place (never silence: the board is the loop's measurement).
+if ! node tools/bn12board.mjs > "$HOME/.cache/bn12-board.log" 2>&1; then
+  printf '%s\n' "{\"at\":\"$(date -u +%FT%TZ)\",\"by\":\"tools/plan-on-node.sh\",\"failed\":true,\"why\":\"tools/bn12board.mjs failed: ~/.cache/bn12-board.log\"}" > .telemetry/bn12-board-failed.json
+else
+  rm -f .telemetry/bn12-board-failed.json
+fi
+# THE BLADEBURNER PRICE PER BN12 LEVEL (tools/bn12price.mjs, ~2-4 CPU-min at nice 15): in BN12, when the
+# price on file is older than 3h or from another node entry (the measured anchor and the Go farm move per clear)
+bn12price() {
+  [ "$NODE" = "12" ] || return 0
+  if python3 -c "
+import json,sys,datetime
+d=json.load(open('.telemetry/bn12-price.json'))
+b=json.load(open('.telemetry/bn12-board.json'))
+age=(datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(d['at'].replace('Z','+00:00'))).total_seconds()
+cur=(b.get('inProgress') or {}).get('enteredAt') or ''
+sys.exit(0 if age<3*3600 and d['at']>=cur else 1)" 2>/dev/null; then return 0; fi
+  echo "$(date -u +%FT%TZ) bn12 price"
+  nice -n 15 timeout 1800 node tools/bn12price.mjs > "$HOME/.cache/bn12-price.log" 2>&1 || echo "bn12price.mjs FAILED (~/.cache/bn12-price.log)"
+  grep -E '^  BN12\.' "$HOME/.cache/bn12-price.log" | head -8
+}
+bn12price
+
 # the entry dry-run of next-node.txt's node, unless one of that node from this node is on file
 dryrun() {
   local NEXT

@@ -197,7 +197,7 @@ export async function run() {
     if (BB.sleeveConfigKey(e.config) !== 'i1s0f1') c.fail(`Field Analysis / Infiltrate read as ${BB.sleeveConfigKey(e.config)}`)
     const sl = SRC('sleeve.js')
     c.examined(2)
-    if (!/bladeMemo\?\.result\?\.config \? \{[^}]*\} : bladeIncumbentOf\(sleeves\.map\(\(x\) => x\.task\), prevCommitted\)/.test(sl)) c.fail('sleeve.js: a process with no last answer must take the running fleet as the incumbent')
+    if (!/\bmemo\?\.result\?\.config \? \{[^}]*\} : bladeIncumbentOf\(sleeves\.map\(\(x\) => x\.task\), prevCommitted\)/.test(sl)) c.fail('sleeve.js: a process with no last answer must take the running fleet as the incumbent')
     if (!/bladeFleetGen\(s0, n, incumbent\.config,/.test(sl)) c.fail('sleeve.js: the fleet search must be given that incumbent')
     if (!/prevBlade = JSON\.parse\(ns\.read\(RAMOVERRIDE_STATUS\)[^\n]*\n\s*const rerrors = \[\]\n\s*const note = reporter\(/.test(sl)) c.fail("sleeve.js: the last committed fleet must be read before this process's first write replaces it")
   }

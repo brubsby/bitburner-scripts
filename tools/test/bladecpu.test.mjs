@@ -124,8 +124,11 @@ export async function run() {
     }
     if (!(tripped instanceof CO.LoopCapError)) c.fail('a step cap must throw LoopCapError')
     const sj = SRC('sleeve.js')
-    if (/install\.firstH\.toFixed\(1\)/.test(sj.slice(sj.indexOf('const key = `${n}|${route}'), sj.indexOf('const key = `${n}|${route}') + 200))) c.fail('the memo key must not move with the clock (firstH)')
-    if (!/cappedFleetGen\(bladeFleetGen\(s0, n(, [^)]*)?\), BLADE_FLEET_CAP/.test(sj)) c.fail('sleeve.js must run the fleet search under its cap')
+    const keyAt = sj.indexOf('const key = `${life}|${n}|${route}')
+    if (keyAt < 0) c.fail("sleeve.js's fleet memo key is not `${life}|${n}|${route}|...` (the life first: never another node's answer)")
+    if (/install\.firstH\.toFixed\(1\)/.test(sj.slice(keyAt, keyAt + 200))) c.fail('the memo key must not move with the clock (firstH)')
+    // under its cap: BLADE_FLEET_CAP itself, or the per-life escalation of it (x2 a capped search with no answer of this life)
+    if (!/cappedFleetGen\(bladeFleetGen\(s0, n(, [^)]*)?\), (BLADE_FLEET_CAP|cap)\b/.test(sj) || !/const cap = \{ \.\.\.BLADE_FLEET_CAP, ms: BLADE_FLEET_CAP\.ms \* bladeCapMul\.mul/.test(sj) || !/BLADE_CAP_MUL_MAX = \d+/.test(sj)) c.fail('sleeve.js must run the fleet search under its cap')
     if (!/leave\('sleeve'\); try \{ await py\(\) \}/.test(sj)) c.fail('the page yields must close the trace section')
     c.examined(4)
   }

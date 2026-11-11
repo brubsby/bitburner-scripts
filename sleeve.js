@@ -331,7 +331,21 @@ export function* cappedFleetGen(gen, { steps = 200000, ms = 4000 } = {}, cpuMs =
   }
   return r.value
 }
+// THE MEMO IS THIS LIFE'S ONLY (2026-11-11, BN12.2). Module state survives the script: the game keeps a
+// compiled module while its source is unchanged, across kills, installs and node entries. BN12.2 opened
+// on the fleet sleeve.js decided at BN15.2's exit on 2026-11-04 (every configuration 0.0h -> i0s0f0g8,
+// eight sleeves at the gym): the search ran past its cap, the capped path re-served "the last answer"
+// as the incumbent and the fallback, and the stale key matched (n|route|joined|basis|install carries no
+// node or life). The live exit read 33.5h (gym fleet) where BN2.3's i5s3 read 8.2h. Now the memo carries
+// the life it was decided in (node, node reset, aug reset) and is never read from another.
 let bladeMemo = null
+/** The fleet search's cap multiplier, per life: doubled each time a search runs past its cap with no answer of this life to stand on (the last answer would otherwise be nothing — or, before, another node's). */
+let bladeCapMul = { life: null, mul: 1 }
+const BLADE_CAP_MUL_MAX = 8
+/** The life a fleet answer belongs to (getResetInfo): node, its reset, the install. */
+export const bladeLifeOf = (info) => `${info?.currentNode ?? '?'}@${info?.lastNodeReset ?? '?'}|${info?.lastAugReset ?? '?'}`
+/** The memo, if it was decided in this life (else null: never another node's or life's answer). */
+export const bladeMemoOf = (memo, life) => (memo && memo.life === life ? memo : null)
 function pageYield(ns) {
   let MC = null
   try {
@@ -396,10 +410,12 @@ async function bladeFleetNow(ns, n, node, sleeves = [], prevCommitted = null) {
   // i4s1f0, i1s4f0, i4s0f1, i0s5f0), each a fleet event the plan re-decided
   // on. The install's time to go in whole hours (0 for 'now' and anything
   // already due), so a wait still re-prices as it comes due.
-  const key = `${n}|${route}|${joined}|${basis?.kind ?? 'none'}|${install ? Math.round(install.firstH ?? 0) : '-'}`
-  if (bladeMemo && bladeMemo.key === key && Date.now() - bladeMemo.at < BLADE_REPRICE_MS) return bladeMemo.result
-  // A search that ran past its cap waits out the reprice interval on the last answer.
-  if (bladeMemo && bladeMemo.capped && Date.now() - bladeMemo.at < BLADE_REPRICE_MS) return bladeMemo.result
+  const life = bladeLifeOf(info)
+  const memo = bladeMemoOf(bladeMemo, life)
+  const key = `${life}|${n}|${route}|${joined}|${basis?.kind ?? 'none'}|${install ? Math.round(install.firstH ?? 0) : '-'}`
+  if (memo && memo.key === key && Date.now() - memo.at < BLADE_REPRICE_MS) return memo.result
+  // A search that ran past its cap waits out the reprice interval on the last answer (of this life).
+  if (memo && memo.capped && memo.result?.config && Date.now() - memo.at < BLADE_REPRICE_MS) return memo.result
   const p = ns.getPlayer()
   const mults = { ...p.mults }
   for (const [k, nk] of Object.entries(LEVEL_MULTS)) if (typeof node?.[nk] === 'number' && node[nk] > 0 && typeof mults[k] === 'number') mults[k] = mults[k] * node[nk]
@@ -434,24 +450,33 @@ async function bladeFleetNow(ns, n, node, sleeves = [], prevCommitted = null) {
   // Sliced with page yields, the trace section closed across each yield, and
   // HARD-CAPPED (BLADE_FLEET_CAP: steps and work ms); past the cap the last
   // answer stands (or none), said so.
-  const incumbent = bladeMemo?.result?.config ? { config: bladeMemo.result.config, source: 'memo', why: 'the last answer of this process' } : bladeIncumbentOf(sleeves.map((x) => x.task), prevCommitted)
+  const incumbent = memo?.result?.config ? { config: memo.result.config, source: 'memo', why: 'the last answer of this life' } : bladeIncumbentOf(sleeves.map((x) => x.task), prevCommitted)
   const py = pageYield(ns)
   const pacer = makePacer({ sliceMs: BLADE_SLICE_MS, yieldFn: async () => { leave('sleeve'); try { await py() } finally { enter('sleeve') } } })
+  if (bladeCapMul.life !== life) bladeCapMul = { life, mul: 1 }
+  const cap = { ...BLADE_FLEET_CAP, ms: BLADE_FLEET_CAP.ms * bladeCapMul.mul, steps: BLADE_FLEET_CAP.steps * bladeCapMul.mul }
   let fleet = null
   try {
     // The committed fleet (the last answer's) stands on a near tie (sleeveplan.FLEET_KEEP). A fresh
     // process has no last answer: the fleet the sleeves are RUNNING is the incumbent
     // (sleeveplan.bladeIncumbentOf) — live 10-10 a restart switched 5 Support to a contract fleet inside the tolerance.
-    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, incumbent.config, { Q: BLADE_ENSEMBLE.Q }), BLADE_FLEET_CAP, () => pacer.stats.cpuMs), 'bladeFleet')
+    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, incumbent.config, { Q: BLADE_ENSEMBLE.Q }), cap, () => pacer.stats.cpuMs), 'bladeFleet')
   } catch (e) {
     if (!(e instanceof LoopCapError)) throw e
-    const last = bladeMemo?.result ?? null
-    const result = last ? { ...last, capped: String(e.message) } : { on: false, why: `the fleet search ran past its cap (${e.message}): no Bladeburner fleet this interval`, route, joined, capped: String(e.message) }
-    bladeMemo = { key, at: Date.now(), result, capped: true }
-    return result
+    const last = memo?.result?.config ? memo.result : null
+    if (last) {
+      const result = { ...last, capped: String(e.message) }
+      bladeMemo = { life, key, at: Date.now(), result, capped: true }
+      return result
+    }
+    // NO ANSWER OF THIS LIFE TO STAND ON: no memo (the next pass searches again, at twice the cap — the
+    // search is sliced with page yields, so a longer cap is wall time, not a frozen page)
+    const was = bladeCapMul.mul
+    bladeCapMul = { life, mul: Math.min(BLADE_CAP_MUL_MAX, was * 2) }
+    return { on: false, why: `the fleet search ran past its cap (${e.message}, x${was}) with no fleet of this life yet: none this pass, the next searches at x${bladeCapMul.mul}`, route, joined, capped: String(e.message), capMul: was }
   }
-  const result = { on: !!fleet.tasks, ...fleet, incumbent: { key: sleeveConfigKey(incumbent.config), source: incumbent.source, why: incumbent.why }, route, joined, decidedAt: new Date().toISOString(), cpuMs: +pacer.stats.cpuMs.toFixed(1), maxBlockMs: +pacer.stats.maxBlockMs.toFixed(1), install: install ? { firstH: +install.firstH.toFixed(2), from: basis?.kind ?? null } : null, installBasis: basis?.kind ?? 'none' }
-  bladeMemo = { key, at: Date.now(), result }
+  const result = { on: !!fleet.tasks, ...fleet, incumbent: { key: sleeveConfigKey(incumbent.config), source: incumbent.source, why: incumbent.why }, route, joined, decidedAt: new Date().toISOString(), cpuMs: +pacer.stats.cpuMs.toFixed(1), maxBlockMs: +pacer.stats.maxBlockMs.toFixed(1), install: install ? { firstH: +install.firstH.toFixed(2), from: basis?.kind ?? null } : null, installBasis: basis?.kind ?? 'none', life, capMul: bladeCapMul.mul }
+  bladeMemo = { life, key, at: Date.now(), result }
   return result
 }
 
