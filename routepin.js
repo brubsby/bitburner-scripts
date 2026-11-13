@@ -114,6 +114,14 @@ export function pinnedRouteOf(d, pin) {
  *               (chaplan.chaLabsCtxOf, off on the black ops).
  */
 export const NODE_ROUTE_RULES = {
+  // BN12 (2026-11-13): MEASURED — five Bladeburner clears 6.13-7.32h (BN12.2-12.6, tools/bn12board.mjs) vs the one
+  // hacking clear 21.2h (BN12.1); the live hacking exit priced BN12.7 at 3.69h (vs blade 6.66h), switched route and
+  // installed twice, resetting the black-op climb. Until the hacking arm is calibrated on BN12 clears, act on blade.
+  12: {
+    route: 'blade',
+    labReady: false,
+    why: 'BitNode 12: measured Bladeburner clears 6.1-7.3h (BN12.2-12.6) vs 21.2h by hacking (BN12.1); the live hacking exit is uncalibrated here (priced BN12.7 at 3.7h) — the black ops are the exit until it is',
+  },
   15: {
     route: 'blade',
     labReady: true,

@@ -223,5 +223,18 @@ export async function run() {
     if (!/const key = `\$\{life\}\|/.test(fn)) c.fail("the fleet memo's key does not carry the life")
     checks.push(c)
   }
+  {
+    // BN8: the measured BN12 route — BN12.7 (2026-11-13) switched to a hacking exit priced at 3.7h against five measured
+    // Bladeburner clears of 6.1-7.3h and installed twice; the node rule acts on blade in BN12.
+    const c = new Check('BN8', 'routepin: BitNode 12 acts on the black ops (measured), whatever the hacking exit prices')
+    const rp = await import(path.join(REPO_ROOT, 'routepin.js'))
+    const r = rp.nodeRuleOf(12, null)
+    const acted = rp.nodeRouteOf({ key: 'hack', hackH: 3.7, bladeH: 6.7, why: 'priced' }, 12, null)
+    c.examined(2)
+    if (r?.route !== 'blade') c.fail("nodeRuleOf(12) must name 'blade'", JSON.stringify(r))
+    if (acted?.key !== 'blade') c.fail("nodeRouteOf must act on 'blade' in BitNode 12", JSON.stringify(acted).slice(0, 200))
+    checks.push(c)
+  }
+
   return checks
 }
