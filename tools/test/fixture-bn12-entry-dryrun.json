@@ -1,0 +1,39 @@
+{
+ "source": "tools/sim/entry/dryrun.mjs --chain 12.8 on the live save 2026-11-13 ~16:05Z, this checkout (exitplan SHAPE_SCALE_MAX 5); HEAD 67cd0ee at 13:37Z priced the entry hack 6.77h (.telemetry/entry-dryrun.json)",
+ "at": "2026-11-13T16:07:31.653Z",
+ "by": "tools/sim/entry/dryrun.mjs",
+ "nodes": [
+  {
+   "label": "BN12.8",
+   "decisions": [
+    {
+     "phase": "entry",
+     "route": {
+      "key": "blade",
+      "hackH": 13.04,
+      "bladeH": 15.239
+     },
+     "exitH": 18.189
+    },
+    {
+     "phase": "accepted",
+     "route": {
+      "key": "blade",
+      "hackH": 14.27,
+      "bladeH": 14.501
+     },
+     "exitH": 17.315
+    },
+    {
+     "phase": "joined",
+     "route": {
+      "key": "blade",
+      "hackH": 18.215,
+      "bladeH": 11.527
+     },
+     "exitH": 13.833
+    }
+   ]
+  }
+ ]
+}

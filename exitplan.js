@@ -1117,6 +1117,22 @@ function stepsOf(extra, carried) {
  * model's cadence, or nothing bought at any length).
  */
 /**
+ * THE SHAPE'S SCALE IS BOUNDED BY THE RANGE ITS CALIBRATION COVERS (cadenceShapeOf scaleMax). The scale
+ * (ln g over the model's mean) is the purchase model's error correction; on every exit-inputs record of a
+ * finished hacking clear (tools/sim/hackarmcal.mjs: BN12.1, BN13.1, BN10.2) it ran 1.3-4.7, and the arm
+ * priced those clears' remaining hours at or above the measured (BN12.1 x1.05-x1.38). Past that range it is
+ * extrapolated — as purchaseGainOf never extrapolates the money -> gain table upward. Live BN12.7
+ * 2026-11-13: the posterior (0.104/h: the node's own lives, their lnM carrying the gift's charge, and a
+ * cross-node prior of 0.12/h) over a grown sequence's 96-life mean (0.0016 ln a life) made the scale 25-31,
+ * and the catalogue's front (0.068, 0.049 ln: what the life's money buys) was priced at x5.6 and x3.5 a
+ * half-hour life — mult 1.83 -> 45.7 in three lives, the hacking exit 2-4h for five hours, the route
+ * switched off the black ops and installed nine times (the lives bought 1-3 hacknet augmentations; the
+ * hacking multiplier net of the gift went 1.44 -> 1.88 over eight of them, ~0.03 ln a life). The one
+ * hacking clear of BN12 took 21.2h. tools/test/hackarmcal.test.mjs (HC2) holds this bound to the
+ * calibration's largest scale.
+ */
+export const SHAPE_SCALE_MAX = 5
+/**
  * THE LIVES ONE BY ONE. The purchase model's table row at L carries each
  * life's own ln gain (lifeplan.lifeTableGen `seq`): the catalogue depletes,
  * so the first lives after an install buy most of what it holds. The exit's
@@ -1134,9 +1150,11 @@ function stepsOf(extra, carried) {
  * quarter reached. Returns {at(i): the factor on install i's cycle gain
  * (i >= 1; past the sequence, 1 or the reached rate's), end: the first install
  * index past the sequence} or null (no shape, another L, or a cadence that
- * buys nothing).
+ * buys nothing). The scale is bounded at `scaleMax` (SHAPE_SCALE_MAX): bound,
+ * the sequence's total is no longer the mean's, and past the sequence a life
+ * is priced at the bounded scale too (the rate the sequence reached).
  */
-export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0 } = {}) {
+export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0, scaleMax = SHAPE_SCALE_MAX } = {}) {
   if (!shape || !Array.isArray(shape.ln) || !shape.ln.length || !pos(cycleHours) || !num(shape.L) || Math.abs(shape.L - cycleHours) > 1e-9) return null
   if (!pos(multGainPerCycle) || multGainPerCycle <= 1) return null
   const seq = shape.ln.map((v) => (num(v) && v > 0 ? v : 0))
@@ -1158,7 +1176,7 @@ export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0
   const nMean = Number.isInteger(shape.n) && shape.n > 0 && shape.n < n ? shape.n : n
   const meanN = pos(shape.mean) ? shape.mean : nMean === n ? mean : seq.slice(0, nMean).reduce((a, b) => a + b, 0) / nMean
   if (!(meanN > 0)) return null
-  const scale = lnG / meanN
+  const scale = Math.min(lnG / meanN, num(scaleMax) && scaleMax > 0 ? scaleMax : Infinity)
   const S = [0]
   for (const v of seq) S.push(S[S.length - 1] + v)
   // Past the sequence: its mean — or, where it runs past the mean's horizon
@@ -1166,7 +1184,7 @@ export function cadenceShapeOf(shape, { cycleHours, multGainPerCycle, skipLn = 0
   // multiplier reached, not at the first lives').
   const tail = nMean === n ? mean : seq.slice(n - Math.max(1, Math.floor(n / 4))).reduce((a, b) => a + b, 0) / Math.max(1, Math.floor(n / 4))
   const past = tail > 0 ? tail : mean
-  const pastF = nMean === n ? 1 : Math.exp(scale * past - lnG)
+  const pastF = nMean === n && scale === lnG / meanN ? 1 : Math.exp(scale * past - lnG)
   // Cumulative model ln at fractional life x (the rate past the horizon).
   const Sat = (x) => {
     if (x <= 0) return 0
@@ -1941,7 +1959,7 @@ export function exitHours(o = {}, installsAt = null, quiet = false) {
     // the sequence's first 6h life buys x2.0, and the new life priced that
     // life by its own planned batch (x1.43 at 2h): 18.1h against 13.7h, EXIT
     // JUMP AT INSTALL. Past the sequence, the mean as before.
-    const shape = cadenceShapeOf(o.cadenceShape, { cycleHours, multGainPerCycle, skipLn: pos(installGains?.hacking) && pos(persistBaseline?.hacking) ? Math.log(installGains.hacking / persistBaseline.hacking) : 0 })
+    const shape = cadenceShapeOf(o.cadenceShape, { cycleHours, multGainPerCycle, skipLn: pos(installGains?.hacking) && pos(persistBaseline?.hacking) ? Math.log(installGains.hacking / persistBaseline.hacking) : 0, scaleMax: o.shapeScaleMax ?? SHAPE_SCALE_MAX })
     const shapeAt = shape ? shape.at : () => 1
     const shapeEnd = shape ? shape.end : 0
     // A GRAFT PERSISTS THROUGH EVERY LATER INSTALL (it is pushed onto

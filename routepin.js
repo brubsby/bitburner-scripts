@@ -117,6 +117,10 @@ export const NODE_ROUTE_RULES = {
   // BN12 (2026-11-13): MEASURED — five Bladeburner clears 6.13-7.32h (BN12.2-12.6, tools/bn12board.mjs) vs the one
   // hacking clear 21.2h (BN12.1); the live hacking exit priced BN12.7 at 3.69h (vs blade 6.66h), switched route and
   // installed twice, resetting the black-op climb. Until the hacking arm is calibrated on BN12 clears, act on blade.
+  // THE LIFT CHECK (tools/sim/hackarmcal.mjs, test HC4): lift only when the arm reproduces BN12.1's records within
+  // x/÷2 each and the routecal band on their mean, AND its BN12 entry price (the entry dry-run's hackH) is above
+  // every measured Bladeburner clear. 2026-11-13, after the shape bound (exitplan.SHAPE_SCALE_MAX): entry 13.0h
+  // (was 6.4h) > 7.3h, but the BN12.1 replay is out of band (14:47Z record x3.6 pessimistic, mean ln 0.48) — KEEP.
   12: {
     route: 'blade',
     labReady: false,
