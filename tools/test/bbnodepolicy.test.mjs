@@ -60,5 +60,46 @@ export async function run() {
     }
   }
   out.push(c2)
+
+  // NP3 BN12 boots its Raids at the boot's own bar (tools/sim/bb12.mjs, 8 cells x 24 paired seeds: clear
+  // -0.05 +- 0.01h, first black op -0.12 +- 0.02h); the exit model keeps pricing those Raids at minP
+  const c3 = new Check('NP3', "BN12: the boot's Raid bar is bootMinP (0.15), for the daemon and bb-lite; the exit model still prices the boot's Raids at minP")
+  {
+    const p12 = NP.nodePolicyOf(12)
+    const view = { blackOp: { d: { n: 0 } }, rank: 10 }
+    c3.examined(5)
+    if (p12.bootRaidMinP !== BP.POLICY.bootMinP || !(p12.bootRaidMinP < BP.POLICY.bootRaidMinP)) c3.fail("BN12's bootRaidMinP must be POLICY.bootMinP, below POLICY's Raid bar", JSON.stringify({ bn12: p12.bootRaidMinP, policy: BP.POLICY.bootRaidMinP, bootMinP: BP.POLICY.bootMinP }))
+    if (BP.phasePolicyOf(view, p12).raidMinP !== BP.POLICY.bootMinP || BP.phasePolicyOf(view, BP.POLICY).raidMinP !== BP.POLICY.bootRaidMinP) c3.fail("booting, BN12's chooser raids at 0.15, POLICY's at 0.25", JSON.stringify({ bn12: BP.phasePolicyOf(view, p12).raidMinP }))
+    if (p12.bootMinP !== BP.POLICY.bootMinP || p12.bootSkillEveryS !== BP.POLICY.bootSkillEveryS || p12.minP !== BP.POLICY.minP) c3.fail('BN12 keeps the rest of the bootstrap and POLICY')
+    if (BL.litePolicyOf(12).bootRaidMinP !== BP.POLICY.bootMinP || BL.litePolicyOf(12).pinTop !== true) c3.fail("bb-lite's lean policy in BN12 raids at the boot bar too, pinTop kept")
+    const o = NP.nodePolicyOverrideOf(12)
+    if (!(o && Number.isFinite(o.bootRaidMinP) && o.bootRaidMinP < BP.POLICY.minP)) c3.fail("the exit model's override carries a FINITE bar under minP (bladeExitGen then prices the Raids at minP; null would price them at 0.15)", JSON.stringify(o))
+  }
+  out.push(c3)
+
+  // NP4 BN12's fleet floor: the chooser prices only fleets of 5+ infiltrators (8 sleeves), so a sub-floor incumbent yields
+  const c4 = new Check('NP4', "BN12's fleet chooser picks among fleets of at least five infiltrators (8 sleeves); other nodes and smaller fleets are unconstrained")
+  {
+    const SP = await import('sleeveplan.js')
+    const { drain } = await import('coop.js')
+    const allow = NP.fleetAllowOf(12, 8)
+    c4.examined(4)
+    if (typeof allow !== 'function' || allow({ infiltrate: 4, support: 4, fa: 0 }) || !allow({ infiltrate: 5, support: 3, fa: 0 })) c4.fail('fleetAllowOf(12, 8) admits i5 s3 and refuses i4 s4')
+    if (NP.fleetAllowOf(12, 5) !== null || NP.fleetAllowOf(13, 8) !== null) c4.fail('no floor below the measured fleet size or outside BN12')
+    const FX = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'tools/test/fixture-bn7-sleevecontracts.json'), 'utf8'))
+    const s0 = BP.bladeStartOf({ tel: FX.tel, person: FX.person, sleeves: { infiltrate: 3, support: 5, fa: 0 }, gymExpPerSec: FX.start.gymExpPerSec, bnRank: FX.start.bnRank, skillCostMult: FX.start.skillCostMult, maxH: 60, now: Date.parse(FX.tel.at) })
+    const all = BP.chooseSleeveConfig(s0, 8, BP.POLICY, { Q: 1, contracts: false })
+    const floored = BP.chooseSleeveConfig(s0, 8, BP.POLICY, { Q: 1, contracts: false, allow })
+    const fleet = drain(SP.bladeFleetGen(s0, 8, { infiltrate: 3, support: 5, fa: 0 }, { Q: 1, allow }))
+    c4.examined(3)
+    if (!all.byConfig.some((x) => x.config.infiltrate < 5)) c4.fail('the unconstrained search must price sub-floor fleets (else this check proves nothing)')
+    if (!floored.byConfig.length || floored.byConfig.some((x) => x.config.infiltrate < 5)) c4.fail('chooseSleeveConfigGen allow: every priced fleet has 5+ infiltrators', floored.byConfig.map((x) => BP.sleeveConfigKey(x.config)).join(' '))
+    if (!(fleet.config?.infiltrate >= 5)) c4.fail('bladeFleetGen with the floor: an i3 s5 incumbent yields to a floored fleet', JSON.stringify(fleet.config))
+    const rd = (f) => fs.readFileSync(path.join(REPO_ROOT, f), 'utf8')
+    c4.examined(2)
+    if (!/const allow = fleetAllowOf\(info\.currentNode, n\)/.test(rd('sleeve.js')) || !/bladeFleetGen\(s0, n, incumbent\.config, \{ Q: BLADE_ENSEMBLE\.Q, allow \}\)/.test(rd('sleeve.js'))) c4.fail("sleeve.js's fleet search must take the node's floor")
+    if (!/chooseSleeveConfigGen\(startFor\(bladeBasis\), nSleeves, undefined, \{ Q: 1, allow: fleetAllowOf\(info\.currentNode, nSleeves\) \}\)/.test(rd('progress.js'))) c4.fail("progress.js's route fleet must take the node's floor")
+  }
+  out.push(c4)
   return out
 }

@@ -1464,9 +1464,10 @@ export function bladeIncumbentOf(tasks, committed = null) {
   const config = { infiltrate, support, fa, ...(contracts > 0 ? { contracts } : {}) }
   return { config, source: 'tasks', why: `the sleeves' tasks: ${sleeveConfigKey(config)}${c ? ` (the committed ${sleeveConfigKey(c)} does not match them)` : ''}` }
 }
-export function* bladeFleetGen(s0, n, incumbent = null, { Q = 1 } = {}) {
+export function* bladeFleetGen(s0, n, incumbent = null, { Q = 1, allow = null } = {}) {
   if (!(n > 0)) return { tasks: [], config: null, hours: null, byConfig: [], why: 'no sleeves' }
-  const pick = yield* chooseSleeveConfigGen(s0, n, undefined, { Q })
+  // allow: the node's admissible fleets (bbnodepolicy.fleetAllowOf: BN12's infiltrator floor); an incumbent outside it is not kept
+  const pick = yield* chooseSleeveConfigGen(s0, n, undefined, { Q, allow })
   // THE INCUMBENT STANDS on a near tie: configurations a few minutes apart in
   // the model flipped the committed fleet between passes (re-tasking five
   // sleeves, and a fleet change is an exit event): live-state replay

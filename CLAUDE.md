@@ -519,6 +519,14 @@ bladeburner.js, bb-lite (its actors get the node), the exit model (`bladeStartOf
 bbsim specs all play `nodePolicyOf(node)`. `bbboot.mjs --calib` checks bbsim's opening against history.jsonl (start state = the node's
 measured gym share; charger = live H 400); it runs SLOW in BN13 after ~2.5h (rank -23% at 5h). Tests
 BBOOT1-5.
+**BN12's climb** (2026-11-13, `tools/sim/bb12.mjs`): bbsim calibrated on BN12.2-12.6 as played (start state:
+levels at the join — charisma ~250 from the opening's crime; SF12's NeuroFlux levels, now granted by bbsim;
+grafts as they landed; the hacknet's +100-rank exchanges seen before the Raids): first black op mean
+ln(model/live) +0.07, the clear -0.06, rank 2.5k +0.15 (was +0.43). BN12 plays Raid at the boot bar 0.15
+(`bbnodepolicy.NODE_FIELDS`: clear -0.05 +- 0.01h, first black op -0.12 +- 0.02h) and its fleet chooser
+keeps 5+ of 8 sleeves infiltrating (`fleetAllowOf`: below that +0.06..+0.9h, which the exit model cannot
+see). The priced hold of Typhoon delays the first black op ~1.4h and is RIGHT: forcing it at 0.5 costs the
+clear +0.18h. Every lever's hours are in bb12.mjs's header. Tests NP3-NP4.
 
 **Sleeves without sleeve.js are on shock recovery, and an idle sleeve banks its time** (2026-10-24,
 `sleeveliteplan.js`). Sleeve.prestige (every node entry) and every install put each sleeve on RECOVERY,

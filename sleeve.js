@@ -103,6 +103,7 @@ import { travel_cost } from 'constants.js'
 import { canUseSleeve } from 'sfgate.js'
 import { bitNodeMults } from 'bitNodeMultipliers.js'
 import { fleetExpToPlayer, fleetFactionRepPerSec, fleetRates, sleeveAssignments, syncBreakevenHours, sleeveExitOf, bladeFleetGen, bladeIncumbentOf } from 'sleeveplan.js'
+import { fleetAllowOf } from 'bbnodepolicy.js'
 import { bladeStartOf, bladeInstallOfBasis, SLEEVE_ACTION, BLADE_ENSEMBLE, sleeveConfigKey, sleeveBodyOf, sleevePhaseOf, sleeveGymStatOf, sleeveContractOf, skillMultsOf, cityFactor } from 'bbplan.js'
 import { makePacer, LoopCapError } from 'coop.js'
 import { bestExitPolicy } from 'exitplan.js'
@@ -452,6 +453,8 @@ async function bladeFleetNow(ns, n, node, sleeves = [], prevCommitted = null) {
   // answer stands (or none), said so.
   const incumbent = memo?.result?.config ? { config: memo.result.config, source: 'memo', why: 'the last answer of this life' } : bladeIncumbentOf(sleeves.map((x) => x.task), prevCommitted)
   const py = pageYield(ns)
+  // the node's admissible fleets (bbnodepolicy.fleetAllowOf: BN12 keeps 5+ of 8 sleeves infiltrating), null elsewhere
+  const allow = fleetAllowOf(info.currentNode, n)
   const pacer = makePacer({ sliceMs: BLADE_SLICE_MS, yieldFn: async () => { leave('sleeve'); try { await py() } finally { enter('sleeve') } } })
   if (bladeCapMul.life !== life) bladeCapMul = { life, mul: 1 }
   const cap = { ...BLADE_FLEET_CAP, ms: BLADE_FLEET_CAP.ms * bladeCapMul.mul, steps: BLADE_FLEET_CAP.steps * bladeCapMul.mul }
@@ -460,7 +463,7 @@ async function bladeFleetNow(ns, n, node, sleeves = [], prevCommitted = null) {
     // The committed fleet (the last answer's) stands on a near tie (sleeveplan.FLEET_KEEP). A fresh
     // process has no last answer: the fleet the sleeves are RUNNING is the incumbent
     // (sleeveplan.bladeIncumbentOf) — live 10-10 a restart switched 5 Support to a contract fleet inside the tolerance.
-    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, incumbent.config, { Q: BLADE_ENSEMBLE.Q }), cap, () => pacer.stats.cpuMs), 'bladeFleet')
+    fleet = await pacer.slices(cappedFleetGen(bladeFleetGen(s0, n, incumbent.config, { Q: BLADE_ENSEMBLE.Q, allow }), cap, () => pacer.stats.cpuMs), 'bladeFleet')
   } catch (e) {
     if (!(e instanceof LoopCapError)) throw e
     const last = memo?.result?.config ? memo.result : null

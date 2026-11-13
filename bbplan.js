@@ -2329,9 +2329,10 @@ export function chooseSleeveConfig(s0, n, pol = POLICY, opts = {}) {
  * a single exit each picked whichever the pass's clock favoured. Q 1: one
  * exit each (the tests' cheap path).
  */
-export function* chooseSleeveConfigGen(s0, n, pol = POLICY, { Q = 1, contracts = true } = {}) {
+export function* chooseSleeveConfigGen(s0, n, pol = POLICY, { Q = 1, contracts = true, allow = null } = {}) {
   const byConfig = []
-  for (const config of [...sleeveConfigs(n), ...(contracts ? sleeveContractConfigs(n) : [])]) {
+  // allow: the node's admissible fleets (bbnodepolicy.fleetAllowOf — BN12's infiltrator floor), priced among themselves
+  for (const config of [...sleeveConfigs(n), ...(contracts ? sleeveContractConfigs(n) : [])].filter((c) => !allow || allow(c))) {
     if (Q > 1) {
       let why = null
       const e = yield* bladeExitMeanGen({ ...s0, sleeves: config }, { Q, pol, hoursOfMember: function* (m) {

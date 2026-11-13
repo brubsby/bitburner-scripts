@@ -318,8 +318,12 @@ export function runBladeburner(o) {
     let gStacks = 0
     let gCongruity = false
     const gDone = []
+    // SOURCE-FILE 12's NeuroFlux levels, granted at every node's start (Prestige.ts:255-261: activeSourceFileLvl(12)
+    // levels, before the multipliers are recalculated); bbsim held none before 2026-11-13 (tools/sim/bb12.mjs)
+    const nfg = o.neuroflux ?? P.activeSourceFileLvl(12)
+    if (nfg > 0) P.augmentations.push({ name: 'NeuroFlux Governor', level: nfg })
     const applyMults = () => {
-      P.resetMultipliers()
+      P.reapplyAllAugmentations(true) // resets the multipliers, then the NeuroFlux levels (P.augmentations holds only them)
       P.reapplyAllSourceFiles()
       for (const s of COMBAT) P.mults[s] *= augMult * goEff
       for (const a of bladeburnerAugs()) if (owned.has(a.name)) for (const [k, v] of Object.entries(a.mults ?? {})) if (typeof P.mults[k] === 'number') P.mults[k] *= v
@@ -457,6 +461,17 @@ export function runBladeburner(o) {
       t += 60
     }
     const joinH = t / 3600
+    // o.joinStats ({stat: level}): the player's levels AT THE JOIN as a live opening had them (crime and
+    // the gym past the bar before the join: tools/sim/bb12.mjs measures them) — each stat's exp raised
+    // to reach its level (skill.ts calculateExp at the stat's multiplier), never lowered
+    if (o.joinStats && !o.setup) {
+      for (const [s, lvl] of Object.entries(o.joinStats)) {
+        if (!(lvl > P.skills[s])) continue
+        const m = P.mults[s] * (mults[`${s[0].toUpperCase()}${s.slice(1)}LevelMultiplier`] ?? 1)
+        P.exp[s] = Math.max(P.exp[s], g.calculateExp(lvl, m))
+      }
+      P.updateSkillLevels()
+    }
     P.startBladeburner()
     const bb = P.bladeburner
     for (const k of Object.keys(bb.logging)) bb.logging[k] = false // the console log is an unbounded array
@@ -701,9 +716,13 @@ export function runBladeburner(o) {
         const need = ga.cost + (gr.fare ?? 2 * g.CONSTANTS.TravelCost)
         // gr.fromS: the schedule decided at that time (its wealth is that moment's): nothing starts before it
         const from = gr.fromS ?? 0
-        if (t >= from && (gr.wealth ?? 0) + ((gr.moneyPerH ?? 0) * (t - from)) / 3600 - gSpent >= need) {
+        const durS = g.calculateGraftingTimeWithBonus(ga) / 1000
+        // gr.doneAtH[i] (node hours): a REPLAY of a measured graft — it starts no earlier than its measured
+        // completion minus its duration, so it lands when the live one did (tools/sim/bb12.mjs --calib)
+        const notBefore = Array.isArray(gr.doneAtH) && Number.isFinite(gr.doneAtH[gi]) ? gr.doneAtH[gi] * 3600 - durS : -Infinity
+        if (t >= from && t >= notBefore && (gr.wealth ?? 0) + ((gr.moneyPerH ?? 0) * (t - from)) / 3600 - gSpent >= need) {
           gSpent += need
-          gRun = { name, startT: t, endT: t + g.calculateGraftingTimeWithBonus(ga) / 1000 }
+          gRun = { name, startT: t, endT: t + durS }
           gi++
           if (!simOn && bb.action) bb.resetAction() // the graft is the work: it cancels the action
         }

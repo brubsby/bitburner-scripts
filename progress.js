@@ -183,7 +183,7 @@ import { enter, leave, pageBoot } from 'trace.js'
 import { rwRegimeOf, RW_PRIOR, RW_AGE, rwAgeKnee, capitalAgeInputsOf } from 'traderw.js'
 import { PLAN, PLAN_FILE, elasticityObsOf, batchDiffOf, installBatchVerdictOf, posteriorsOf, makeDraws, redecideEvents, posteriorSummary, decideRouteGen, decideInstallGen, decideAmongGen, decideSpend, applyDraw, seedOf, withObs, routeKey, trajectoryOf, trajectoryGenOf, noiseKeyOf, basisOf, decideBladeRouteGen, bladeNoiseKeyOf, hackBasisOf, consistencyOf, inputsKeyOf, gainsKeyOf, modelVersionFrom, graftCarryCheckOf, traderBeliefOf, exitJumpOf, exitStabilityOf, policyGenOf, perLifeGainCheckOf, streamSummaryOf, streamEventsOf, decideLifeLengthGen, lifeLOf, lifeLengthBasisOf, installHoldOf, committedBatchOf, installDeferralsOf, installDeferralCheckOf, robustRateOf, RATE_SMOOTH, repSampleOf, installCarryOf, gangBridgeOf, chooseBatchGen, BATCH_CHOICE, markBladeMoot, BLADE_MOOT, setCommitCalibration, commitRuleText, allocSummaryOf, redecideGateOf, redecideGateRecordOf, bestWaitOfOptions } from 'plan.js'
 import { recalIntervalOf } from 'exitcal.js'
-import { nodePolicyOverrideOf } from 'bbnodepolicy.js'
+import { nodePolicyOverrideOf, fleetAllowOf } from 'bbnodepolicy.js'
 import { ROUTE_PIN, routePinOf, pinnedRouteOf, nodeRouteOf, nodeRuleOf, routeDistOf, unpinnedOf, routeReportOf, NODE_ROUTE_RULES } from 'routepin.js'
 import { labInstallOf, labOf } from 'dnetplan.js'
 import { chaLabsCtxOf, FARM_MAX_GB } from 'chaplan.js'
@@ -2953,7 +2953,7 @@ async function bladeRouteOf(ns, info, player, inputsFn, { owned = null, queued =
       const bladeBasis = bladeCommitted ? basisOf(prevInst, Date.now()) : null
       if (fl.source !== 'committed' && nSleeves > 0 && !routeFleet) {
         try {
-          const pick = yield* chooseSleeveConfigGen(startFor(bladeBasis), nSleeves, undefined, { Q: 1 })
+          const pick = yield* chooseSleeveConfigGen(startFor(bladeBasis), nSleeves, undefined, { Q: 1, allow: fleetAllowOf(info.currentNode, nSleeves) })
           routeFleet = pick.config ? { config: pick.config, key: sleeveConfigKey(pick.config), hours: Number.isFinite(pick.hours) ? +pick.hours.toFixed(3) : null, n: nSleeves, joined: tel?.joined === true, lastAugReset: info.lastAugReset, at: new Date().toISOString(), source: 'chooser', why: `the fleet the Bladeburner route would run (bbplan.chooseSleeveConfigGen, ${pick.byConfig.length} configurations): ${sleeveConfigKey(pick.config)}` } : { config: null, n: nSleeves, why: 'no configuration reaches the 21st black op in the model: the arm runs the sleeves as assigned' }
         } catch (e) {
           routeFleet = { config: null, n: nSleeves, why: `the fleet chooser threw: ${String(e).slice(0, 120)}` }
