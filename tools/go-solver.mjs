@@ -1,7 +1,7 @@
 // External IPvGO solver: real search on a real core, outside the game.
 //
 //   node tools/go-solver.mjs [--maxms 1500] [--poll 400] [--katago-remote bubtop|none]
-//                            [--katago-idle-min 30] [--no-ponder]
+//                            [--katago-idle-min 30] [--no-ponder] [--no-katago] [--no-uct-ponder]
 //   (started nice-19 by `npm run gosolver`)
 //
 // Why outside. Netscript runs on the browser's main thread, so every
@@ -73,6 +73,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadModel } from "./goai/model.mjs";
+import { UctPonder } from "./go-uct-ponder.mjs";
 
 const argv = process.argv.slice(2);
 const flag = (name, dflt) => {
@@ -92,6 +93,21 @@ const REMOTE_RAW = str("katago-remote", process.env.KATAGO_REMOTE ?? "bubtop");
 const REMOTE = REMOTE_RAW && REMOTE_RAW !== "none" ? REMOTE_RAW : null;
 const IDLE_MS = flag("katago-idle-min", 30) * 60e3;
 const PONDER = !argv.includes("--no-ponder");
+// --no-katago: no KataGo engine at all, GPU or CPU — /go/katago.txt says
+// neither answers, so go.js plays every board below 19x19 on its uct/model arm
+// and goplan prices those arms (armPrior katagoOk false). THE ONE-CORE BUDGET
+// (2026-11-13, systemd CPUQuota=100%): the local CPU engine is multithreaded,
+// so under the quota it starved the search and was throttled itself — live
+// Tetrads@9 on it made 5.2-8.0k power/h against Tetrads@7 uct's 14-16k, and
+// its games were stock-engine ('katago-r3') evidence the walls-priced arm
+// never counted, so Thompson kept drawing it at the GPU's price.
+const KATAGO_OFF = argv.includes("--no-katago");
+// THE UCT PONDER (tools/go-uct-ponder.mjs; --no-uct-ponder: off): after a uct
+// answer on 7x7-13x13, search our answer to the AI's predicted reply in a
+// worker while the reply crawls through the game. A request may say
+// `ponder: false` (go.js's A/B arm) to switch it off for that answer.
+const UCT_PONDER = !argv.includes("--no-uct-ponder");
+const UCT_PONDER_N = flag("uct-ponder-positions", 2);
 // How the MODEL ponders (release 2, tools/sim/go-w0.mjs --session):
 //   session  one search tree kept across moves (golib.modelSession): the
 //            subtree under the AI's actual reply is the next root, the search
@@ -158,6 +174,7 @@ for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => process.exit(0));
 let kgMod = null;
 let kgService = null;
 async function katagoService() {
+  if (KATAGO_OFF) return null;
   if (kgService) return kgService;
   kgMod = kgMod ?? (await import("./katago/service.mjs"));
   const { installed } = await import("./katago/katago.mjs");
@@ -168,6 +185,7 @@ process.on("exit", () => kgService?.close());
 
 /** Why no KataGo engine answered, in one line. */
 function katagoWhyNot() {
+  if (KATAGO_OFF) return "katago off (--no-katago: the one-core budget)";
   const s = kgService?.status();
   const parts = [];
   if (REMOTE) parts.push(`GPU ${REMOTE}: ${s?.remote?.why ?? "not reachable"}`);
@@ -211,8 +229,9 @@ async function publishKatagoStatus(force = false) {
   const svc = kgService?.status() ?? null;
   const gpuDown = !!svc?.remote && svc.remote.downFor > 0;
   const status = {
-    gpu: !!REMOTE && katagoProbe.gpu === true && !gpuDown,
-    cpu: installed(),
+    gpu: !KATAGO_OFF && !!REMOTE && katagoProbe.gpu === true && !gpuDown,
+    cpu: !KATAGO_OFF && installed(),
+    ...(KATAGO_OFF ? { off: "--no-katago (the one-core budget)" } : {}),
     remote: REMOTE ? { host: REMOTE, reachable: katagoProbe.gpu, checkedAt: new Date(katagoProbe.checkedAt).toISOString(), why: gpuDown ? svc.remote.why : katagoProbe.why } : null,
     service: svc,
   };
@@ -232,7 +251,7 @@ async function publishKatagoStatus(force = false) {
 const model = await loadModel({ quiet: false });
 const modelWhy = model ? null : "tools/goai opponent model could not be built or loaded (see stderr above)";
 if (!model) console.error(`go-solver: ${modelWhy} — model requests will be answered by uct`);
-console.log(`go-solver: ${MAXMS}ms/move, polling every ${POLL}ms, priority ${os.getPriority()}, model ${model ? "loaded" : "UNAVAILABLE"}, katago GPU ${REMOTE ?? "off"}, ponder ${PONDER ? "on" : "off"}`);
+console.log(`go-solver: ${MAXMS}ms/move, polling every ${POLL}ms, priority ${os.getPriority()}, model ${model ? "loaded" : "UNAVAILABLE"}, katago ${KATAGO_OFF ? "OFF (--no-katago)" : `GPU ${REMOTE ?? "off"}`}, ponder ${PONDER ? "on" : "off"}, uct ponder ${UCT_PONDER && PONDER ? `on (${UCT_PONDER_N} replies)` : "off"}`);
 
 const validGrid = (N, list) => {
   const valid = Array.from({ length: N }, () => new Array(N).fill(false));
@@ -729,6 +748,63 @@ async function ponderUntilNext(maxms) {
   return false;
 }
 
+// ---------------------------------------------------------------- the uct ponder
+const uctPonder = new UctPonder({ log: (m) => console.error(`go-solver: ${m}`) });
+process.on("exit", () => uctPonder.close());
+const uctKey = (board, opponentPassed) => `${board.join("/")}|${opponentPassed ? 1 : 0}`;
+/** A uct request the ponder serves: 7x7-13x13 (no 19x19 per-request options), with the opponent the model predicts. */
+const uctPonderOk = (req) => UCT_PONDER && !!model && !!req.opponent && req.size > 5 && req.size < 19 && !req.opts;
+// THE UCT SEED: the AI's reply is drawn at the playtime T_play + 200k, T_play
+// read when go.js played our answer (the RETIME go.js sends after a uct
+// answer that says `uctPonder`); k calibrated online from the replies the AI
+// actually made (golib seedCalib, its own calibrator: the uct path's lag).
+const uctCal = seedCalib();
+// The last uct answer the ponder works from: { opponent, size, komi, board (after our stone), history, maxms, opts }.
+let uctCtx = null;
+// What the AI's next reply is drawn from (the retime's T), for the calibration.
+let uctSeedCtx = null;
+async function uctJobs(ctx, rngs) {
+  kgMod = kgMod ?? (await import("./katago/service.mjs"));
+  const positions = await kgMod.ponderPositions({ model, board: ctx.board, history: ctx.history, opponent: ctx.opponent, komi: ctx.komi, size: ctx.size, samples: 8, ...(rngs ? { rngs } : {}), maxPositions: UCT_PONDER_N });
+  return positions
+    .filter((p) => p.reply !== "pass" && Array.isArray(p.valid))
+    .map((p) => ({ key: uctKey(p.board, false), board: p.board, valid: validGrid(ctx.size, p.valid), N: ctx.size, komi: ctx.komi, maxms: ctx.maxms, opts: ctx.opts }));
+}
+/** After answering `move` on `req`: predict the AI's replies and search our answers to them in the worker. */
+async function startUctPonder(req, move, maxms, opts, history, searchMs) {
+  kgMod = kgMod ?? (await import("./katago/service.mjs"));
+  const after = kgMod.applyStone(req.board, move.x, move.y, "X");
+  if (!after) return;
+  uctCtx = { opponent: req.opponent, size: req.size, komi: req.komi ?? 5.5, board: after, history: [req.board.join(""), ...history], maxms, opts };
+  uctSeedCtx = null;
+  // Until the retime lands: the request's playtime plus this answer's lag.
+  const rngs = Number.isFinite(req.T) && req.T > 0 ? kgMod.ponderSeeds(req.T, searchMs + 60 + 200) : null;
+  const jobs = await uctJobs(uctCtx, rngs);
+  if (jobs.length) uctPonder.start(jobs);
+}
+/** The retime of a uct answer: re-predict from the play's own playtime. */
+async function retimeUctPonder(T) {
+  if (!uctCtx || !(T > 0)) return;
+  uctSeedCtx = { T, opponent: uctCtx.opponent, size: uctCtx.size, board: uctCtx.board, history: uctCtx.history };
+  const rngs = uctCal.weights().map(([k, w]) => [T + 200 * k, w]);
+  const jobs = await uctJobs(uctCtx, rngs);
+  uctPonder.retarget(jobs);
+}
+/** Calibrate the uct seed lag on the reply the AI actually made (after answering: off the critical path). */
+async function calibrateUctSeed(req) {
+  const c = uctSeedCtx;
+  uctSeedCtx = null;
+  if (!c || !model || c.opponent !== req.opponent || c.size !== req.size) return;
+  const actual = replyIn(req, c);
+  if (!actual) return;
+  const matches = [];
+  for (let k = uctCal.range[0]; k <= uctCal.range[1]; k++) {
+    const m = await model.reply(c.board, { opponent: c.opponent, history: c.history, rng: c.T + 200 * k });
+    if ((m ? `${m.x},${m.y}` : "pass") === actual) matches.push(k);
+  }
+  uctCal.observe(matches, uctCal.weights()[0]?.[0] ?? null);
+}
+
 await publishKatagoStatus(true);
 let lastStatusTick = Date.now();
 
@@ -749,6 +825,15 @@ while (true) {
       // exact) instead of at the request's T plus our search's length; the
       // seed calibration follows. Then pondering resumes. Measured
       // (tools/sim/go-w0.mjs --retime): see go.js SETTINGS.clock.
+      if (req.seq !== lastSeq && req.retime && uctCtx && req.opponent === uctCtx.opponent && req.size === uctCtx.size && !String(sessKey ?? "").startsWith(`${req.opponent}|${req.size}|`)) {
+        lastSeq = req.seq;
+        try {
+          await retimeUctPonder(req.T);
+        } catch (err) {
+          console.error(`go-solver: uct retime failed: ${String(err).slice(0, 160)}`);
+        }
+        continue;
+      }
       if (req.seq !== lastSeq && req.retime) {
         lastSeq = req.seq;
         if (seedCtx?.path === "req" && seedCtx.opponent === req.opponent) notePlay(req.opponent, req.T, seedCtx.histLen);
@@ -764,6 +849,13 @@ while (true) {
         lastSeq = req.seq;
         lastReqAt = Date.now();
         const N = req.size;
+        // Only a uct request can use the uct ponder: anything else stops it,
+        // so two searches never share the one core.
+        if (req.backend) {
+          uctPonder.cancel();
+          uctCtx = null;
+          uctSeedCtx = null;
+        }
         // adaptivePairOnly (go.js SETTINGS.cheat.hardAdaptive): the budget is
         // this hard-move pair request's alone — the ponder's pre-send filter
         // keeps what the opponent's own requests set.
@@ -982,7 +1074,7 @@ while (true) {
           const svc = await katagoService();
           let k = null;
           try {
-            k = await svc.choose({ size: N, board: req.board, valid: req.valid || [], komi: req.komi ?? 5.5, visits: Number.isFinite(req.visits) ? req.visits : 200, settings: req.settings && typeof req.settings === "object" ? req.settings : undefined });
+            if (svc) k = await svc.choose({ size: N, board: req.board, valid: req.valid || [], komi: req.komi ?? 5.5, visits: Number.isFinite(req.visits) ? req.visits : 200, settings: req.settings && typeof req.settings === "object" ? req.settings : undefined });
           } catch (err) {
             k = null;
             console.error(`go-solver: katago threw: ${String(err).slice(0, 160)}`);
@@ -1000,15 +1092,27 @@ while (true) {
               const why = await tryModel();
               if (why) fallback = `${fallback}; model: ${why}`;
             }
-            console.error(`go-solver: seq=${req.seq} katago -> ${backend}: ${fallback}`);
-            publishKatagoStatus(true);
+            if (!KATAGO_OFF) console.error(`go-solver: seq=${req.seq} katago -> ${backend}: ${fallback}`);
+            if (!KATAGO_OFF) publishKatagoStatus(true);
           }
         }
-        if (backend === "uct") ranked = chooseMoveUCT(req.board, validGrid(N, req.valid), N, req.komi ?? 5.5, maxms, opts);
+        if (backend === "uct") {
+          // THE UCT PONDER: an answer already searched (or being searched)
+          // for exactly this board, while the AI replied.
+          const pk = uctPonderOk(req) ? uctKey(req.board, opponentPassed) : null;
+          const got = pk ? await uctPonder.take(pk, { count: !req.secondStone }) : (uctPonder.cancel(), null);
+          const top = got?.ranked?.[0];
+          if (got && (got.ranked?.length === 0 ? opponentPassed : top && (req.valid || []).some(([x, y]) => x === top.x && y === top.y))) {
+            ranked = got.ranked;
+            extra.pondered = got.how;
+          } else ranked = chooseMoveUCT(req.board, validGrid(N, req.valid), N, req.komi ?? 5.5, maxms, opts);
+        }
         const move = ranked && ranked.length ? { seq: req.seq, x: ranked[0].x, y: ranked[0].y, ...(ranked[0].second ? { second: ranked[0].second } : {}) } : { seq: req.seq, pass: true };
         if (move.second) jointStats.pairs++;
         move.backend = backend;
         move.release = RELEASE;
+        // go.js sends a RETIME after playing an answer that says so (the uct ponder's seed).
+        if (backend === "uct" && uctPonderOk(req) && req.ponder !== false && PONDER) move.uctPonder = true;
         if (fallback) move.fallback = fallback;
         Object.assign(move, extra);
         // The search's top 3 [x, y, value, visits, winRate] for go.js's per-game log.
@@ -1023,7 +1127,8 @@ while (true) {
               `(${backend}${extra.where ? "@" + extra.where : ""}${extra.pondered ? " " + extra.pondered : ""}, ${Date.now() - t0}ms, ${ranked?.[0]?.iters ?? 0} iters${backend === "model" ? `, ${ranked?.[0]?.modelCalls ?? 0} model calls` : ""})` +
               (kgService ? ` katago ${JSON.stringify(kgService.status().stats)}` : "") +
               ` model ponder ${ponderStats.modelHit}/${ponderStats.modelHit + ponderStats.modelMiss}` +
-              ` book ${JSON.stringify(bookStats)} joint ${JSON.stringify(jointStats)}`,
+              ` book ${JSON.stringify(bookStats)} joint ${JSON.stringify(jointStats)}` +
+              (uctPonder.stats.started ? ` uctPonder ${JSON.stringify(uctPonder.stats)} uctSeed ${JSON.stringify(uctCal.stats)} k ${JSON.stringify(uctCal.weights().slice(0, 3))}` : ""),
           );
         }
 
@@ -1045,6 +1150,15 @@ while (true) {
           sess.setCheat({ fns: [null, ponderFn], cheats: (req.cheat?.cheats ?? 0) + (move.second ? 1 : 0) });
           rememberSeedCtx(req, "req", move.pass ? null : move.x, move.pass ? null : move.y);
           skipSleep = await ponderUntilNext(maxms);
+        }
+        if (backend === "uct" && uctPonderOk(req) && !move.pass && req.ponder !== false && PONDER) {
+          try {
+            const searchMs = Date.now() - t0;
+            await calibrateUctSeed(req);
+            await startUctPonder(req, move, maxms, opts, history, searchMs);
+          } catch (err) {
+            console.error(`go-solver: uct ponder failed: ${String(err).slice(0, 160)}`);
+          }
         }
         // KataGo on 13x13/19x19 ponders only with the playtime (req.T, go.js
         // SETTINGS.clock): the AI's reply there turns on its seed, and 4 random

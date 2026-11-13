@@ -70,6 +70,31 @@ reports it (`throttled`, `lastSleepMs`, health `warn`), heartbeats `/tel/go.txt`
 every minute instead of only per game, and its move watchdog counts scheduler
 turns rather than seconds so a slow tab is not mistaken for a stuck move.
 
+**THE ONE-CORE BUDGET (user, 2026-11-13).** Go may use at most ONE CPU core of puter (heat): the
+solver runs as `~/.config/systemd/user/bitburner-gosolver.service` (CPUQuota=100%, Nice=19, the
+daemon keeps `GO_SOLVER=0`); never KataGo, never bubtop's GPU, and offline Go experiments count
+against the same core (one small niced process, never beside the live farm for long). The unit is not
+in the repo; its ExecStart should read
+`node tools/go-solver.mjs --maxms 800 --poll 150 --katago-remote none --no-katago`.
+Where the core went (live 11-13, 279 Tetrads@7 games): ~845ms of uct search on each of ~15 turns
+(40% of a 32s game), idle through every AI reply (~1.2s); the local KataGo CPU engine (multithreaded,
+throttled under the quota) played Tetrads@9 at 5.2-8.0k power/h vs Tetrads@7's 15.2k, and its
+stock-engine games never counted toward the walls-priced arm, so Thompson kept drawing it. So:
+- `go.js SETTINGS.katago: false` (`katagoUsable`): no board asks for KataGo; goplan prices every arm on
+  uct/model (Tetrads@9 5.7k/h, @13 not offered); `--no-katago` makes the solver publish `off`.
+- **The uct ponder** (`tools/go-uct-ponder.mjs`, worker `tools/go-uct-worker.mjs`): after a 7x7-13x13
+  uct answer the solver predicts the AI's reply with its own code and searches our answer in a worker;
+  go.js sends a RETIME at the play (the seed, calibrated online: k=1 94%), a matching request is
+  answered at once (`pondered: hit`), any other board aborts the worker (golib `opts.abort`), so two
+  searches never share the core. Replayed on the live record (`tools/sim/go-uctponder-replay.mjs`):
+  89.1% +- 0.6% of requested turns hit -> projected Tetrads@7 15.2k +- 0.3k -> 18.9k +- 0.3k/h (+24.6%),
+  same search per move. NOT YET MEASURED LIVE: `SETTINGS.uct.ab` alternates base800 / ponder800 /
+  ponder400 in blocks of 10 games (`ab` + `uctPonder` in each go-games record); set the winner in
+  `uct.maxmsBy` / `uct.ponder` and `ab: null` after ~300 games. Tests UP1-UP8.
+- **Restarting go.js without the terminal:** `node tools/go-restart.mjs` writes `/go/restart.txt`; a
+  go.js started before it exits at its next game boundary and the watchdog relaunches it (the go.js
+  running before 2026-11-13 predates this and needs one kill).
+
 Then in-game: Options → Remote API → port `12525` → Connect.
 
 - `tools/rfa-daemon.mjs` serves the Remote File API; **the game connects to us**.

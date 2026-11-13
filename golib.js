@@ -659,6 +659,8 @@ const RAVE_K = 300
  *   opponentPassed  The opponent's last action was a pass, so OUR pass ends
  *                the game: the root starts with one pass on the streak and the
  *                PASS child is scored exactly.
+ *   abort        Int32Array: stop at the next 16-iteration check once
+ *                abort[0] !== 0 (set from another thread; go-solver's uct ponder).
  *   allowPass    Return [] (pass) when PASS is the most-visited root child.
  *                Without it the search always plays its best stone, which in
  *                a lost endgame is the long tail of score-neutral moves the
@@ -745,6 +747,10 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms, opts = {}) {
 
   const board = root.slice()
   const deadline = Date.now() + maxms
+  // opts.abort: an Int32Array (over a SharedArrayBuffer) another thread sets
+  // non-zero to stop the search early — go-solver's uct PONDER runs in a
+  // worker and is cancelled the moment a request for another position lands.
+  const abort = opts.abort instanceof Int32Array ? opts.abort : null
   let iters = 0
 
   // First-play-per-colour recorder, reused across iterations via stamps.
@@ -848,7 +854,7 @@ export function chooseMoveUCT(boardStrings, valid, N, komi, maxms, opts = {}) {
     }
 
     iters++
-    if ((iters & 15) === 0 && Date.now() >= deadline) break
+    if ((iters & 15) === 0 && (Date.now() >= deadline || (abort && Atomics.load(abort, 0) !== 0))) break
   }
 
   // Most-visited root child is the classic robust choice.

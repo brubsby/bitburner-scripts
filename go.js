@@ -182,6 +182,7 @@ import {
   armDraw,
   armPrior,
   splitArm,
+  armKey,
   rateScale,
   armVersion,
   ARM_SIZES,
@@ -639,6 +640,21 @@ const SETTINGS = {
   // katagoVisits: the visits a KataGo arm below 19x19 is played at (what
   // the study measured: katago200gpup).
   arms: { on: true, historyKeep: 50, katagoVisits: 200 },
+  // THE UCT ARMS (7x7-13x13 below 19x19, the boards the model does not play;
+  // tools/go-solver.mjs + tools/go-uct-ponder.mjs). ponder: requests carry
+  // the opponent, the recent history (historyCap boards) and the playtime T,
+  // so the solver can predict the AI's reply with its own code and search our
+  // answer to it while the reply crawls through the game's timers (a hit is
+  // answered in ~0ms at the same budget). maxmsBy: the per-move budget by
+  // arm ('Tetrads@7'); unlisted arms search at the solver's --maxms.
+  // ab: a live A/B on one arm — { arm, block, variants: [{ name, maxms?,
+  // ponder? }] }: variants alternate every `block` games on that arm (this
+  // process), each game's record carries `ab` (tools/sim/go-capab.mjs reads
+  // them), so both arms run under the same one-core cap on the same day.
+  uct: { ponder: true, historyCap: 8, maxmsBy: {}, ab: { arm: 'Tetrads@7', block: 10, variants: [{ name: 'base800', maxms: 800, ponder: false }, { name: 'ponder800', maxms: 800, ponder: true }, { name: 'ponder400', maxms: 400, ponder: true }] } },
+  // KATAGO: false = never asked for, on any board (katagoUsable). The user's
+  // budget (2026-11-13): Go may use ONE core of puter, KataGo off, no GPU.
+  katago: false,
   // A game in progress is RESUMED (never reset: a reset forfeits it — a loss
   // and the streak). After this many consecutive errors on one game it is
   // reset after all (an error that repeats on every resume would hold the farm).
@@ -884,7 +900,20 @@ export function katagoAvailable(text, now = Date.now()) {
   if (!(age <= 15 * 60e3)) return { ok: false, gpu: false, cpu: false, why: `/go/katago.txt is ${Number.isFinite(age) ? Math.round(age / 60e3) + ' min' : 'undated'} old — the solver is not publishing` }
   const gpu = rec.gpu === true
   const cpu = rec.cpu === true
-  return { ok: gpu || cpu, gpu, cpu, why: gpu || cpu ? null : `no engine: GPU ${rec.remote?.why ?? 'off'}; CPU not installed` }
+  return { ok: gpu || cpu, gpu, cpu, why: gpu || cpu ? null : rec.off ? `KataGo off in the solver: ${rec.off}` : `no engine: GPU ${rec.remote?.why ?? 'off'}; CPU not installed` }
+}
+
+/**
+ * katagoAvailable, unless KataGo is switched off here (SETTINGS.katago false:
+ * THE ONE-CORE BUDGET, 2026-11-13 — the user's cap on puter is one core for
+ * Go, and the local CPU engine under it played Tetrads@9 at 5.2-8.0k power/h
+ * against Tetrads@7 uct's 14-16k). Then no board asks for it, so the solver
+ * never starts an engine, and goplan prices every arm on its uct/model
+ * backend (armPrior katagoOk false). Pure.
+ */
+export function katagoUsable(text, now = Date.now(), on = SETTINGS.katago !== false) {
+  if (!on) return { ok: false, gpu: false, cpu: false, why: 'KataGo off (go.js SETTINGS.katago: the one-core budget)' }
+  return katagoAvailable(text, now)
 }
 
 export function modelHealth({ modelAsked = 0, modelAnswered = 0, modelFallbackWhy = null } = {}) {
@@ -932,6 +961,17 @@ export function presentAnswer(text, boardStrings, valid, oppPassed) {
     }
   }
   return { answer: null, had: true }
+}
+
+/**
+ * THE LIVE A/B's variant for a game on `arm` (SETTINGS.uct.ab), the `n`-th
+ * such game this process: the variants alternate in blocks of ab.block games.
+ * null when no A/B runs on this arm. Pure.
+ */
+export function abVariantOf(ab, arm, n) {
+  if (!ab || ab.arm !== arm || !Array.isArray(ab.variants) || !ab.variants.length) return null
+  const block = Number.isInteger(ab.block) && ab.block > 0 ? ab.block : 1
+  return ab.variants[Math.floor(n / block) % ab.variants.length] ?? null
 }
 
 /** Whether requests against this opponent carry the playtime (SETTINGS.clock). Pure. */
@@ -1430,7 +1470,7 @@ export async function main(ns) {
       let arms = null
       if (SETTINGS.arms.on) {
         const now = Date.now()
-        const katagoOk = katagoAvailable(readHome('/go/katago.txt')).ok
+        const katagoOk = katagoUsable(readHome('/go/katago.txt')).ok
         arms = {}
         const drawnNow = {}
         for (const name of Object.keys(OPPONENTS)) {
@@ -1545,6 +1585,8 @@ export async function main(ns) {
   // deploy). wins/losses/winStreak below are the game's own per-LIFE stats for
   // the current opponent — a different clock, so the two never have to agree.
   let gamesThisProcess = 0
+  // Games played on the A/B arm by this process (SETTINGS.uct.ab).
+  let abGames = 0
   const processStartedAt = Date.now()
   // Games against the current opponent since the last switch. Starts at the
   // dwell, because no switch has been committed to yet.
@@ -1787,6 +1829,15 @@ export async function main(ns) {
   publishAt('ok', { detail: `starting vs ${opponent} on ${N}x${N}` })
 
   while (flags.games < 0 || gamesThisProcess < flags.games) {
+    // THE RESTART REQUEST (/go/restart.txt on home: an epoch ms): a go.js
+    // started before it exits HERE, between games, and watchdog.js relaunches
+    // it on the new code — a deploy with no terminal kill (the cmd.js bridge
+    // is the game-player's) and no game cut short. tools/go-restart.mjs writes it.
+    const restartAt = Number(readHome('/go/restart.txt'))
+    if (Number.isFinite(restartAt) && restartAt > processStartedAt) {
+      ns.print(`restart requested at ${new Date(restartAt).toISOString()}: exiting between games for the watchdog to relaunch`)
+      return
+    }
     try {
       // RESUME, NEVER FORFEIT (release 3). A game left in progress — by a
       // restart (every deploy restarts go.js), an outage, or an error thrown
@@ -1882,6 +1933,15 @@ export async function main(ns) {
       const board0 = ns.go.getBoardState()
       gameSize = board0.length || N
       const size = gameSize
+      // THE LIVE A/B (SETTINGS.uct.ab): this game's variant on the tested arm.
+      const abVariant = abVariantOf(SETTINGS.uct.ab, armKey(opponent, size), abGames)
+      if (abVariant) abGames++
+      const uctMaxms = abVariant?.maxms ?? SETTINGS.uct.maxmsBy?.[armKey(opponent, size)] ?? null
+      const uctPonder = abVariant?.ponder ?? SETTINGS.uct.ponder
+      // This game's uct answers and how many came pondered (the per-game record).
+      const uctPondered = { asked: 0, hit: 0, partial: 0 }
+      // The last uct answer asked for a RETIME (a solver with the uct ponder).
+      let uctRetime = false
 
       const komi = ns.go.getGameState()?.komi ?? 5.5
       let stalled = resumeStalled
@@ -1911,7 +1971,7 @@ export async function main(ns) {
       const useModel = size <= SETTINGS.model.maxSize
       // KataGo on the big board (SETTINGS.bigBoard.backend): the solver answers
       // with uct and says why when it is not installed (tools/katago/install.sh).
-      if (size > SETTINGS.model.maxSize) katagoAvail = katagoAvailable(readHome('/go/katago.txt'))
+      if (size > SETTINGS.model.maxSize) katagoAvail = katagoUsable(readHome('/go/katago.txt'))
       // 7x7-13x13 (release 3a): the arm's measured backend (goplan armPrior)
       // — KataGo when it pays there and an engine answers, else uct.
       const armBackend = size > SETTINGS.model.maxSize && size < 19 ? armPrior(opponent, size, !!katagoAvail?.ok)?.backend ?? 'uct' : null
@@ -1981,6 +2041,19 @@ export async function main(ns) {
           const T = clockFor(opponent) ? clockRead.now() : null
           modelReq = { backend: 'katago', visits: size >= 19 ? SETTINGS.bigBoard.visits : SETTINGS.arms.katagoVisits, opponent: gameName(opponent), history, fallback: 'uct', ...(T ? { T } : {}) }
           if (count) modelAsked++
+        } else if (size < 19) {
+          // A UCT ARM (SETTINGS.uct): the budget, and what the solver's ponder
+          // needs to predict the AI's reply (or ponder: false).
+          let history = []
+          if (uctPonder) {
+            try {
+              history = ns.go.getMoveHistory().slice(0, SETTINGS.uct.historyCap).map((b) => b.join(''))
+            } catch (e) {
+              record(errors, new Error(`getMoveHistory: ${describe(e)} — the uct ponder runs without superko history`))
+            }
+          }
+          const T = uctPonder && clockFor(opponent) ? clockRead.now() : null
+          modelReq = { ...(uctMaxms ? { maxms: uctMaxms } : {}), ...(uctPonder ? { opponent: gameName(opponent), history, ...(T ? { T } : {}) } : { ponder: false }) }
         }
         return { seq, size, komi, board, valid: validList, ...(solverReq.maxms ? { maxms: solverReq.maxms } : {}), ...(opts ? { opts } : {}), ...modelReq }
       }
@@ -2045,6 +2118,12 @@ export async function main(ns) {
               }
               if (reply.backend === 'katago') katagoWhere[String(reply.where ?? '').startsWith('gpu') ? 'gpu' : 'cpu']++
               if (reply.pondered === 'hit') ponderHits++
+              uctRetime = reply.uctPonder === true
+              if (!wantBackend && size < 19 && reply.backend === 'uct') {
+                uctPondered.asked++
+                if (reply.pondered === 'hit') uctPondered.hit++
+                else if (reply.pondered === 'partial') uctPondered.partial++
+              }
               if (reply.mode) solverMode = reply.mode
               return reply.pass ? [] : [{ x: reply.x, y: reply.y, ...(reply.second && Number.isInteger(reply.second.x) ? { second: { x: reply.second.x, y: reply.second.y } } : {}) }]
             }
@@ -2421,7 +2500,9 @@ export async function main(ns) {
         // Only to a solver that takes retimes (it counts them in `seed`): an
         // older one would read the retime's seq as a new request it cannot
         // parse, and stop pondering for the turn.
-        if (src === 'req' && !hardDeclined && useModel && clockFor(opponent) && Number.isFinite(seedLive?.retimes)) retimeSolver()
+        // A uct answer that asks for it (tools/go-uct-ponder.mjs) gets one too:
+        // the solver re-predicts the AI's reply from this play's playtime.
+        if (src === 'req' && !hardDeclined && clockFor(opponent) && ((useModel && Number.isFinite(seedLive?.retimes)) || (!useModel && !useKatago && uctRetime))) retimeSolver()
         if (oppPassed && passAhead) {
           if (stone) stonesAfterPass++
           else mirrorPasses++
@@ -2660,6 +2741,8 @@ export async function main(ns) {
           ver: gameVer ?? null,
           playOn: after,
           objective: objective ? { winMult: objective.winMult, lossFuture: Math.round(objective.lossFuture), turnCost: Math.round(objective.turnCost * 100) / 100 } : null,
+          ...(abVariant ? { ab: abVariant.name } : {}),
+          ...(uctPondered.asked ? { uctPonder: { ...uctPondered } } : {}),
         }
         const file = SETTINGS.gameLog.file
         if (logLines === null) logLines = String(readHome(file) || '').split('\n').filter((l) => l.trim()).length
